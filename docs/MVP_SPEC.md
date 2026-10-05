@@ -270,18 +270,19 @@ External AI tools use that stored timezone to resolve local date boundaries and 
 
 ## Authentication
 
-Use Supabase Auth with **Email OTP: a one-time code sent to email, no password and no required magic-link flow**.
+Use Supabase Auth with **email and password for the existing account**. The product owner's 2026-10-06 decision supersedes the earlier Email OTP requirement.
 
 Expected UX:
 
-- user enters email;
-- Supabase sends a one-time code to that email;
-- user enters/verifies the code in JetMeal;
+- user enters the existing account's email and password, then explicitly taps Sign in or submits with the keyboard;
+- the app signs in through Supabase's Email provider;
+- the login screen has only email, password and Sign in; signup, reset-password and email-code flows are outside this authorized scope;
+- the password is hidden and held only in temporary UI state; never trim it, persist it, log it, or include it in saved instance/ViewModel state;
 - the app persists and refreshes the authenticated session;
 - normal APK/app updates do not require re-login while the stored session remains valid;
-- a new phone can authenticate again by email.
+- a new phone can authenticate again with the existing email and password.
 
-Supabase project configuration must use an Email OTP template that exposes the one-time token rather than relying only on a confirmation URL/magic link.
+The existing Supabase account must have a password and a confirmed email. Account provisioning/password handoff is an authorized administrative action outside the mobile login UI. Email templates and SMTP are not required for this sign-in path. Saved sessions must remain isolated by project when switching between local and hosted builds.
 
 All user data is authorized with RLS using the authenticated `auth.uid()`.
 
@@ -324,7 +325,7 @@ Manual UI autocomplete should favor frequent foods before typing and useful rank
 
 - native Android Jetpack Compose app;
 - user-owned Supabase project;
-- passwordless Email OTP authentication;
+- existing-account email/password authentication;
 - personal food catalogue;
 - food variants and natural serving units;
 - calories + protein + fat + carbohydrates;
@@ -371,7 +372,7 @@ These are intentionally unresolved and should be kept visible rather than silent
 ## Recommended implementation order
 
 1. Align Supabase bootstrap schema with this specification.
-2. Implement Email OTP Supabase Auth and persisted session handling.
+2. Implement existing-account email/password Supabase Auth and persisted session handling.
 3. Implement repository/domain operations and deterministic weekly-budget engine with tests.
 4. Implement Today/day UI and manual logging flow.
 5. Implement Calendar navigation/history.

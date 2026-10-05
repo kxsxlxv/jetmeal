@@ -2,6 +2,8 @@
 
 You are implementing the JetMeal MVP end to end in this repository. Treat this file as the active task brief. Read the repository-level `AGENTS.md` first and follow every linked source of truth.
 
+Active product-owner decision (2026-10-06): the Android app signs into the existing Supabase account with email and password. This supersedes the earlier Email OTP UI requirement. Keep only email/password/Sign in; no signup, password-reset or email-code UI. Passwords remain temporary input and must never be trimmed, saved or logged.
+
 ## Goal
 
 Turn the current Android starter project into a working, polished JetMeal MVP that satisfies `docs/MVP_SPEC.md`, `docs/AI_TOOLS.md`, and the Supabase schema intent.
@@ -77,7 +79,7 @@ Research at least:
 - accessibility guidance for Compose;
 - current Android architecture recommendations (UDF, ViewModel state, repositories, Flow/coroutines);
 - current Kotlin/AGP/Gradle/JDK/AndroidX compatibility;
-- current Supabase Kotlin client, Email OTP flow, session persistence, RLS and local-development workflow.
+- current Supabase Kotlin client, existing-account email/password sign-in, session persistence, RLS and local-development workflow.
 
 Study the current official Android sample repository and relevant examples:
 
@@ -164,7 +166,7 @@ Important invariants include:
 - deterministic Monday–Sunday calorie redistribution, symmetric for over/under consumption, configurable default ±10%, no carry to the next week;
 - macros are not dynamically redistributed;
 - Calendar opens the same day screen for a selected date;
-- Supabase Email OTP, no password;
+- Supabase existing-account email/password sign-in;
 - session persistence/refresh;
 - user-owned data protected by RLS;
 - Nutrition Tools boundary remains suitable for ChatGPT and a future on-device model.
@@ -201,7 +203,7 @@ Prefer a real local Supabase environment for development and repeatable integrat
 
 Use current Supabase migration workflow rather than treating `bootstrap.sql` as permanent migration history. Preserve `bootstrap.sql` as the schema intent/reference unless you have a documented reason to update it.
 
-Implement schema/migrations matching the current model, RLS ownership policies, profile creation/synchronization, Email OTP request + code verification, session persistence/refresh, personal food catalogue reads/search, diary CRUD/soft delete, targets read/update, audit behavior required by the specs, timezone synchronization, and the Nutrition Tools application boundary/repository operations needed by the app.
+Implement schema/migrations matching the current model, RLS ownership policies, profile creation/synchronization, existing-account email/password sign-in, session persistence/refresh, personal food catalogue reads/search, diary CRUD/soft delete, targets read/update, audit behavior required by the specs, timezone synchronization, and the Nutrition Tools application boundary/repository operations needed by the app.
 
 Never ship or commit privileged server credentials.
 
@@ -239,7 +241,7 @@ Using a real local Supabase stack where available, test at least:
 - soft-deleted diary entries are excluded from active totals/query paths;
 - target writes obey ownership;
 - profile creation works;
-- Email OTP can be exercised with the local auth/email tooling;
+- email/password sign-in can be exercised against real local Auth; local email capture may provision/confirm test-only accounts;
 - the Android repository can talk to real Supabase rather than a fake implementation.
 
 Use current Supabase CLI testing/linting capabilities documented by Supabase.
@@ -250,7 +252,7 @@ Run the applicable build, unit, lint and instrumentation/Compose tests supported
 
 Verify critical user flows:
 
-1. first sign-in by Email OTP;
+1. first sign-in with an existing account's email/password;
 2. launch with persisted session;
 3. Today loads real data;
 4. manual search/select/change quantity/confirm;
@@ -284,7 +286,7 @@ Do not call the MVP complete until all of the following are true or explicitly r
 - current-version/design research is documented;
 - the Android app builds;
 - real Supabase integration is implemented;
-- Email OTP path is implemented;
+- existing-account email/password sign-in is implemented;
 - Today, Week, Calendar and Settings are implemented;
 - manual food logging works against the real data layer;
 - quantity editing and soft delete work;

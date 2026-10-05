@@ -97,31 +97,25 @@ During implementation:
 
 Do not invent migration filenames or deprecated CLI syntax from memory. Discover commands with `--help` and use current official docs.
 
-## Auth: Email OTP
+## Auth: existing-account email/password
 
-JetMeal uses passwordless **Email OTP code entry**, not a password and not a required magic-link UI.
+The product owner's 2026-10-06 decision replaces the earlier OTP UI with **email/password sign-in for the existing account**. The app exposes only email, password and Sign in. It does not provision accounts, send login emails, or offer signup/reset-password UI. The existing hosted account must already have a password and confirmed email; perform any explicitly authorized account update through the administrative environment, never a privileged mobile key.
 
 Current Supabase Kotlin flow should be verified in official docs at implementation time. Current entry points:
 
-- https://supabase.com/docs/reference/kotlin/auth-signinwithotp
-- https://supabase.com/docs/reference/kotlin/auth-verifyotp
+- https://supabase.com/docs/reference/kotlin/auth-signinwithpassword
+- https://supabase.com/docs/guides/auth/passwords
 - https://supabase.com/docs/reference/kotlin/initializing
 
-The email template must expose the OTP token (`{{ .Token }}`) rather than relying only on a confirmation URL.
+Use `auth.signInWith(Email) { email = address; password = enteredPassword }`. Normalize email only; send the password exactly as entered. Keep it in temporary UI memory, never saved instance/ViewModel state, configuration, preferences, screenshots or logs. Store only the authenticated SDK session in private project-specific preferences excluded from backups. Changing project URL must not reuse a different project's JWT.
 
-### Local OTP testing
+### Real local Auth testing
 
-The Supabase local-development stack includes email capture tooling (currently Mailpit in the official CLI workflow). Use it to exercise a real local Email OTP flow:
+Use real local Supabase Auth to create isolated test-only email/password accounts via the SDK, confirm them through captured local mail when required, sign out, and then exercise the app's password login UI. Confirm that typing does not authenticate, blank input cannot submit, password whitespace is preserved, and session-backed operations/RLS and session reopening work.
 
-1. request an OTP for a test email;
-2. inspect the captured local email;
-3. retrieve the one-time token through the local test environment;
-4. verify the token through the same client/API path the app uses;
-5. prove a session is created;
-6. prove session-backed RLS access works;
-7. prove sign-out/expired-session behavior is handled appropriately.
+The lower-level repository/RLS integration test may still use the SDK's OTP methods directly to create two independent authenticated local test users. This is test-only setup, not an app login feature. Mailpit capture and any confirmation token must remain within local test source sets. Production has no OTP request/verification methods.
 
-Do not hard-code a test OTP into production code.
+Do not hard-code a password or token into production code or use a fake account/session as integration evidence. Local fixture passwords are generated at test runtime and never logged. Cloud-configured builds intentionally skip local Auth tests; a skipped test is not a pass.
 
 Official testing entry point:
 

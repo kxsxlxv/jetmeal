@@ -48,7 +48,7 @@ The handoff deliberately requires current official research before UI implementa
 
 ## Authentication
 
-JetMeal uses Supabase Auth with a **one-time code sent to email (Email OTP), no password**. The user signs in once, the app persists/refreshes the session, and a new device can authenticate again by email. The Android system timezone is authoritative and is synchronized into the user's Supabase profile so external AI tools can resolve local dates and meal periods consistently.
+JetMeal signs into the **existing Supabase account with email and password**, following the product owner's 2026-10-06 decision. The login screen contains only those fields and Sign in. Passwords remain temporary input and are never trimmed, saved or logged. The app persists/refreshes the authenticated session in project-specific private storage, so later updates retain the account while local/cloud builds stay isolated. The Android system timezone is synchronized into the user's profile for consistent external AI dates and meal periods.
 
 ## Supabase
 
@@ -57,6 +57,46 @@ JetMeal uses Supabase Auth with a **one-time code sent to email (Email OTP), no 
 Implementation should use the current Supabase local-development/migration workflow and a real local Supabase stack for repeatable integration tests where the environment supports it. Missing hosted-project access must be reported rather than hidden behind a mock backend.
 
 ## Build
+
+The implemented app uses AGP 9.4.1, Gradle 9.8.0, Kotlin 2.4.20, Material 3
+1.5.0-alpha29 and its compatible Compose 1.13.0-alpha03 line. Install SDK 37.1;
+target SDK remains 37, minimum SDK 35. This host builds with Android Studio's
+JBR 25. Set `JAVA_HOME` to your installed JDK before using the wrapper.
+
+Copy `jetmeal.local.properties.example` to `jetmeal.local.properties` and supply
+your project URL and publishable key. The local file is ignored. The build
+rejects privileged keys before generating app configuration. Without client
+configuration, the app shows setup instructions. It never loads sample food data.
+
+For local development, start the real Supabase stack using the pinned workflow
+in [backend verification](docs/implementation/BACKEND_VERIFICATION.md). Then run
+`python3 scripts/configure_local_supabase.py --cli supabase` to write only the
+local client-safe configuration. Debug builds allow local HTTP; release builds
+require HTTPS. Local test-only account confirmation/OTP setup uses Mailpit at `http://127.0.0.1:54324`; normal app password sign-in sends no email.
+
+On this Windows host, Docker/CLI run inside WSL Ubuntu. Android emulator routing:
+
+```powershell
+adb -s emulator-5554 reverse tcp:54321 tcp:54321
+adb -s emulator-5554 reverse tcp:54324 tcp:54324
+```
+
+With these routes, use `http://127.0.0.1:54321` in the developer configuration.
+Alternatively, the Android emulator uses `10.0.2.2` for its host; physical devices
+need their own host routing. Never assume Android `localhost` is desktop localhost.
+
+Sign in with the existing account's email and password, set your existing targets in
+Settings, and log foods from your own catalogue. Catalogue creation is available
+through the typed `NutritionTools.createFood` application operation and its
+`jetmeal_create_food` RPC. The app deliberately has no catalogue-authoring screen.
+
+The four destinations, manual quantity logging/editing, soft delete, grouped undo,
+weekly redistribution and target confirmation are implemented. See the dated
+[research](docs/implementation/RESEARCH_NOTES.md) and
+[verification report](docs/implementation/VERIFICATION.md) for actual evidence.
+The existing hosted project's legacy tables have not been changed. Hosted data
+migration and external ChatGPT user linking require a separate reviewed adapter;
+no model or mobile client receives an admin key.
 
 Debug APK:
 

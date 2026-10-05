@@ -260,3 +260,525 @@ create trigger jetmeal_on_auth_user_created
     for each row execute function private.handle_new_user();
 
 commit;
+
+begin;
+
+alter table public.audit_events add column event_sequence bigint generated always as identity;
+
+-- numeric admits NaN/Infinity in PostgreSQL; finite bounded values only.
+do $$
+declare col record;
+begin
+    for col in select table_name,column_name from information_schema.columns
+        where table_schema='public' and table_name in ('food_variants','diary_entries','nutrition_targets')
+        and data_type='numeric' loop
+        execute format('alter table public.%I add constraint %I check (%I between 0 and 1000000)',
+            col.table_name,col.column_name || '_finite',col.column_name);
+    end loop;
+end $$;
+
+-- All nutrition mutations go through atomic application operations. Normal
+-- clients can read owned rows but cannot forge audit history or bypass scaling.
+revoke insert, update, delete on public.foods, public.food_variants,
+    public.diary_entries, public.nutrition_targets, public.audit_events from authenticated;
+revoke update on public.profiles from authenticated;
+grant update (timezone) on public.profiles to authenticated;
+
+alter table public.food_variants drop constraint food_variants_supersedes_fk;
+alter table public.food_variants add constraint food_variants_supersedes_owner_fk
+    foreign key (supersedes_variant_id, owner_id) references public.food_variants(id, owner_id);
+alter table public.food_variants add constraint food_variants_identity_unique unique(id, food_id, owner_id);
+alter table public.diary_entries add constraint diary_variant_food_owner_fk
+    foreign key (food_variant_id, food_id, owner_id) references public.food_variants(id, food_id, owner_id);
+alter table public.diary_entries add constraint diary_variant_requires_food
+    check (food_variant_id is null or food_id is not null);
+create index foods_owner_idx on public.foods(owner_id);
+create index variants_owner_idx on public.food_variants(owner_id);
+create index variants_food_owner_idx on public.food_variants(food_id,owner_id);
+create index variants_supersedes_owner_idx on public.food_variants(supersedes_variant_id,owner_id);
+create index diary_owner_idx on public.diary_entries(owner_id);
+create index diary_food_owner_idx on public.diary_entries(food_id,owner_id);
+create index diary_variant_food_owner_idx on public.diary_entries(food_variant_id,food_id,owner_id);
+
+create table private.action_groups (
+    id uuid primary key,
+    owner_id uuid not null references public.profiles(id) on delete cascade,
+    created_at timestamptz not null default clock_timestamp(),
+    undone_at timestamptz
+);
+create index action_groups_owner_created on private.action_groups(owner_id, created_at desc);
+alter table private.action_groups enable row level security;
+create table private.target_confirmations (
+    id uuid primary key default gen_random_uuid(),
+    owner_id uuid not null references public.profiles(id) on delete cascade,
+    proposed jsonb not null,
+    expires_at timestamptz not null default now() + interval '5 minutes'
+);
+alter table private.target_confirmations enable row level security;
+create index target_confirmations_owner_idx on private.target_confirmations(owner_id);
+revoke all on private.action_groups, private.target_confirmations from public, anon, authenticated;
+
+create function private.protect_diary_basis() returns trigger language plpgsql set search_path = '' as $$
+begin
+    if tg_op = 'UPDATE' and row(new.owner_id,new.food_id,new.food_variant_id,new.basis_amount_snapshot,
+      new.basis_unit_snapshot,new.basis_calories_kcal_snapshot,new.basis_protein_g_snapshot,
+      new.basis_fat_g_snapshot,new.basis_carbs_g_snapshot)
+      is distinct from row(old.owner_id,old.food_id,old.food_variant_id,old.basis_amount_snapshot,
+      old.basis_unit_snapshot,old.basis_calories_kcal_snapshot,old.basis_protein_g_snapshot,
+      old.basis_fat_g_snapshot,old.basis_carbs_g_snapshot) then
+        raise exception 'Nutritional basis is immutable' using errcode='23514';
+    end if;
+    if new.quantity_unit <> new.basis_unit_snapshot then
+        raise exception 'Quantity unit must match nutritional basis' using errcode='23514';
+    end if;
+    new.calories_kcal_snapshot := round(new.basis_calories_kcal_snapshot * new.quantity / new.basis_amount_snapshot,3);
+    new.protein_g_snapshot := round(new.basis_protein_g_snapshot * new.quantity / new.basis_amount_snapshot,3);
+    new.fat_g_snapshot := round(new.basis_fat_g_snapshot * new.quantity / new.basis_amount_snapshot,3);
+    new.carbs_g_snapshot := round(new.basis_carbs_g_snapshot * new.quantity / new.basis_amount_snapshot,3);
+    new.updated_at := now();
+    return new;
+end; $$;
+create trigger diary_basis_and_totals before insert or update on public.diary_entries
+    for each row execute function private.protect_diary_basis();
+
+create function private.check_timezone() returns trigger language plpgsql set search_path = '' as $$
+begin
+    if not exists(select 1 from pg_catalog.pg_timezone_names where name=new.timezone) then
+        raise exception 'Invalid IANA timezone' using errcode='23514';
+    end if;
+    new.updated_at := now();
+    return new;
+end; $$;
+create trigger profile_timezone before insert or update on public.profiles
+    for each row execute function private.check_timezone();
+
+create function private.nutrition_operation(p_operation text,p_input jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+    uid uuid := auth.uid();
+    action_id uuid := coalesce((p_input->>'action_id')::uuid,gen_random_uuid());
+    actor text := coalesce(p_input->>'actor','user');
+    food public.foods;
+    variant public.food_variants;
+    entry public.diary_entries;
+    old_entry public.diary_entries;
+    targets public.nutrition_targets;
+    old_targets public.nutrition_targets;
+    event public.audit_events;
+    before_json jsonb;
+    after_json jsonb;
+    result jsonb;
+    rows_json jsonb := '[]'::jsonb;
+    source_id uuid;
+    token uuid;
+    zone text;
+    consumed timestamptz;
+    meal text;
+    undo_id uuid;
+    count_rows integer := 0;
+begin
+    if uid is null then raise exception 'Authentication required' using errcode='42501'; end if;
+    if actor not in ('user','ai') then raise exception 'Invalid actor' using errcode='22023'; end if;
+    -- Serialize each user's writes/undo so one undo cannot race a new action.
+    perform 1 from public.profiles where id=uid for update;
+    select timezone into strict zone from public.profiles where id=uid;
+    if p_operation='prepare_targets' then
+        insert into private.target_confirmations(owner_id,proposed)
+        values(uid,p_input - 'action_id' - 'actor' - 'confirmation') returning id into token;
+        return jsonb_build_object('ok',true,'action_id',null,'data',jsonb_build_object('confirmation',token),
+            'warnings','[]'::jsonb,'undoable',false);
+    end if;
+    if p_operation='undo_last_action' then
+        select id into undo_id from private.action_groups where owner_id=uid and undone_at is null
+            order by created_at desc,id desc limit 1 for update;
+        if undo_id is null then raise exception 'No undoable action' using errcode='22023'; end if;
+        for event in select * from public.audit_events where owner_id=uid and action_group_id=undo_id
+            order by event_sequence desc loop
+            if event.entity_type='diary_entries' then
+                select * into strict entry from public.diary_entries where id=event.entity_id and owner_id=uid;
+                before_json := to_jsonb(entry);
+                if event.before_state is null then
+                    update public.diary_entries set deleted_at=now() where id=entry.id returning * into entry;
+                else
+                    old_entry := jsonb_populate_record(null::public.diary_entries,event.before_state);
+                    update public.diary_entries set quantity=old_entry.quantity,consumed_at=old_entry.consumed_at,
+                        meal_type=old_entry.meal_type,deleted_at=old_entry.deleted_at
+                        where id=entry.id returning * into entry;
+                end if;
+                after_json := to_jsonb(entry);
+            elsif event.entity_type='food_variants' then
+                select to_jsonb(v) into before_json from public.food_variants v where id=event.entity_id and owner_id=uid;
+                update public.food_variants set archived_at=now() where id=event.entity_id and owner_id=uid returning to_jsonb(food_variants.*) into after_json;
+            elsif event.entity_type='foods' then
+                select to_jsonb(f) into before_json from public.foods f where id=event.entity_id and owner_id=uid;
+                update public.foods set archived_at=now(),updated_at=now() where id=event.entity_id and owner_id=uid returning to_jsonb(foods.*) into after_json;
+            elsif event.entity_type='nutrition_targets' then
+                select to_jsonb(t) into before_json from public.nutrition_targets t where owner_id=uid;
+                if event.before_state is null then
+                    delete from public.nutrition_targets where owner_id=uid;
+                    after_json := null;
+                else
+                    old_targets := jsonb_populate_record(null::public.nutrition_targets,event.before_state);
+                    update public.nutrition_targets set daily_calories_kcal=old_targets.daily_calories_kcal,
+                        daily_protein_g=old_targets.daily_protein_g,daily_fat_g=old_targets.daily_fat_g,
+                        daily_carbs_g=old_targets.daily_carbs_g,adjustment_limit_ratio=old_targets.adjustment_limit_ratio,
+                        updated_at=now() where owner_id=uid returning to_jsonb(nutrition_targets.*) into after_json;
+                end if;
+            else raise exception 'Unsupported audit entity'; end if;
+            insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,before_state,after_state)
+                values(uid,action_id,actor,'undo',event.entity_type,event.entity_id,before_json,after_json);
+            count_rows := count_rows+1;
+        end loop;
+        update private.action_groups set undone_at=now() where id=undo_id;
+        return jsonb_build_object('ok',true,'action_id',action_id,'data',jsonb_build_object('undone_action_id',undo_id,'count',count_rows),
+            'warnings','[]'::jsonb,'undoable',false);
+    end if;
+    if p_operation not in ('create_food','log_food','update_log','delete_log','repeat_meal','update_targets') then
+        raise exception 'Unknown operation' using errcode='22023';
+    end if;
+    insert into private.action_groups(id,owner_id) values(action_id,uid) on conflict(id) do nothing;
+    if not exists(select 1 from private.action_groups where id=action_id and owner_id=uid and undone_at is null) then
+        raise exception 'Invalid action group' using errcode='42501';
+    end if;
+    if p_operation='create_food' then
+        insert into public.foods(owner_id,name,normalized_name,kind,brand,source)
+        values(uid,p_input->>'name',lower(trim(p_input->>'name')),coalesce(p_input->>'kind','generic'),p_input->>'brand',p_input->>'source')
+        returning * into food;
+        insert into public.food_variants(owner_id,food_id,serving_amount,serving_unit,calories_kcal,protein_g,fat_g,carbs_g,is_estimated,source_note)
+        values(uid,food.id,(p_input->>'serving_amount')::numeric,p_input->>'serving_unit',
+            (p_input->>'calories_kcal')::numeric,(p_input->>'protein_g')::numeric,(p_input->>'fat_g')::numeric,
+            (p_input->>'carbs_g')::numeric,coalesce((p_input->>'is_estimated')::boolean,false),p_input->>'source_note') returning * into variant;
+        insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state) values
+            (uid,action_id,actor,'insert','foods',food.id,to_jsonb(food)),
+            (uid,action_id,actor,'insert','food_variants',variant.id,to_jsonb(variant));
+        result := jsonb_build_object('food',to_jsonb(food),'variant',to_jsonb(variant));
+    elsif p_operation='log_food' then
+        consumed := (p_input->>'consumed_at')::timestamptz;
+        meal := coalesce(p_input->>'meal_type',case when extract(hour from consumed at time zone zone) between 5 and 11 then 'morning'
+            when extract(hour from consumed at time zone zone) between 12 and 16 then 'day' else 'evening' end);
+        if p_input->>'food_variant_id' is not null then
+            select * into strict variant from public.food_variants where id=(p_input->>'food_variant_id')::uuid and owner_id=uid and archived_at is null;
+            select * into strict food from public.foods where id=variant.food_id and owner_id=uid and archived_at is null;
+            if p_input->>'quantity_unit' is not null and p_input->>'quantity_unit' <> variant.serving_unit then
+                raise exception 'Quantity unit must match variant' using errcode='22023';
+            end if;
+            entry.food_id := food.id; entry.food_variant_id := variant.id; entry.snapshot_name := food.name; entry.snapshot_brand := food.brand;
+            entry.basis_amount_snapshot := variant.serving_amount; entry.basis_unit_snapshot := variant.serving_unit;
+            entry.basis_calories_kcal_snapshot := variant.calories_kcal; entry.basis_protein_g_snapshot := variant.protein_g;
+            entry.basis_fat_g_snapshot := variant.fat_g; entry.basis_carbs_g_snapshot := variant.carbs_g;
+        else
+            entry.snapshot_name := p_input->>'snapshot_name'; entry.snapshot_brand := p_input->>'snapshot_brand';
+            entry.basis_amount_snapshot := (p_input->>'quantity')::numeric; entry.basis_unit_snapshot := p_input->>'quantity_unit';
+            entry.basis_calories_kcal_snapshot := (p_input->>'calories')::numeric; entry.basis_protein_g_snapshot := (p_input->>'protein_g')::numeric;
+            entry.basis_fat_g_snapshot := (p_input->>'fat_g')::numeric; entry.basis_carbs_g_snapshot := (p_input->>'carbs_g')::numeric;
+        end if;
+        insert into public.diary_entries(owner_id,food_id,food_variant_id,meal_group_id,meal_type,snapshot_name,snapshot_brand,
+            basis_amount_snapshot,basis_unit_snapshot,basis_calories_kcal_snapshot,basis_protein_g_snapshot,basis_fat_g_snapshot,basis_carbs_g_snapshot,
+            quantity,quantity_unit,calories_kcal_snapshot,protein_g_snapshot,fat_g_snapshot,carbs_g_snapshot,confidence,consumed_at)
+        values(uid,entry.food_id,entry.food_variant_id,(p_input->>'meal_group_id')::uuid,meal,entry.snapshot_name,entry.snapshot_brand,
+            entry.basis_amount_snapshot,entry.basis_unit_snapshot,entry.basis_calories_kcal_snapshot,entry.basis_protein_g_snapshot,entry.basis_fat_g_snapshot,entry.basis_carbs_g_snapshot,
+            (p_input->>'quantity')::numeric,entry.basis_unit_snapshot,0,0,0,0,(p_input->>'confidence')::numeric,consumed) returning * into entry;
+        insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state)
+            values(uid,action_id,actor,'insert','diary_entries',entry.id,to_jsonb(entry));
+        result := to_jsonb(entry);
+    elsif p_operation in ('update_log','delete_log') then
+        select * into strict old_entry from public.diary_entries where id=(p_input->>'entry_id')::uuid and owner_id=uid and deleted_at is null for update;
+        update public.diary_entries set
+            quantity=coalesce((p_input->>'quantity')::numeric,old_entry.quantity),
+            consumed_at=coalesce((p_input->>'consumed_at')::timestamptz,old_entry.consumed_at),
+            meal_type=coalesce(p_input->>'meal_type',old_entry.meal_type),
+            deleted_at=case when p_operation='delete_log' then now() else null end
+            where id=old_entry.id returning * into entry;
+        insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,before_state,after_state)
+            values(uid,action_id,actor,case when p_operation='delete_log' then 'soft_delete' else 'update' end,'diary_entries',entry.id,to_jsonb(old_entry),to_jsonb(entry));
+        result := to_jsonb(entry);
+    elsif p_operation='repeat_meal' then
+        consumed := (p_input->>'consumed_at')::timestamptz;
+        for source_id in select value::uuid from jsonb_array_elements_text(p_input->'entry_ids') loop
+            select * into strict entry from public.diary_entries where id=source_id and owner_id=uid and deleted_at is null;
+            entry.id := gen_random_uuid(); entry.created_at := now(); entry.updated_at := now(); entry.consumed_at := consumed;
+            entry.meal_group_id := action_id; entry.meal_type := coalesce(p_input->>'meal_type',entry.meal_type);
+            insert into public.diary_entries select (entry).* returning * into entry;
+            insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state)
+                values(uid,action_id,actor,'insert','diary_entries',entry.id,to_jsonb(entry));
+            rows_json := rows_json || jsonb_build_array(to_jsonb(entry)); count_rows := count_rows+1;
+        end loop;
+        if count_rows=0 then raise exception 'Source entries required' using errcode='22023'; end if;
+        result := rows_json;
+    elsif p_operation='update_targets' then
+        delete from private.target_confirmations where id=(p_input->>'confirmation')::uuid and owner_id=uid
+            and expires_at>now() and proposed=p_input - 'action_id' - 'actor' - 'confirmation' returning id into token;
+        if token is null then raise exception 'Explicit target confirmation required' using errcode='42501'; end if;
+        select * into old_targets from public.nutrition_targets where owner_id=uid;
+        insert into public.nutrition_targets(owner_id,daily_calories_kcal,daily_protein_g,daily_fat_g,daily_carbs_g,adjustment_limit_ratio)
+        values(uid,(p_input->>'daily_calories_kcal')::numeric,(p_input->>'daily_protein_g')::numeric,(p_input->>'daily_fat_g')::numeric,
+            (p_input->>'daily_carbs_g')::numeric,(p_input->>'adjustment_limit_ratio')::numeric)
+        on conflict(owner_id) do update set daily_calories_kcal=excluded.daily_calories_kcal,daily_protein_g=excluded.daily_protein_g,
+            daily_fat_g=excluded.daily_fat_g,daily_carbs_g=excluded.daily_carbs_g,adjustment_limit_ratio=excluded.adjustment_limit_ratio,updated_at=now()
+        returning * into targets;
+        insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,before_state,after_state)
+            values(uid,action_id,actor,'target_change','nutrition_targets',uid,case when old_targets.owner_id is null then null else to_jsonb(old_targets) end,to_jsonb(targets));
+        result := to_jsonb(targets);
+    end if;
+    return jsonb_build_object('ok',true,'action_id',action_id,'data',result,'warnings','[]'::jsonb,'undoable',true);
+exception when no_data_found then
+    raise exception 'Owned item is unavailable' using errcode='22023';
+end; $$;
+
+-- Public SECURITY INVOKER wrappers expose only the typed operation names.
+create function public.jetmeal_create_food(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('create_food',p_input) $$;
+create function public.jetmeal_log_food(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('log_food',p_input) $$;
+create function public.jetmeal_update_log(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('update_log',p_input) $$;
+create function public.jetmeal_delete_log(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('delete_log',p_input) $$;
+create function public.jetmeal_repeat_meal(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('repeat_meal',p_input) $$;
+create function public.jetmeal_undo_last_action(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('undo_last_action',p_input) $$;
+create function public.jetmeal_prepare_targets(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('prepare_targets',p_input) $$;
+create function public.jetmeal_update_targets(p_input jsonb) returns jsonb language sql security invoker set search_path='' as $$ select private.nutrition_operation('update_targets',p_input) $$;
+
+revoke all on function private.handle_new_user(),private.protect_diary_basis(),private.check_timezone(),
+    private.nutrition_operation(text,jsonb) from public,anon,authenticated;
+grant usage on schema private to authenticated;
+grant execute on function private.nutrition_operation(text,jsonb) to authenticated;
+revoke all on function public.jetmeal_create_food(jsonb),public.jetmeal_log_food(jsonb),public.jetmeal_update_log(jsonb),
+    public.jetmeal_delete_log(jsonb),public.jetmeal_repeat_meal(jsonb),public.jetmeal_undo_last_action(jsonb),
+    public.jetmeal_prepare_targets(jsonb),public.jetmeal_update_targets(jsonb) from public,anon;
+grant execute on function public.jetmeal_create_food(jsonb),public.jetmeal_log_food(jsonb),public.jetmeal_update_log(jsonb),
+    public.jetmeal_delete_log(jsonb),public.jetmeal_repeat_meal(jsonb),public.jetmeal_undo_last_action(jsonb),
+    public.jetmeal_prepare_targets(jsonb),public.jetmeal_update_targets(jsonb) to authenticated;
+commit;
+
+begin;
+-- Estimation status belongs to the immutable history, including estimates with
+-- no numeric confidence. Existing catalogue links remain owner-protected.
+alter table public.diary_entries add column is_estimated_snapshot boolean;
+update public.diary_entries d set is_estimated_snapshot=case
+    when d.food_variant_id is null then true
+    else coalesce((select v.is_estimated from public.food_variants v
+        where v.id=d.food_variant_id and v.owner_id=d.owner_id),false) end;
+alter table public.diary_entries alter column is_estimated_snapshot set not null;
+
+create function private.protect_estimate_snapshot() returns trigger
+language plpgsql set search_path='' as $$
+begin
+    if tg_op='UPDATE' and new.is_estimated_snapshot is distinct from old.is_estimated_snapshot then
+        raise exception 'Estimate snapshot is immutable' using errcode='23514';
+    end if;
+    if tg_op='INSERT' and new.is_estimated_snapshot is null then
+        if new.food_variant_id is null then
+            new.is_estimated_snapshot := true;
+        else
+            select v.is_estimated into new.is_estimated_snapshot from public.food_variants v
+                where v.id=new.food_variant_id and v.owner_id=new.owner_id;
+        end if;
+    end if;
+    return new;
+end; $$;
+create trigger diary_estimate_snapshot before insert or update on public.diary_entries
+    for each row execute function private.protect_estimate_snapshot();
+revoke all on function private.protect_estimate_snapshot() from public,anon,authenticated;
+commit;
+
+begin;
+-- Auth's INSERT trigger covers future registrations; existing users predate it.
+-- Do not infer a timezone or nutrition targets from user metadata.
+insert into public.profiles(id)
+    select id from auth.users
+    on conflict(id) do nothing;
+commit;
+
+begin;
+-- Additive import of explicitly owned, complete source records only.
+-- Originals, ownerless catalogues/history, incomplete nutrition and legacy
+-- business functions/policies remain untouched. Source IDs are deterministic.
+do $$
+declare
+    legacy record;
+    source_json jsonb;
+    item public.foods;
+    variant public.food_variants;
+    entry public.diary_entries;
+    targets public.nutrition_targets;
+    owner uuid;
+    source_id uuid;
+    linked_food uuid;
+    amount numeric;
+    kcal numeric;
+    protein numeric;
+    fat numeric;
+    carbs numeric;
+    status text;
+    meal text;
+    import_action uuid := gen_random_uuid();
+begin
+    if to_regclass('public.products') is not null then
+        for legacy in select to_jsonb(p) as data from public.products p loop
+            source_json := legacy.data;
+            owner := (source_json->>'user_id')::uuid;
+            source_id := (source_json->>'id')::uuid;
+            kcal := (source_json->>'kcal_per_100g')::numeric;
+            protein := (source_json->>'protein_g_per_100g')::numeric;
+            fat := (source_json->>'fat_g_per_100g')::numeric;
+            carbs := (source_json->>'carbs_g_per_100g')::numeric;
+            status := source_json->>'nutrition_status';
+            if owner is null or not exists(select 1 from public.profiles where id=owner)
+                or coalesce(length(trim(source_json->>'name')),0)=0
+                or status not in ('verified','estimated') or status is null
+                or kcal is null or not(kcal between 0 and 1000000)
+                or protein is null or not(protein between 0 and 1000000)
+                or fat is null or not(fat between 0 and 1000000)
+                or carbs is null or not(carbs between 0 and 1000000) then continue; end if;
+            insert into public.foods(id,owner_id,name,normalized_name,kind,brand,source,created_at,updated_at,archived_at)
+            values(source_id,owner,source_json->>'name',lower(trim(source_json->>'name')),
+                case when source_json->>'source_type' in ('generic','packaged','restaurant','canteen','ai_estimate')
+                    then source_json->>'source_type' else 'generic' end,
+                source_json->>'brand','legacy.products:' || coalesce(source_json->>'source','unknown'),
+                (source_json->>'created_at')::timestamptz,(source_json->>'updated_at')::timestamptz,
+                case when (source_json->>'active')::boolean=false then (source_json->>'updated_at')::timestamptz end)
+            on conflict(id) do nothing returning * into item;
+            if not found then continue; end if;
+            insert into public.food_variants(id,owner_id,food_id,serving_amount,serving_unit,
+                calories_kcal,protein_g,fat_g,carbs_g,is_estimated,source_note,created_at,archived_at)
+            values(source_id,owner,item.id,100,'g',kcal,protein,fat,carbs,status='estimated',
+                jsonb_build_object('legacy_table','products','legacy_row',source_json)::text,
+                (source_json->>'created_at')::timestamptz,item.archived_at) returning * into variant;
+            insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state) values
+                (owner,import_action,'system','insert','foods',item.id,to_jsonb(item)),
+                (owner,import_action,'system','insert','food_variants',variant.id,to_jsonb(variant));
+        end loop;
+    end if;
+    if to_regclass('public.meal_log') is not null then
+        for legacy in select to_jsonb(m) as data from public.meal_log m loop
+            source_json := legacy.data;
+            owner := (source_json->>'user_id')::uuid;
+            source_id := (source_json->>'id')::uuid;
+            amount := (source_json->>'grams')::numeric;
+            kcal := (source_json->>'calories')::numeric;
+            protein := (source_json->>'protein_g')::numeric;
+            fat := (source_json->>'fat_g')::numeric;
+            carbs := (source_json->>'carbs_g')::numeric;
+            meal := case source_json->>'meal_type' when 'breakfast' then 'morning' when 'lunch' then 'day'
+                when 'dinner' then 'evening' when 'snack' then 'snack' else null end;
+            if owner is null or not exists(select 1 from public.profiles where id=owner)
+                or coalesce(length(trim(source_json->>'description')),0)=0 or meal is null
+                or source_json->>'logged_at' is null
+                or amount is null or not(amount>0 and amount<=1000000)
+                or kcal is null or not(kcal between 0 and 1000000)
+                or protein is null or not(protein between 0 and 1000000)
+                or fat is null or not(fat between 0 and 1000000)
+                or carbs is null or not(carbs between 0 and 1000000) then continue; end if;
+            select id into linked_food from public.foods where id=(source_json->>'product_id')::uuid and owner_id=owner;
+            -- Preserve the old diary's own stored totals, never recompute old
+            -- consumption from a current product's nutritional values.
+            insert into public.diary_entries(id,owner_id,food_id,meal_type,snapshot_name,
+                basis_amount_snapshot,basis_unit_snapshot,basis_calories_kcal_snapshot,basis_protein_g_snapshot,
+                basis_fat_g_snapshot,basis_carbs_g_snapshot,quantity,quantity_unit,calories_kcal_snapshot,
+                protein_g_snapshot,fat_g_snapshot,carbs_g_snapshot,consumed_at,created_at,is_estimated_snapshot)
+            values(source_id,owner,linked_food,meal,source_json->>'description',amount,'g',kcal,protein,fat,carbs,
+                amount,'g',kcal,protein,fat,carbs,(source_json->>'logged_at')::timestamptz,
+                (source_json->>'created_at')::timestamptz,
+                case when source_json->>'source' in ('official_pdf','label','menu') then false
+                    when linked_food is not null then (select v.is_estimated from public.food_variants v where v.id=linked_food and v.owner_id=owner)
+                    else true end)
+            on conflict(id) do nothing returning * into entry;
+            if not found then continue; end if;
+            insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state)
+                values(owner,import_action,'system','insert','diary_entries',entry.id,
+                    to_jsonb(entry) || jsonb_build_object('legacy_table','meal_log','legacy_row',source_json));
+        end loop;
+    end if;
+    if to_regclass('public.daily_targets') is not null then
+        -- Latest effective record per explicit owner. Never fall back to an
+        -- older complete target when the current record is incomplete.
+        for legacy in select distinct on(t.user_id) to_jsonb(t) as data from public.daily_targets t
+            where t.user_id is not null and t.effective_from<=current_date
+            order by t.user_id,t.effective_from desc,t.created_at desc,t.id desc loop
+            source_json := legacy.data;
+            owner := (source_json->>'user_id')::uuid;
+            kcal := (source_json->>'calorie_intake_target')::numeric;
+            protein := (source_json->>'protein_target_g')::numeric;
+            fat := (source_json->>'fat_target_g')::numeric;
+            carbs := (source_json->>'carbs_target_g')::numeric;
+            if not exists(select 1 from public.profiles where id=owner)
+                or kcal is null or not(kcal>0 and kcal<=1000000)
+                or protein is null or not(protein between 0 and 1000000)
+                or fat is null or not(fat between 0 and 1000000)
+                or carbs is null or not(carbs between 0 and 1000000) then continue; end if;
+            insert into public.nutrition_targets(owner_id,daily_calories_kcal,daily_protein_g,daily_fat_g,daily_carbs_g,adjustment_limit_ratio)
+            values(owner,kcal,protein,fat,carbs,0.10) on conflict(owner_id) do nothing returning * into targets;
+            if not found then continue; end if;
+            insert into public.audit_events(owner_id,action_group_id,actor,operation,entity_type,entity_id,after_state)
+                values(owner,import_action,'system','target_change','nutrition_targets',owner,
+                    to_jsonb(targets) || jsonb_build_object('legacy_table','daily_targets','legacy_row',source_json));
+        end loop;
+    end if;
+end $$;
+commit;
+
+begin;
+-- Hosted projects may permit anonymous Auth even though JetMeal does not.
+-- is_anonymous is a trusted top-level JWT claim, never user_metadata.
+create function private.registered_uid() returns uuid
+language plpgsql security invoker set search_path='' as $$
+declare uid uuid := auth.uid();
+begin
+    if uid is null or coalesce(auth.jwt()->>'is_anonymous','false')<>'false' then
+        raise exception 'A registered account is required' using errcode='42501';
+    end if;
+    return uid;
+end; $$;
+revoke all on function private.registered_uid() from public,anon,authenticated;
+
+-- Replace only the identity initializer of our own dispatcher; retain its
+-- reviewed mutation/audit implementation and every existing privilege.
+do $$
+declare definition text;
+begin
+    select pg_get_functiondef('private.nutrition_operation(text,jsonb)'::regprocedure) into definition;
+    if strpos(definition,'uid uuid := auth.uid();')=0 then
+        raise exception 'Unexpected JetMeal dispatcher definition';
+    end if;
+    execute replace(definition,'uid uuid := auth.uid();','uid uuid := private.registered_uid();');
+end $$;
+
+-- Scope is exactly the six canonical tables; no legacy RLS policy is changed.
+do $$
+declare item record;
+    predicate text;
+begin
+    for item in select tablename,policyname,cmd from pg_policies where schemaname='public'
+        and tablename in ('profiles','foods','food_variants','diary_entries','nutrition_targets','audit_events') loop
+        predicate := format('(select auth.uid()) = %I and coalesce((select auth.jwt()->>''is_anonymous''),''false'') = ''false''',
+            case when item.tablename='profiles' then 'id' else 'owner_id' end);
+        if item.cmd in ('SELECT','UPDATE') then
+            execute format('alter policy %I on public.%I using (%s)',item.policyname,item.tablename,predicate);
+        end if;
+        if item.cmd in ('INSERT','UPDATE') then
+            execute format('alter policy %I on public.%I with check (%s)',item.policyname,item.tablename,predicate);
+        end if;
+    end loop;
+end $$;
+commit;
+
+begin;
+-- Cover the actual (variant, owner) FK independently of the three-column
+-- variant/food/owner index. meal_group_id is a grouping value, not a FK.
+create index diary_variant_owner_idx on public.diary_entries(food_variant_id,owner_id);
+do $$
+declare item record;
+    predicate text;
+begin
+    for item in select tablename,policyname,cmd from pg_policies where schemaname='public'
+        and tablename in ('profiles','foods','food_variants','diary_entries','nutrition_targets','audit_events') loop
+        -- Cache the complete auth.jwt() result in a scalar InitPlan, then
+        -- extract its trusted claim outside that subquery.
+        predicate := format('(select auth.uid()) = %I and coalesce((select auth.jwt())->>''is_anonymous'',''false'') = ''false''',
+            case when item.tablename='profiles' then 'id' else 'owner_id' end);
+        if item.cmd in ('SELECT','UPDATE') then
+            execute format('alter policy %I on public.%I using (%s)',item.policyname,item.tablename,predicate);
+        end if;
+        if item.cmd in ('INSERT','UPDATE') then
+            execute format('alter policy %I on public.%I with check (%s)',item.policyname,item.tablename,predicate);
+        end if;
+    end loop;
+end $$;
+commit;

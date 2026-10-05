@@ -1,0 +1,4 @@
+# Copy to jetmeal.local.properties (ignored). Client-safe configuration only.
+# Android emulator: http://10.0.2.2:54321 or use adb reverse and http://127.0.0.1:54321.
+supabase.url=https://YOUR_PROJECT.supabase.co
+supabase.publishableKey=sb_publishable_REPLACE_ME
