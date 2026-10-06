@@ -77,10 +77,6 @@ android {
     buildTypes {
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("permanentRelease")
-            optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
-            }
         }
     }
     compileOptions {
