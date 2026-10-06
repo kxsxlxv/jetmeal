@@ -1,7 +1,7 @@
 # Автоматические APK-релизы JetMeal
 
-Каждый `push` в `master` запускает `.github/workflows/android-release.yml`.
-Также можно открыть **Actions → Android release → Run workflow → master**.
+`push` в `master` запускает `.github/workflows/android-release.yml` только если изменились файлы приложения или сборки: `app/**`, корневые Gradle-файлы, `gradle/**`, Gradle wrapper или `buildSrc/**`. Изменения только документации и прочих файлов новый APK не публикуют.
+Также workflow всегда можно запустить вручную через **Actions → Android release → Run workflow → master**.
 Workflow проверяет debug-сборку, все JVM unit-тесты и lint, собирает release APK,
 проверяет подпись постоянного ключа и публикует обычный GitHub Release с APK.
 PR в `master` запускает `android-ci.yml`: компиляция приложения/Android-тестов,
@@ -94,7 +94,7 @@ python3 scripts/initialize_android_signing.py \
 Ни пароли, ни base64 не передаются параметрами команд или в логи.
 Release-сборка с `-PrequireReleaseSigning=true` завершится ошибкой без signing
 или реальной HTTPS клиентской конфигурации. Обычный локальный debug Secrets
-не требует. Локальный release без signing остаётся unsigned для проверки R8;
+не требует. Локальный release без signing остаётся unsigned;
 такой APK нельзя публиковать для Obtainium.
 
 ## Obtainium и первое обновление
