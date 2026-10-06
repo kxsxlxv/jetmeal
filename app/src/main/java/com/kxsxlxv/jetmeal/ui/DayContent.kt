@@ -123,132 +123,122 @@ private fun DayTargetsPrompt(onTargets: () -> Unit) {
 
 @Composable
 private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
-    val rings = nutritionColors()
-    val description = buildString {
-        append(nutritionDescription("Калории", total.calories, effective, "ккал"))
-        append(". ")
-        append(nutritionDescription("Белки", total.protein, targets.protein, "г"))
-        append(". ")
-        append(nutritionDescription("Жиры", total.fat, targets.fat, "г"))
-        append(". ")
-        append(nutritionDescription("Углеводы", total.carbs, targets.carbs, "г"))
-    }
-
-    Box(
+    val palette = nutritionColors()
+    Row(
         Modifier
             .fillMaxWidth()
-            .height(300.dp)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
+            .height(208.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        ConcentricNutritionRings(
-            total = total,
-            targets = targets,
-            effectiveCalories = effective,
-            colors = rings,
-            modifier = Modifier.size(292.dp),
-        )
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            contentAlignment = Alignment.Center,
+        ) {
+            CalorieHealthDial(
+                actual = total.calories,
+                target = effective,
+                colors = palette.calories,
+            )
+        }
+        Column(
+            Modifier
+                .weight(1.1f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            MacroHealthCard(
+                label = "Белки",
+                actual = total.protein,
+                target = targets.protein,
+                colors = palette.protein,
+                symbol = JetMealSymbol.Protein,
+                modifier = Modifier.weight(1f),
+            )
+            MacroHealthCard(
+                label = "Жиры",
+                actual = total.fat,
+                target = targets.fat,
+                colors = palette.fat,
+                symbol = JetMealSymbol.Fat,
+                modifier = Modifier.weight(1f),
+            )
+            MacroHealthCard(
+                label = "Углеводы",
+                actual = total.carbs,
+                target = targets.carbs,
+                colors = palette.carbs,
+                symbol = JetMealSymbol.Carbs,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
-private data class ConcentricRingVisual(
-    val progress: Float,
-    val label: String,
-    val radiusDp: Float,
-    val strokeDp: Float,
-    val labelSp: Float,
-    val colors: RingColors,
-)
-
 @Composable
-private fun ConcentricNutritionRings(
-    total: Nutrition,
-    targets: Targets,
-    effectiveCalories: Double,
-    colors: com.kxsxlxv.jetmeal.ui.theme.NutritionColors,
-    modifier: Modifier = Modifier,
+private fun CalorieHealthDial(
+    actual: Double,
+    target: Double,
+    colors: RingColors,
 ) {
-    val calories by animateFloatAsState(
-        targetValue = ringFraction(total.calories, effectiveCalories),
+    val fraction = ringFraction(actual, target)
+    val progress by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
         animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Калории",
+        label = "Прогресс калорий",
     )
-    val protein by animateFloatAsState(
-        targetValue = ringFraction(total.protein, targets.protein),
+    val overflow by animateFloatAsState(
+        targetValue = (fraction - 1f).coerceIn(0f, 1f),
         animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Белки",
+        label = "Превышение калорий",
     )
-    val fat by animateFloatAsState(
-        targetValue = ringFraction(total.fat, targets.fat),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Жиры",
-    )
-    val carbs by animateFloatAsState(
-        targetValue = ringFraction(total.carbs, targets.carbs),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Углеводы",
-    )
-
-    val visuals = listOf(
-        ConcentricRingVisual(
-            calories,
-            compactRingLabel(null, total.calories, effectiveCalories, "ккал"),
-            radiusDp = 135f,
-            strokeDp = 14f,
-            labelSp = 10.5f,
-            colors = colors.calories,
-        ),
-        ConcentricRingVisual(
-            protein,
-            compactRingLabel("Б", total.protein, targets.protein, "г"),
-            radiusDp = 105f,
-            strokeDp = 13f,
-            labelSp = 10f,
-            colors = colors.protein,
-        ),
-        ConcentricRingVisual(
-            fat,
-            compactRingLabel("Ж", total.fat, targets.fat, "г"),
-            radiusDp = 77f,
-            strokeDp = 12f,
-            labelSp = 9.5f,
-            colors = colors.fat,
-        ),
-        ConcentricRingVisual(
-            carbs,
-            compactRingLabel("У", total.carbs, targets.carbs, "г"),
-            radiusDp = 51f,
-            strokeDp = 11f,
-            labelSp = 9f,
-            colors = colors.carbs,
-        ),
-    )
-
+    val over = target >= 0.0 && actual > target
+    val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
+    val delta = actual - target
+    val deltaText = when {
+        target <= 0.0 && actual <= 0.0 -> "0"
+        delta > 0.0 -> "+${number(delta)}"
+        else -> "−${number(kotlin.math.abs(delta))}"
+    }
     val density = LocalDensity.current
-    val paints = visuals.map { visual ->
-        remember(visual.colors.onContainer, visual.labelSp, density.density, density.fontScale) {
-            Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = visual.colors.onContainer.toArgb()
-                textSize = with(density) { visual.labelSp.sp.toPx() }
-                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            }
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val accent = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    val topPaint = remember(onSurface, density.density, density.fontScale) {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = onSurface.toArgb()
+            textSize = with(density) { 11.sp.toPx() }
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
+    val bottomPaint = remember(accent, density.density, density.fontScale) {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accent.toArgb()
+            textSize = with(density) { 10.5.sp.toPx() }
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
     }
     val textPath = remember { Path() }
     val textBounds = remember { RectF() }
-    val overflowColor = MaterialTheme.colorScheme.error
 
-    Canvas(modifier) {
-        visuals.forEachIndexed { index, visual ->
-            val radius = visual.radiusDp.dp.toPx()
-            val stroke = visual.strokeDp.dp.toPx()
+    Box(
+        Modifier
+            .size(160.dp)
+            .semantics(mergeDescendants = true) {
+                contentDescription = nutritionDescription("Калории", actual, target, "ккал")
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.matchParentSize().clearAndSetSemantics {}) {
+            val stroke = 25.dp.toPx()
+            val radius = size.minDimension / 2f - stroke / 2f - 3.dp.toPx()
             val origin = Offset(center.x - radius, center.y - radius)
-            val diameter = Size(radius * 2, radius * 2)
-            val progress = visual.progress.coerceIn(0f, 1f)
-            val overflow = (visual.progress - 1f).coerceIn(0f, 1f)
+            val diameter = Size(radius * 2f, radius * 2f)
 
             drawArc(
-                color = visual.colors.container,
+                color = track,
                 startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -256,100 +246,173 @@ private fun ConcentricNutritionRings(
                 size = diameter,
                 style = Stroke(stroke, cap = StrokeCap.Round),
             )
-
-            rotate(-90f, center) {
-                when {
-                    progress >= 1f -> drawArc(
-                        brush = Brush.sweepGradient(
-                            0f to visual.colors.start,
-                            .5f to visual.colors.end,
-                            1f to visual.colors.start,
-                            center = center,
-                        ),
-                        startAngle = 0f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        topLeft = origin,
-                        size = diameter,
-                        style = Stroke(stroke, cap = StrokeCap.Butt),
-                    )
-                    progress > 0f -> {
-                        drawArc(
-                            brush = Brush.sweepGradient(
-                                0f to visual.colors.start,
-                                progress.coerceAtLeast(.001f) to visual.colors.end,
-                                1f to visual.colors.end,
-                                center = center,
-                            ),
-                            startAngle = 0f,
-                            sweepAngle = 360f * progress,
-                            useCenter = false,
-                            topLeft = origin,
-                            size = diameter,
-                            style = Stroke(stroke, cap = StrokeCap.Butt),
-                        )
-                        drawCircle(
-                            color = visual.colors.start,
-                            radius = stroke / 2,
-                            center = Offset(center.x + radius, center.y),
-                        )
-                        val angle = progress * 2 * PI
-                        drawCircle(
-                            color = visual.colors.end,
-                            radius = stroke / 2,
-                            center = Offset(
-                                center.x + radius * cos(angle).toFloat(),
-                                center.y + radius * sin(angle).toFloat(),
-                            ),
-                        )
-                    }
-                }
-            }
-
-            if (overflow > 0f) {
+            if (progress > 0f) {
                 drawArc(
-                    color = overflowColor,
+                    brush = Brush.sweepGradient(
+                        0f to colors.start,
+                        .65f to colors.end,
+                        1f to colors.end,
+                        center = center,
+                    ),
                     startAngle = -90f,
-                    sweepAngle = 360f * overflow,
+                    sweepAngle = 360f * progress,
                     useCenter = false,
                     topLeft = origin,
                     size = diameter,
-                    style = Stroke(2.25.dp.toPx(), cap = StrokeCap.Round),
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+            }
+            if (overflow > 0f) {
+                val overflowRadius = radius + stroke / 2f + 2.dp.toPx()
+                drawArc(
+                    color = MaterialTheme.colorScheme.error,
+                    startAngle = -90f,
+                    sweepAngle = 360f * overflow,
+                    useCenter = false,
+                    topLeft = Offset(center.x - overflowRadius, center.y - overflowRadius),
+                    size = Size(overflowRadius * 2f, overflowRadius * 2f),
+                    style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round),
                 )
             }
 
-            // The label belongs to the ring itself: it sits in the radial gap
-            // immediately inside the track instead of creating a second legend/card.
-            val labelRadius = radius - stroke / 2 - 6.dp.toPx()
-            val labelSweep = if (index == visuals.lastIndex) 172f else 152f
-            val labelStart = 270f - labelSweep / 2f
+            val textRadius = radius - stroke / 2f - 8.dp.toPx()
             textBounds.set(
-                center.x - labelRadius,
-                center.y - labelRadius,
-                center.x + labelRadius,
-                center.y + labelRadius,
+                center.x - textRadius,
+                center.y - textRadius,
+                center.x + textRadius,
+                center.y + textRadius,
             )
-            textPath.rewind()
-            textPath.addArc(textBounds, labelStart, labelSweep)
 
-            val paint = paints[index]
-            val originalTextSize = paint.textSize
-            val available = (labelRadius * PI * labelSweep / 180f).toFloat() * .92f
-            val measured = paint.measureText(visual.label)
-            if (measured > available && measured > 0f) {
-                paint.textSize = originalTextSize * (available / measured)
-            }
-            val fittedWidth = paint.measureText(visual.label)
+            val topText = "Калории"
+            val topSweep = 142f
+            textPath.rewind()
+            textPath.addArc(textBounds, 199f, topSweep)
+            val topLength = (textRadius * Math.PI * topSweep / 180.0).toFloat()
+            val topWidth = topPaint.measureText(topText)
             drawIntoCanvas { canvas ->
                 canvas.nativeCanvas.drawTextOnPath(
-                    visual.label,
+                    topText,
                     textPath,
-                    (available - fittedWidth) / 2f,
+                    ((topLength - topWidth) / 2f).coerceAtLeast(0f),
                     0f,
-                    paint,
+                    topPaint,
                 )
             }
-            paint.textSize = originalTextSize
+
+            val bottomText = "${number(actual)} / ${number(target)} ккал"
+            val bottomSweep = -142f
+            textPath.rewind()
+            textPath.addArc(textBounds, 161f, bottomSweep)
+            val bottomLength = (textRadius * Math.PI * kotlin.math.abs(bottomSweep) / 180.0).toFloat()
+            val originalBottomSize = bottomPaint.textSize
+            val bottomWidth = bottomPaint.measureText(bottomText)
+            if (bottomWidth > bottomLength * .94f && bottomWidth > 0f) {
+                bottomPaint.textSize = originalBottomSize * (bottomLength * .94f / bottomWidth)
+            }
+            val fittedBottomWidth = bottomPaint.measureText(bottomText)
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawTextOnPath(
+                    bottomText,
+                    textPath,
+                    ((bottomLength - fittedBottomWidth) / 2f).coerceAtLeast(0f),
+                    0f,
+                    bottomPaint,
+                )
+            }
+            bottomPaint.textSize = originalBottomSize
+        }
+
+        Text(
+            percent,
+            style = MaterialTheme.typography.displaySmallEmphasized,
+            color = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.clearAndSetSemantics {},
+        )
+
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = 12.dp)
+                .size(46.dp)
+                .background(
+                    if (over) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+                    CircleShape,
+                )
+                .clearAndSetSemantics {},
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                deltaText,
+                style = MaterialTheme.typography.labelMediumEmphasized,
+                color = if (over) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MacroHealthCard(
+    label: String,
+    actual: Double,
+    target: Double,
+    colors: RingColors,
+    symbol: JetMealSymbol,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = nutritionDescription(label, actual, target, "г")
+            },
+        shape = RoundedCornerShape(24.dp),
+        color = colors.container,
+        contentColor = colors.onContainer,
+    ) {
+        Row(
+            Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .width(5.dp)
+                    .background(colors.start)
+                    .clearAndSetSemantics {},
+            )
+            Box(
+                Modifier
+                    .padding(start = 7.dp)
+                    .size(43.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = .72f),
+                        RoundedCornerShape(16.dp),
+                    )
+                    .clearAndSetSemantics {},
+                contentAlignment = Alignment.Center,
+            ) {
+                SymbolIcon(symbol, null, Modifier.size(27.dp))
+            }
+            Column(
+                Modifier
+                    .padding(start = 8.dp, end = 8.dp)
+                    .clearAndSetSemantics {},
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.onContainer,
+                    maxLines = 1,
+                )
+                Text(
+                    "${number(actual, 1)} / ${number(target, 1)} г",
+                    style = MaterialTheme.typography.titleSmallEmphasized,
+                    color = colors.onContainer,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -358,16 +421,6 @@ private fun ringFraction(actual: Double, target: Double): Float = when {
     target > 0.0 -> (actual / target).toFloat()
     actual > 0.0 -> 2f
     else -> 0f
-}
-
-private fun compactRingLabel(prefix: String?, actual: Double, target: Double, unit: String): String {
-    val value = if (unit == "ккал") number(actual) else number(actual, 1)
-    val goal = if (unit == "ккал") number(target) else number(target, 1)
-    val status = if (actual > target) " ↑" else ""
-    return buildString {
-        if (prefix != null) append(prefix).append(' ')
-        append(value).append(" / ").append(goal).append(' ').append(unit).append(status)
-    }
 }
 
 private fun nutritionDescription(name: String, actual: Double, target: Double, unit: String): String {

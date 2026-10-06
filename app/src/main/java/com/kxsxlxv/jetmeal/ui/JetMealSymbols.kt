@@ -21,6 +21,9 @@ enum class JetMealSymbol(@DrawableRes internal val resource: Int) {
     Refresh(R.drawable.symbol_refresh),
     Close(R.drawable.symbol_close),
     Logout(R.drawable.symbol_logout),
+    Protein(R.drawable.symbol_egg_alt),
+    Fat(R.drawable.symbol_water_drop),
+    Carbs(R.drawable.symbol_bakery_dining),
 }
 
 @Composable
