@@ -123,157 +123,266 @@ private fun DayTargetsPrompt(onTargets: () -> Unit) {
 
 @Composable
 private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
-    val colors = MaterialTheme.colorScheme
     val rings = nutritionColors()
-    val scale = LocalDensity.current.fontScale.coerceAtLeast(1f)
-    val over = total.calories > effective
-    // At a ±100% adjustment limit, the domain can legitimately exhaust the allowance.
-    // A zero allowance has no percentage denominator; show its explicit state instead.
-    val hasAllowance = effective > 0.0
-    val fraction = if (hasAllowance) (total.calories / effective).toFloat()
-        else if (total.calories > 0.0) 2f else 0f
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.sizeIn(maxWidth = 300.dp).fillMaxWidth().height(258.dp), contentAlignment = Alignment.Center) {
-            GradientNutritionRing(
-                fraction, "КАЛОРИИ · ${number(effective)} ККАЛ", rings.calories.start, rings.calories.end,
-                Modifier.size(252.dp), strokeDp = 23f, curvedTextSp = 12f,
-                overflowColor = colors.error,
-            )
-            Column(Modifier.widthIn(max = 166.dp).semantics(mergeDescendants = true) {},
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                val numberStyle = when {
-                    number(total.calories).length > 5 -> MaterialTheme.typography.headlineMediumEmphasized
-                    scale > 1.3f -> MaterialTheme.typography.headlineLargeEmphasized
-                    else -> MaterialTheme.typography.displayMediumEmphasized
-                }
-                Text(number(total.calories), style = numberStyle,
-                    color = if (over) colors.error else colors.onSurface, maxLines = 1)
-                Text("ккал съедено", style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant)
-                Text(if (hasAllowance) "${number(fraction * 100.0)}% нормы"
-                    else if (over) "Норма исчерпана" else "0 ккал доступно",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (over) colors.error else colors.primary,
-                    modifier = Modifier.padding(top = 6.dp))
-            }
-        }
-        Text(
-            when {
-                over -> "+${number(total.calories - effective)} ккал сверх нормы"
-                !hasAllowance -> "На этот день доступно 0 ккал"
-                total.calories == effective -> "Дневная норма достигнута"
-                else -> "Осталось ${number(effective - total.calories)} ккал"
-            },
-            style = MaterialTheme.typography.titleMediumEmphasized,
-            color = if (over) colors.error else colors.primary,
-        )
-        Text("Норма на этот день: ${number(effective)} ккал", style = MaterialTheme.typography.bodySmall,
-            color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp, bottom = 16.dp))
-        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MacroRing("Белки", total.protein, targets.protein, rings.protein, scale)
-            MacroRing("Жиры", total.fat, targets.fat, rings.fat, scale)
-            MacroRing("Углеводы", total.carbs, targets.carbs, rings.carbs, scale)
-        }
+    val description = buildString {
+        append(nutritionDescription("Калории", total.calories, effective, "ккал"))
+        append(". ")
+        append(nutritionDescription("Белки", total.protein, targets.protein, "г"))
+        append(". ")
+        append(nutritionDescription("Жиры", total.fat, targets.fat, "г"))
+        append(". ")
+        append(nutritionDescription("Углеводы", total.carbs, targets.carbs, "г"))
     }
-}
 
-@Composable
-private fun MacroRing(label: String, actual: Double, target: Double, colors: RingColors, fontScale: Float) {
-    Column(
-        Modifier.width((98 + (fontScale - 1) * 74).dp).background(colors.container,
-            RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 12.dp, bottomEnd = 12.dp))
-            .padding(horizontal = 6.dp, vertical = 8.dp).semantics(mergeDescendants = true) {
-                contentDescription = "$label: ${number(actual, 1)} из ${number(target, 1)} граммов"
-            },
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size((84 * fontScale).dp), contentAlignment = Alignment.Center) {
-            GradientNutritionRing(if (target > 0) (actual / target).toFloat() else 0f,
-                label, colors.start, colors.end, Modifier.fillMaxSize(), strokeDp = 7f, curvedTextSp = 11f,
-                overflowColor = MaterialTheme.colorScheme.error)
-            Text(number(actual, 1), style = MaterialTheme.typography.titleMediumEmphasized,
-                color = colors.onContainer,
-                modifier = Modifier.clearAndSetSemantics {})
-        }
-        Text(if (target > 0) "из ${number(target)} г" else "цель не задана",
-            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.clearAndSetSemantics {})
+        ConcentricNutritionRings(
+            total = total,
+            targets = targets,
+            effectiveCalories = effective,
+            colors = rings,
+            modifier = Modifier.size(292.dp),
+        )
     }
 }
 
-/** Data visualization, not an icon: the platform draws type following the ring's path. */
+private data class ConcentricRingVisual(
+    val progress: Float,
+    val label: String,
+    val radiusDp: Float,
+    val strokeDp: Float,
+    val labelSp: Float,
+    val colors: RingColors,
+)
+
 @Composable
-private fun GradientNutritionRing(
-    fraction: Float,
-    label: String,
-    start: Color,
-    end: Color,
-    modifier: Modifier,
-    strokeDp: Float,
-    curvedTextSp: Float,
-    overflowColor: Color,
+private fun ConcentricNutritionRings(
+    total: Nutrition,
+    targets: Targets,
+    effectiveCalories: Double,
+    colors: com.kxsxlxv.jetmeal.ui.theme.NutritionColors,
+    modifier: Modifier = Modifier,
 ) {
-    val progress by animateFloatAsState(fraction.coerceIn(0f, 1f),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(), label = "Заполнение кольца")
-    val overflow by animateFloatAsState((fraction - 1f).coerceIn(0f, 1f),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(), label = "Превышение нормы")
-    val labelColor = MaterialTheme.colorScheme.onSurface
-    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    val calories by animateFloatAsState(
+        targetValue = ringFraction(total.calories, effectiveCalories),
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Калории",
+    )
+    val protein by animateFloatAsState(
+        targetValue = ringFraction(total.protein, targets.protein),
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Белки",
+    )
+    val fat by animateFloatAsState(
+        targetValue = ringFraction(total.fat, targets.fat),
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Жиры",
+    )
+    val carbs by animateFloatAsState(
+        targetValue = ringFraction(total.carbs, targets.carbs),
+        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
+        label = "Углеводы",
+    )
+
+    val visuals = listOf(
+        ConcentricRingVisual(
+            calories,
+            compactRingLabel(null, total.calories, effectiveCalories, "ккал"),
+            radiusDp = 135f,
+            strokeDp = 14f,
+            labelSp = 10.5f,
+            colors = colors.calories,
+        ),
+        ConcentricRingVisual(
+            protein,
+            compactRingLabel("Б", total.protein, targets.protein, "г"),
+            radiusDp = 105f,
+            strokeDp = 13f,
+            labelSp = 10f,
+            colors = colors.protein,
+        ),
+        ConcentricRingVisual(
+            fat,
+            compactRingLabel("Ж", total.fat, targets.fat, "г"),
+            radiusDp = 77f,
+            strokeDp = 12f,
+            labelSp = 9.5f,
+            colors = colors.fat,
+        ),
+        ConcentricRingVisual(
+            carbs,
+            compactRingLabel("У", total.carbs, targets.carbs, "г"),
+            radiusDp = 51f,
+            strokeDp = 11f,
+            labelSp = 9f,
+            colors = colors.carbs,
+        ),
+    )
+
     val density = LocalDensity.current
-    val paint = remember(labelColor, density.density, density.fontScale, curvedTextSp) {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = labelColor.toArgb()
-            textSize = with(density) { curvedTextSp.sp.toPx() }
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    val paints = visuals.map { visual ->
+        remember(visual.colors.onContainer, visual.labelSp, density.density, density.fontScale) {
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = visual.colors.onContainer.toArgb()
+                textSize = with(density) { visual.labelSp.sp.toPx() }
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            }
         }
     }
     val textPath = remember { Path() }
     val textBounds = remember { RectF() }
-    val textWidth = remember(label, paint) { paint.measureText(label) }
+    val overflowColor = MaterialTheme.colorScheme.error
+
     Canvas(modifier) {
-        val stroke = strokeDp.dp.toPx()
-        val radius = size.minDimension / 2 - max(20.dp.toPx(), paint.textSize + stroke / 2)
-        val origin = Offset(center.x - radius, center.y - radius)
-        val diameter = Size(radius * 2, radius * 2)
-        drawArc(track, -90f, 360f, false, origin, diameter, style = Stroke(stroke, cap = StrokeCap.Round))
-        // Rotating the sweep keeps its gradient start aligned with the twelve-o'clock start.
-        rotate(-90f, center) {
-            if (progress >= 1f) {
-                // A closed ring has no endpoint: return smoothly to its initial shade.
-                drawArc(Brush.sweepGradient(0f to start, .5f to end, 1f to start, center = center),
-                    0f, 360f, false, origin, diameter, style = Stroke(stroke, cap = StrokeCap.Butt))
-            } else if (progress > 0f) {
-                drawArc(Brush.sweepGradient(0f to start, progress.coerceAtLeast(.001f) to end,
-                    1f to end, center = center), 0f, 360f * progress,
-                    false, origin, diameter, style = Stroke(stroke, cap = StrokeCap.Butt))
-                // Sweep shaders wrap at zero; solid caps avoid a split dark/light start cap.
-                drawCircle(start, stroke / 2, Offset(center.x + radius, center.y))
-                val angle = progress * 2 * PI
-                drawCircle(end, stroke / 2, Offset(center.x + radius * cos(angle).toFloat(),
-                    center.y + radius * sin(angle).toFloat()))
+        visuals.forEachIndexed { index, visual ->
+            val radius = visual.radiusDp.dp.toPx()
+            val stroke = visual.strokeDp.dp.toPx()
+            val origin = Offset(center.x - radius, center.y - radius)
+            val diameter = Size(radius * 2, radius * 2)
+            val progress = visual.progress.coerceIn(0f, 1f)
+            val overflow = (visual.progress - 1f).coerceIn(0f, 1f)
+
+            drawArc(
+                color = visual.colors.container,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = origin,
+                size = diameter,
+                style = Stroke(stroke, cap = StrokeCap.Round),
+            )
+
+            rotate(-90f, center) {
+                when {
+                    progress >= 1f -> drawArc(
+                        brush = Brush.sweepGradient(
+                            0f to visual.colors.start,
+                            .5f to visual.colors.end,
+                            1f to visual.colors.start,
+                            center = center,
+                        ),
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = origin,
+                        size = diameter,
+                        style = Stroke(stroke, cap = StrokeCap.Butt),
+                    )
+                    progress > 0f -> {
+                        drawArc(
+                            brush = Brush.sweepGradient(
+                                0f to visual.colors.start,
+                                progress.coerceAtLeast(.001f) to visual.colors.end,
+                                1f to visual.colors.end,
+                                center = center,
+                            ),
+                            startAngle = 0f,
+                            sweepAngle = 360f * progress,
+                            useCenter = false,
+                            topLeft = origin,
+                            size = diameter,
+                            style = Stroke(stroke, cap = StrokeCap.Butt),
+                        )
+                        drawCircle(
+                            color = visual.colors.start,
+                            radius = stroke / 2,
+                            center = Offset(center.x + radius, center.y),
+                        )
+                        val angle = progress * 2 * PI
+                        drawCircle(
+                            color = visual.colors.end,
+                            radius = stroke / 2,
+                            center = Offset(
+                                center.x + radius * cos(angle).toFloat(),
+                                center.y + radius * sin(angle).toFloat(),
+                            ),
+                        )
+                    }
+                }
             }
-        }
-        if (overflow > 0f) {
-            val compact = strokeDp < 10f || density.fontScale >= 1.3f
-            val overflowRadius = if (compact) radius else radius - stroke / 2 - 7.dp.toPx()
-            drawArc(overflowColor, -90f, 360f * overflow, false,
-                Offset(center.x - overflowRadius, center.y - overflowRadius),
-                Size(overflowRadius * 2, overflowRadius * 2),
-                style = Stroke((if (compact) 2 else 3).dp.toPx(), cap = StrokeCap.Round))
-        }
-        val textRadius = radius + stroke / 2 + 5.dp.toPx()
-        textBounds.set(center.x - textRadius, center.y - textRadius,
-            center.x + textRadius, center.y + textRadius)
-        textPath.rewind()
-        textPath.addArc(textBounds, 200f, 140f)
-        val length = (textRadius * PI * 140 / 180).toFloat()
-        // Keep the user's scaled type size. Curved decoration is omitted if it cannot fit;
-        // all values/labels have normal, scalable text and accessibility equivalents.
-        if (textWidth < length) {
+
+            if (overflow > 0f) {
+                drawArc(
+                    color = overflowColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f * overflow,
+                    useCenter = false,
+                    topLeft = origin,
+                    size = diameter,
+                    style = Stroke(2.25.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+
+            // The label belongs to the ring itself: it sits in the radial gap
+            // immediately inside the track instead of creating a second legend/card.
+            val labelRadius = radius - stroke / 2 - 6.dp.toPx()
+            val labelSweep = if (index == visuals.lastIndex) 172f else 152f
+            val labelStart = 270f - labelSweep / 2f
+            textBounds.set(
+                center.x - labelRadius,
+                center.y - labelRadius,
+                center.x + labelRadius,
+                center.y + labelRadius,
+            )
+            textPath.rewind()
+            textPath.addArc(textBounds, labelStart, labelSweep)
+
+            val paint = paints[index]
+            val originalTextSize = paint.textSize
+            val available = (labelRadius * PI * labelSweep / 180f).toFloat() * .92f
+            val measured = paint.measureText(visual.label)
+            if (measured > available && measured > 0f) {
+                paint.textSize = originalTextSize * (available / measured)
+            }
+            val fittedWidth = paint.measureText(visual.label)
             drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawTextOnPath(label, textPath,
-                    (length - textWidth) / 2, 0f, paint)
+                canvas.nativeCanvas.drawTextOnPath(
+                    visual.label,
+                    textPath,
+                    (available - fittedWidth) / 2f,
+                    0f,
+                    paint,
+                )
+            }
+            paint.textSize = originalTextSize
+        }
+    }
+}
+
+private fun ringFraction(actual: Double, target: Double): Float = when {
+    target > 0.0 -> (actual / target).toFloat()
+    actual > 0.0 -> 2f
+    else -> 0f
+}
+
+private fun compactRingLabel(prefix: String?, actual: Double, target: Double, unit: String): String {
+    val value = if (unit == "ккал") number(actual) else number(actual, 1)
+    val goal = if (unit == "ккал") number(target) else number(target, 1)
+    val status = if (actual > target) " ↑" else ""
+    return buildString {
+        if (prefix != null) append(prefix).append(' ')
+        append(value).append(" / ").append(goal).append(' ').append(unit).append(status)
+    }
+}
+
+private fun nutritionDescription(name: String, actual: Double, target: Double, unit: String): String {
+    val value = if (unit == "ккал") number(actual) else number(actual, 1)
+    val goal = if (unit == "ккал") number(target) else number(target, 1)
+    return buildString {
+        append(name).append(": ").append(value).append(" из ").append(goal).append(' ').append(unit)
+        when {
+            target <= 0.0 && actual > 0.0 -> append(", норма исчерпана")
+            target <= 0.0 -> append(", цель равна нулю")
+            actual > target -> {
+                val delta = actual - target
+                append(", превышение ")
+                append(if (unit == "ккал") number(delta) else number(delta, 1))
+                append(' ').append(unit)
             }
         }
     }

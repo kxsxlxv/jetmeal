@@ -60,18 +60,20 @@ class DayRedesignTest {
         compose.runOnIdle { assertEquals(MealPeriod.Snack, added) }
     }
 
-    @Test fun overTargetReportsMagnitudeInsteadOfOnlyShowingAFullRing() {
+    @Test fun overTargetReportsMagnitudeInsideHeroWithoutDuplicatedVisibleCopy() {
         val food = entry("over", "Ужин", MealPeriod.Evening, "2020-10-06T18:00:00Z", 3500.0)
         compose.setContent {
             JetmealTheme {
                 Surface { DayContent(date, listOf(food), Targets(2000.0, 100.0, 60.0, 200.0), null, {}, {}, {}) }
             }
         }
-        compose.onNodeWithText("175% нормы").assertIsDisplayed()
-        compose.onNodeWithText("ккал сверх нормы", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Калории:", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("превышение", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("% нормы", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("ккал сверх нормы", substring = true).assertDoesNotExist()
     }
 
-    @Test fun exhaustedZeroAllowanceWithNoConsumptionShowsAvailableCaloriesWithoutAPercentage() {
+    @Test fun exhaustedZeroAllowanceIsRepresentedWithoutPercentageOrInvalidNumbers() {
         val targets = Targets(2000.0, 100.0, 60.0, 200.0, limitRatio = 1.0)
         val week = WeekBudget.calculate(date, targets, mapOf(date.minusDays(1) to 20000.0))
         assertEquals(0.0, week.effectiveTarget, 0.0)
@@ -80,14 +82,13 @@ class DayRedesignTest {
                 Surface { DayContent(date, emptyList(), targets, week, {}, {}, {}) }
             }
         }
-        compose.onNodeWithText("0 ккал доступно").assertIsDisplayed()
-        compose.onNodeWithText("На этот день доступно 0 ккал").assertIsDisplayed()
-        compose.onNodeWithText("Норма на этот день: 0 ккал").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Калории: 0 из 0 ккал", substring = true).assertIsDisplayed()
         compose.onNodeWithText("% нормы", substring = true).assertDoesNotExist()
         compose.onNodeWithText("NaN", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
     }
 
-    @Test fun consumptionWithZeroAllowanceShowsRealOverageWithoutInfiniteProgress() {
+    @Test fun consumptionWithZeroAllowanceKeepsActualAndExhaustedStateInHero() {
         val food = entry("zero-allowance", "Обед", MealPeriod.Day, "2020-10-06T13:00:00Z", 123.0)
         val targets = Targets(2000.0, 100.0, 60.0, 200.0, limitRatio = 1.0)
         val week = WeekBudget.calculate(date, targets,
@@ -98,10 +99,11 @@ class DayRedesignTest {
                 Surface { DayContent(date, listOf(food), targets, week, {}, {}, {}) }
             }
         }
-        compose.onNodeWithText("Норма исчерпана").assertIsDisplayed()
-        compose.onNodeWithText("+123 ккал сверх нормы").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Калории: 123 из 0 ккал", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("норма исчерпана", substring = true).assertIsDisplayed()
         compose.onNodeWithText("% нормы", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
         compose.onNodeWithText("NaN", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
     }
+
 }
