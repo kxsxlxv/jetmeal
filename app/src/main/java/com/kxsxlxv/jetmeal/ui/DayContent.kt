@@ -47,9 +47,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.sin
 
 /** Initial expansion is presentation state only; meal assignment remains a domain rule. */
 internal fun initialExpandedMeal(
@@ -218,8 +215,9 @@ private fun CalorieHealthDial(
         animationKey = animationKey,
         target = fraction.coerceIn(0f, 2f),
     )
-    val firstLap = displayedFraction.coerceIn(0f, 1f)
-    val overflowLap = (displayedFraction - 1f).coerceIn(0f, 1f)
+    val lapProgress = splitRingProgress(displayedFraction)
+    val firstLap = lapProgress.firstLap
+    val overflowLap = lapProgress.overflowLap
     val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
     val density = LocalDensity.current
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -400,7 +398,7 @@ private fun MacroHealthCard(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         contentColor = onSurface,
     ) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -462,6 +460,19 @@ private fun MacroHealthCard(
             }
         }
     }
+}
+
+internal data class RingLapProgress(
+    val firstLap: Float,
+    val overflowLap: Float,
+)
+
+internal fun splitRingProgress(progress: Float): RingLapProgress {
+    val bounded = progress.coerceIn(0f, 2f)
+    return RingLapProgress(
+        firstLap = bounded.coerceAtMost(1f),
+        overflowLap = (bounded - 1f).coerceIn(0f, 1f),
+    )
 }
 
 private fun ringFraction(actual: Double, target: Double): Float = when {
