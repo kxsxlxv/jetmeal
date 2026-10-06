@@ -1,13 +1,12 @@
 # Jetmeal launcher icon
 
-Jetmeal uses an Android adaptive icon traced from the selected orange-orbit source artwork.
+Jetmeal's primary launcher artwork is intentionally raster-based to preserve the approved visual exactly.
 
-- `app/src/main/res/drawable/ic_launcher_foreground.xml` — full-color auto-traced VectorDrawable.
-- `app/src/main/res/drawable/ic_launcher_monochrome.xml` — dedicated themed-icon silhouette.
-- `app/src/main/res/drawable/ic_launcher_background.xml` — full-bleed warm cream background.
+- `app/src/main/res/drawable-nodpi/ic_launcher_foreground_art.webp` — approved color artwork.
+- `app/src/main/res/drawable/ic_launcher_foreground.xml` — bitmap wrapper used by the adaptive icon.
+- `app/src/main/res/drawable/ic_launcher_background.xml` — matching warm cream fallback/background.
+- `app/src/main/res/drawable/ic_launcher_monochrome.xml` — simplified themed-icon layer only.
 - `app/src/main/res/mipmap-anydpi/ic_launcher*.xml` — adaptive launcher definitions.
-- `docs/assets/branding/jetmeal-orbit-source.svg` — editable traced source.
+- `docs/assets/branding/jetmeal-orbit-raster.webp` — branding source copy.
 
-The geometry is traced from the chosen raster rather than manually redrawn. The fruit and orbit therefore preserve the proportions and silhouette of the approved concept while keeping the launcher resource resolution-independent.
-
-The mark is inset inside the adaptive safe region so circle, squircle and other launcher masks do not crop the leaf or orbital ring.
+Do not retrace or manually redraw the full-color mark. The approved raster is the source of truth for the normal launcher icon. Vectorization is used only for the monochrome themed-icon fallback.
