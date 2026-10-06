@@ -133,3 +133,27 @@ release-ключа. Первый release нельзя установить по�
 Официальные источники: [Android signing](https://developer.android.com/studio/publish/app-signing),
 [GitHub run variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables),
 [Obtainium](https://github.com/ImranR98/Obtainium).
+
+## Проверка настройки — 6 октября 2026
+
+Локально прошли исходная и изменённая debug-сборки, 50 JVM-тестов и Android lint.
+Шесть тестов CI-аллокатора/проверки APK и `actionlint 1.7.12` прошли.
+Настоящий release APK собран с новым постоянным ключом; `apksigner` подтвердил
+подпись, SHA-256 сертификата совпал с резервной копией, `aapt2` подтвердил
+`com.kxsxlxv.jetmeal` / `1.1.1000101` / code `1000101`.
+Отдельно проверено, что strict CI signing без ключа завершается ошибкой.
+
+Четыре signing Secrets и три Variables установлены автоматически через
+авторизованный GitHub CLI. Ключ сохранён в WSL
+`/home/kisel/.local/share/jetmeal-signing`; резервные копии — в отдельной WSL-папке
+и в **C:\Users\kisel\JetMealSigningBackup** с ограниченными NTFS ACL.
+Копирование в зашифрованное хранилище вне этого компьютера остаётся действием
+владельца ключа. Функциональность приложения и зависимости не менялись.
+
+Первый реальный [release workflow](https://github.com/kxsxlxv/jetmeal/actions/runs/37529757268)
+успешно опубликовал [v1.1.1000101](https://github.com/kxsxlxv/jetmeal/releases/tag/v1.1.1000101).
+APK скачан обратно из GitHub: подпись совпала с постоянным сертификатом,
+пакет и версия подтверждены повторно. Release опубликован, не draft/prerelease.
+Отдельный [Android CI run](https://github.com/kxsxlxv/jetmeal/actions/runs/37529813067)
+запущен вручную и успешно проверил тот же job, который запускается для PR,
+включая компиляцию Android-тестов без signing Secrets.

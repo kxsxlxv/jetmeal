@@ -105,7 +105,7 @@ jobs:
           PY
           mkdir -p dist
           cp "$apk" "dist/JetMeal-$RELEASE_TAG.apk"
-          sha256sum "dist/JetMeal-$RELEASE_TAG.apk" > "dist/JetMeal-$RELEASE_TAG.apk.sha256"
+          (cd dist && sha256sum "JetMeal-$RELEASE_TAG.apk") > "dist/JetMeal-$RELEASE_TAG.apk.sha256"
       - name: Stage APK and publish normal GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
