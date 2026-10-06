@@ -39,4 +39,22 @@ class DayPresentationTest {
         assertEquals(MealPeriod.Morning, initialExpandedMeal(today.minusDays(1), emptyList(),
             Instant.parse("2026-10-06T09:00:00Z"), zone))
     }
+    @Test fun calorieRingSplitsOverflowIntoASecondLayer() {
+        val below = splitRingProgress(0.34f)
+        assertEquals(0.34f, below.firstLap, 0.0001f)
+        assertEquals(0f, below.overflowLap, 0.0001f)
+
+        val justOver = splitRingProgress(1.01f)
+        assertEquals(1f, justOver.firstLap, 0.0001f)
+        assertEquals(0.01f, justOver.overflowLap, 0.0001f)
+
+        val wellOver = splitRingProgress(1.75f)
+        assertEquals(1f, wellOver.firstLap, 0.0001f)
+        assertEquals(0.75f, wellOver.overflowLap, 0.0001f)
+
+        val visuallyCapped = splitRingProgress(2.5f)
+        assertEquals(1f, visuallyCapped.firstLap, 0.0001f)
+        assertEquals(1f, visuallyCapped.overflowLap, 0.0001f)
+    }
+
 }
