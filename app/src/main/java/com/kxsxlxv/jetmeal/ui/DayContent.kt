@@ -206,6 +206,7 @@ private fun CalorieHealthDial(
     val onSurface = MaterialTheme.colorScheme.onSurface
     val accent = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    val errorColor = MaterialTheme.colorScheme.error
     val topPaint = remember(onSurface, density.density, density.fontScale) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = onSurface.toArgb()
@@ -265,7 +266,7 @@ private fun CalorieHealthDial(
             if (overflow > 0f) {
                 val overflowRadius = radius + stroke / 2f + 2.dp.toPx()
                 drawArc(
-                    color = MaterialTheme.colorScheme.error,
+                    color = errorColor,
                     startAngle = -90f,
                     sweepAngle = 360f * overflow,
                     useCenter = false,
@@ -336,7 +337,7 @@ private fun CalorieHealthDial(
                 .size(46.dp)
                 .background(
                     if (over) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
-                    CircleShape,
+                    RoundedCornerShape(50),
                 )
                 .clearAndSetSemantics {},
             contentAlignment = Alignment.Center,
