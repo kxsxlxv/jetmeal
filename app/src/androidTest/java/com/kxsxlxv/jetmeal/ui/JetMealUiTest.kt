@@ -24,7 +24,7 @@ import java.time.format.DateTimeFormatter
 /** Fixtures exist only in this test source set; real Auth/HTTP/RLS is verified separately. */
 class JetMealUiTest {
     @get:Rule val compose = createComposeRule()
-    private val food = FoodCandidate("variant", "food", "Cottage cheese", "Personal brand", "Label",
+    private val food = FoodCandidate("variant", "food", "Творог", "Мой продукт", "Этикетка",
         300.0, "g", Nutrition(432.0, 36.0, 12.0, 45.0), false)
     private val entry = DiaryEntry("entry", food.name, food.brand, 125.0, "g", 300.0,
         food.nutrition, Nutrition(180.0, 15.0, 5.0, 18.75), Instant.parse("2026-10-06T06:00:00Z"),
@@ -34,7 +34,7 @@ class JetMealUiTest {
         var selected by mutableStateOf<FoodCandidate?>(null)
         val writes = mutableListOf<Double>()
         compose.setContent {
-            JetmealTheme(dynamicColor = false) {
+            JetmealTheme {
                 Surface {
                     if (selected == null) FoodSearchContent(listOf(food), false, {}) { selected = it }
                     else AmountContent(food.name, food.unit, food.amount, food.amount, food.nutrition,
@@ -44,10 +44,10 @@ class JetMealUiTest {
         }
         compose.onNodeWithText(food.name).performClick()
         compose.runOnIdle { assertTrue(writes.isEmpty()) }
-        compose.onNodeWithText("Quantity (g)").performTextReplacement("125")
-        compose.onNodeWithText("180 kcal").assertIsDisplayed()
+        compose.onNodeWithText("Количество (г)").performTextReplacement("125")
+        compose.onNodeWithText("180 ккал").assertIsDisplayed()
         compose.runOnIdle { assertTrue(writes.isEmpty()) }
-        compose.onNodeWithText("Confirm food").performClick()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(listOf(125.0), writes) }
     }
 
@@ -55,23 +55,30 @@ class JetMealUiTest {
         var editing by mutableStateOf(false)
         var corrected: Double? = null
         var deletes = 0
+        var notice by mutableStateOf<String?>(null)
         compose.setContent {
-            JetmealTheme(dynamicColor = false) {
+            JetmealTheme {
                 Surface {
                     if (!editing) DayContent(LocalDate.of(2026, 10, 6), listOf(entry),
                         Targets(2000.0, 100.0, 60.0, 250.0), null, {}, { editing = true }, {})
                     else AmountContent(entry.name, entry.unit, entry.quantity, entry.basisAmount,
-                        entry.basisNutrition, false, false, null, { corrected = it }, { deletes++ }, {}, null)
+                        entry.basisNutrition, false, false, null,
+                        { corrected = it; notice = "Количество изменено. Можно отменить." },
+                        { deletes++; notice = "Запись удалена. Можно отменить." },
+                        { editing = false; notice = null }, null, notice)
                 }
             }
         }
-        compose.onNodeWithText("${food.name} · ${food.brand}").performClick()
-        compose.onNodeWithText("Quantity (g)").performTextReplacement("150")
-        compose.onNodeWithText("216 kcal").assertIsDisplayed()
+        compose.onNodeWithText("Утро").performScrollTo().performClick()
+        compose.onNodeWithText("${food.name} · ${food.brand}").performScrollTo().performClick()
+        compose.onNodeWithText("Количество (г)").performTextReplacement("150")
+        compose.onNodeWithText("216 ккал").assertIsDisplayed()
         compose.runOnIdle { assertNull(corrected); assertEquals(0, deletes) }
-        compose.onNodeWithText("Save quantity").performClick()
+        compose.onNodeWithText("Сохранить количество").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(150.0, corrected!!, 0.0) }
-        compose.onNodeWithText("Delete entry").performClick()
+        compose.onNodeWithText("Утро").performScrollTo().performClick()
+        compose.onNodeWithText("${food.name} · ${food.brand}").performScrollTo().performClick()
+        compose.onNodeWithText("Удалить запись").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, deletes) }
     }
 
@@ -80,33 +87,35 @@ class JetMealUiTest {
         var successes = 0
         var requests = 0
         compose.setContent {
-            JetmealTheme(dynamicColor = false) {
+            JetmealTheme {
                 AmountContent(entry.name, entry.unit, entry.quantity, entry.basisAmount,
                     entry.basisNutrition, false, false, error,
-                    { requests++; error = "Connection failed" }, null, { successes++ }, null)
+                    { requests++; error = "Нет соединения" }, null, { successes++ }, null)
             }
         }
-        compose.onNodeWithText("Confirm food").performClick()
-        compose.onNodeWithText("Connection failed").assertIsDisplayed()
-        compose.onNodeWithText("Quantity (g)").assertIsDisplayed()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.onNodeWithText("Нет соединения").assertIsDisplayed()
+        compose.onNodeWithText("Количество (г)").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, successes); assertEquals(1, requests) }
+        compose.onNodeWithText("Добавить еду").assertIsEnabled().performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(0, successes); assertEquals(2, requests) }
     }
 
     @Test fun targetsCommitOnlyAfterConcreteReviewConfirmation() {
         var saved: Targets? = null
         compose.setContent {
-            JetmealTheme(dynamicColor = false) {
+            JetmealTheme {
                 SettingsContent(null, "owner@example.test", false, { saved = it }, {})
             }
         }
-        compose.onNodeWithText("Base daily calories (kcal)").performTextReplacement("2000")
-        compose.onNodeWithText("Protein (g)").performTextReplacement("110")
-        compose.onNodeWithText("Fat (g)").performTextReplacement("65")
-        compose.onNodeWithText("Carbohydrates (g)").performTextReplacement("240")
-        compose.onNodeWithText("Review target changes").performScrollTo().performClick()
-        compose.onNodeWithText("Confirm your targets").assertIsDisplayed()
+        compose.onNodeWithText("Базовая цель (ккал)").performTextReplacement("2000")
+        compose.onNodeWithText("Белки (г)").performTextReplacement("110")
+        compose.onNodeWithText("Жиры (г)").performTextReplacement("65")
+        compose.onNodeWithText("Углеводы (г)").performScrollTo().performTextReplacement("240")
+        compose.onNodeWithText("Проверить изменения").performScrollTo().performClick()
+        compose.onNodeWithText("Сохранить новые цели?").assertIsDisplayed()
         compose.runOnIdle { assertNull(saved) }
-        compose.onNodeWithText("Save targets").performClick()
+        compose.onNodeWithText("Сохранить цели").performClick()
         compose.runOnIdle { assertEquals(Targets(2000.0, 110.0, 65.0, 240.0, 0.1), saved) }
     }
 
@@ -116,16 +125,17 @@ class JetMealUiTest {
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.5f)) {
-                JetmealTheme(dynamicColor = false) {
+                JetmealTheme {
                     Box(Modifier.width(320.dp).fillMaxSize()) {
                         CalendarContent(YearMonth.from(date), mapOf(date to 2500.0), mapOf(date to 2000.0), {}, { opened = it })
                     }
                 }
             }
         }
-        val description = date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy")) +
-            ", 2500 kilocalories, Near allowance"
-        compose.onNodeWithContentDescription(description).assertIsDisplayed().assertWidthIsAtLeast(48.dp).performClick()
+        val description = date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", RussianLocale)) +
+            ", ${number(2500.0)} ккал, Выше нормы" + (if (date == LocalDate.now()) ", сегодня" else "") + ". Открыть день"
+        compose.onNodeWithContentDescription(description).assertIsDisplayed()
+            .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()
         compose.runOnIdle { assertEquals(date, opened) }
     }
 
@@ -133,7 +143,7 @@ class JetMealUiTest {
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.5f)) {
-                JetmealTheme(dynamicColor = false) {
+                JetmealTheme {
                     Box(Modifier.width(840.dp)) {
                         DayContent(LocalDate.of(2026, 10, 6), listOf(entry),
                             Targets(2000.0, 100.0, 60.0, 250.0), null, {}, {}, {})
@@ -141,8 +151,9 @@ class JetMealUiTest {
                 }
             }
         }
-        compose.onNodeWithText("180 / 2000 kcal").assertIsDisplayed()
-        compose.onNodeWithText("1820 kcal remaining").assertIsDisplayed()
-        compose.onNodeWithText("Protein").assertIsDisplayed()
+        compose.onNode(hasText(number(180.0)) and hasText("ккал съедено")).assertIsDisplayed()
+        compose.onNodeWithText("Осталось ${number(1820.0)} ккал").assertIsDisplayed()
+        compose.onNodeWithText("Норма на этот день: ${number(2000.0)} ккал").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Белки: 15 из 100 граммов").performScrollTo().assertIsDisplayed()
     }
 }

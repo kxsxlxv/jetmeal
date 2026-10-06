@@ -27,23 +27,27 @@ internal fun AuthContent(state: AppState, signIn: (String, String) -> Unit) {
     val submit = { if (canSubmit) signIn(email.trim(), password.text.toString()) }
     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState())
         .padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Text("Your meals.\nYour rhythm.", style = MaterialTheme.typography.headlineLargeEmphasized)
+        Text("JetMeal", style = MaterialTheme.typography.titleLargeEmphasized, color = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(28.dp))
+        Text("Ваше питание.\nВаш ритм.", style = MaterialTheme.typography.headlineLargeEmphasized)
         Spacer(Modifier.height(12.dp))
-        Text("A clear view of today, with room for the whole week.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Войдите, чтобы открыть свой дневник питания.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(32.dp))
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedTextField(email, { email = it }, label = { Text("Email address") },
+            TextField(email, { email = it }, label = { Text("Электронная почта") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !state.busy,
+                shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
-            OutlinedSecureTextField(password, label = { Text("Password") },
+            SecureTextField(password, label = { Text("Пароль") },
                 modifier = Modifier.fillMaxWidth(), enabled = !state.busy,
+                shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
                 textObfuscationMode = TextObfuscationMode.Hidden,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password,
                     autoCorrectEnabled = false, imeAction = ImeAction.Done),
                 onKeyboardAction = { submit() })
             Button(onClick = submit, shapes = ButtonDefaults.shapes(), enabled = canSubmit,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Sign in") }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Войти") }
+            state.error?.let { EditorError(it) }
             if (state.busy) LoadingIndicator(Modifier.align(Alignment.CenterHorizontally))
         }
     }

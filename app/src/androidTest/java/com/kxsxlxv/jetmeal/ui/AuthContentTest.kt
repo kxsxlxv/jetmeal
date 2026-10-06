@@ -18,14 +18,14 @@ class AuthContentTest {
     @Test fun typingDoesNotSignInAndExplicitSubmitPreservesPasswordWhitespace() {
         var submitted: Pair<String, String>? = null
         compose.setContent { JetmealTheme { AuthContent(AppState(authLoading = false)) { email, password -> submitted = email to password } } }
-        compose.onNodeWithText("Sign in").assertIsNotEnabled()
-        compose.onNodeWithText("Email address").performTextReplacement(" user@example.test ")
-        compose.onNodeWithText("Password").performTextReplacement("   ")
-        compose.onNodeWithText("Sign in").assertIsNotEnabled()
-        compose.onNodeWithText("Password").performTextReplacement(" password with spaces ")
-        compose.onNodeWithText("Sign in").assertIsEnabled()
+        compose.onNodeWithText("Войти").assertIsNotEnabled()
+        compose.onNodeWithText("Электронная почта").performTextReplacement(" user@example.test ")
+        compose.onNodeWithText("Пароль").performTextReplacement("   ")
+        compose.onNodeWithText("Войти").assertIsNotEnabled()
+        compose.onNodeWithText("Пароль").performTextReplacement(" password with spaces ")
+        compose.onNodeWithText("Войти").assertIsEnabled()
         compose.runOnIdle { assertNull(submitted) }
-        compose.onNodeWithText("Sign in").performClick()
+        compose.onNodeWithText("Войти").performClick()
         compose.runOnIdle {
             assertEquals("user@example.test", submitted?.first)
             assertEquals(" password with spaces ", submitted?.second)
@@ -36,11 +36,11 @@ class AuthContentTest {
         val state = mutableStateOf(AppState(authLoading = false))
         var submissions = 0
         compose.setContent { JetmealTheme { AuthContent(state.value) { _, _ -> submissions++ } } }
-        compose.onNodeWithText("Email address").performTextReplacement("user@example.test")
-        compose.onNodeWithText("Password").performTextReplacement("password")
+        compose.onNodeWithText("Электронная почта").performTextReplacement("user@example.test")
+        compose.onNodeWithText("Пароль").performTextReplacement("password")
         compose.runOnIdle { state.value = state.value.copy(busy = true) }
-        compose.onNodeWithText("Sign in").assertIsNotEnabled()
-        compose.onNodeWithText("Password").assertIsNotEnabled()
+        compose.onNodeWithText("Войти").assertIsNotEnabled()
+        compose.onNodeWithText("Пароль").assertIsNotEnabled()
         compose.runOnIdle { assertEquals(0, submissions) }
     }
 }

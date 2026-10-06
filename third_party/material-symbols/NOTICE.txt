@@ -1,0 +1,10 @@
+Material Symbols Rounded resources in app/src/main/res/drawable/symbol_*.xml are
+authored by Google and licensed under the Apache License, Version 2.0.
+
+Source: https://fonts.gstatic.com/s/i/short-term/release/materialsymbolsrounded/<name>/default/24px.xml
+Project: https://github.com/google/material-design-icons
+License: https://www.apache.org/licenses/LICENSE-2.0
+
+Downloaded 6 October 2026. Android theme tint was removed so Compose Icon
+applies the active Material content color. Directional symbols were marked
+autoMirrored for Android layout-direction handling.

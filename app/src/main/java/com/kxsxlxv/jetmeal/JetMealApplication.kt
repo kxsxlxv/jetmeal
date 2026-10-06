@@ -1,6 +1,8 @@
 package com.kxsxlxv.jetmeal
 
 import android.app.Application
+import android.app.LocaleManager
+import android.os.LocaleList
 import com.russhwolf.settings.SharedPreferencesSettings
 import com.kxsxlxv.jetmeal.data.ProjectSessionStorage
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
@@ -12,6 +14,17 @@ import io.ktor.client.engine.okhttp.OkHttp
 import kotlin.time.Duration.Companion.seconds
 
 class JetMealApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        // The product UI is Russian, including framework/Material accessibility strings.
+        // App-local configuration leaves system language, timezone and night mode intact.
+        val localeManager = getSystemService(LocaleManager::class.java)
+        val russian = LocaleList.forLanguageTags("ru-RU")
+        if (localeManager.applicationLocales != russian) {
+            localeManager.applicationLocales = russian
+        }
+    }
+
     val repository: SupabaseRepository? by lazy {
         if (BuildConfig.SUPABASE_URL.isBlank() || BuildConfig.SUPABASE_KEY.isBlank()) null
         else {

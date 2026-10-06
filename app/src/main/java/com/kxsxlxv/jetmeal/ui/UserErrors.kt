@@ -20,49 +20,49 @@ internal object UserErrors {
         if (causes.any { it is SessionRequiredException || it is TokenExpiredException }) return SIGN_IN
         causes.filterIsInstance<RestException>().firstOrNull()?.let { return responseMessage(it.statusCode) }
         if (causes.any { it is SSLException }) {
-            return "A secure connection could not be established. Check your connection and device date, then try again."
+            return "Не удалось установить защищённое соединение. Проверьте интернет и дату на устройстве."
         }
         if (causes.any { it is IOException || it is HttpRequestTimeoutException }) {
             return if (operation == ErrorOperation.Data)
-                "Connection interrupted. Check your connection and refresh your diary before trying again."
-            else "Could not connect to the sign-in service. Check your connection and try again."
+                "Связь прервалась. Проверьте интернет и обновите дневник перед повторной попыткой."
+            else "Не удалось подключиться для входа. Проверьте интернет и повторите попытку."
         }
         if (error is IllegalArgumentException) {
             return when (error.message) {
-                "Enter a valid email address." -> "Enter a valid email address."
-                "Enter your password." -> "Enter your password."
-                "Quantity must be finite and positive." -> "Enter a quantity greater than zero."
-                "Daily calories must be positive." -> "Enter a daily calorie target greater than zero."
-                else -> "Check the entered values and try again."
+                "Enter a valid email address." -> "Введите корректную электронную почту."
+                "Enter your password." -> "Введите пароль."
+                "Quantity must be finite and positive." -> "Введите количество больше нуля."
+                "Daily calories must be positive." -> "Введите цель калорий больше нуля."
+                else -> "Проверьте введённые значения и повторите попытку."
             }
         }
-        return "The request could not be completed. Try again."
+        return "Не удалось выполнить действие. Повторите попытку."
     }
 
     internal fun authMessage(code: String, status: Int, operation: ErrorOperation): String = when (code) {
-        "over_request_rate_limit" -> "Too many sign-in requests. Wait a little and try again."
-        "invalid_credentials" -> "The email or password was not accepted. Check both and try again."
+        "over_request_rate_limit" -> "Слишком много попыток входа. Немного подождите и попробуйте снова."
+        "invalid_credentials" -> "Неверная почта или пароль. Проверьте данные и попробуйте снова."
         "email_not_confirmed" ->
-            "This account's email is not confirmed. Ask the project owner to confirm the existing account."
+            "Почта аккаунта не подтверждена. Попросите владельца проекта подтвердить аккаунт."
         "email_address_invalid", "validation_failed" -> if (operation == ErrorOperation.SignIn)
-            "Enter a valid email address and password."
-            else "Check the entered values and try again."
+            "Введите корректную почту и пароль."
+            else "Проверьте введённые значения и повторите попытку."
         "email_provider_disabled" ->
-            "Email/password sign-in is disabled for this project. Ask the project owner to enable it."
-        "user_banned" -> "This account cannot sign in. Contact the project owner."
+            "Вход по почте и паролю отключён. Попросите владельца проекта включить его."
+        "user_banned" -> "Вход в этот аккаунт недоступен. Обратитесь к владельцу проекта."
         "session_not_found", "session_expired", "refresh_token_not_found", "refresh_token_already_used",
         "bad_jwt", "no_authorization" -> SIGN_IN
-        "request_timeout" -> "The sign-in service took too long to respond. Try again shortly."
+        "request_timeout" -> "Сервис входа не ответил вовремя. Повторите попытку немного позже."
         else -> responseMessage(status)
     }
 
     private fun responseMessage(status: Int): String = when (status) {
         401 -> SIGN_IN
-        403 -> "Your account does not have permission for this action. Sign in with the correct account."
-        429 -> "Too many requests. Wait a little and try again."
-        in 500..599 -> "The service is temporarily unavailable. Try again shortly."
-        else -> "The request could not be completed. Try again."
+        403 -> "У аккаунта нет прав на это действие. Войдите в нужный аккаунт."
+        429 -> "Слишком много запросов. Немного подождите и попробуйте снова."
+        in 500..599 -> "Сервис временно недоступен. Повторите попытку немного позже."
+        else -> "Не удалось выполнить действие. Повторите попытку."
     }
 
-    private const val SIGN_IN = "Your sign-in session is no longer valid. Sign in again and retry."
+    private const val SIGN_IN = "Сессия завершилась. Войдите снова и повторите действие."
 }

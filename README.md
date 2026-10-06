@@ -27,14 +27,26 @@ User
 
 AI clients interpret intent and select typed operations. They do not receive arbitrary SQL access and must never receive privileged Supabase server credentials.
 
-## MVP navigation
+## Nutrition timeline
 
-JetMeal has four top-level destinations:
+The Russian interface has one nutrition timeline with the Material 3 Button Group
+**День / Неделя / Месяц / 3 месяца**. Swipe or use the arrows to move between
+periods. Reset returns to the current period anchored on today. Settings opens
+from the app-bar gear and provides normal back navigation; there is no bottom bar.
 
-1. **Today** — current calorie/macronutrient progress and food entries grouped into Morning, Day, Evening and Snack.
-2. **Week** — weekly statistics and calorie-budget state. The exact visual treatment is intentionally left to the first design implementation.
-3. **Calendar** — month history with per-day calories and calorie-goal status; tapping a date opens the same day view used by Today.
-4. **Settings** — calorie/macronutrient targets, weekly redistribution limit and account/session information.
+Day combines gradient progress rings with curved labels and one expanded meal
+accordion. Week compares seven actual totals with their effective targets. Month
+opens individual diary dates, and three months summarizes a calendar quarter with
+compact heatmaps. Authored colors follow system light/dark mode; wallpaper colors
+do not replace the JetMeal palette. All built-in UI and dates use Russian.
+
+[`docs/implementation/DESIGN_REWORK.md`](docs/implementation/DESIGN_REWORK.md)
+is the active UI contract and supersedes the original navigation/design sections
+in the MVP brief. Backend and nutrition rules remain unchanged.
+
+See the [redesign research](docs/implementation/DESIGN_REWORK_RESEARCH.md) and
+[redesign verification](docs/implementation/DESIGN_REWORK_VERIFICATION.md) for
+component decisions, real integration results and emulator screenshot locations.
 
 See [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md) for the complete product and technical boundaries and [`docs/AI_TOOLS.md`](docs/AI_TOOLS.md) for the AI/application contract.
 
@@ -90,7 +102,7 @@ Settings, and log foods from your own catalogue. Catalogue creation is available
 through the typed `NutritionTools.createFood` application operation and its
 `jetmeal_create_food` RPC. The app deliberately has no catalogue-authoring screen.
 
-The four destinations, manual quantity logging/editing, soft delete, grouped undo,
+The timeline, manual quantity logging/editing, soft delete, grouped undo,
 weekly redistribution and target confirmation are implemented. See the dated
 [research](docs/implementation/RESEARCH_NOTES.md) and
 [verification report](docs/implementation/VERIFICATION.md) for actual evidence.

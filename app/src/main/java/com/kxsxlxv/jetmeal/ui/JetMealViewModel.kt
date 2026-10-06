@@ -17,6 +17,7 @@ data class AppState(
     val authLoading: Boolean = true, val email: String? = null,
     val busy: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
     val destination: Destination = Destination.Today, val month: YearMonth = YearMonth.now(),
+    val scale: TimeScale = TimeScale.Day,
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
     val monthCalories: Map<LocalDate, Double> = emptyMap(), val monthTargets: Map<LocalDate, Double> = emptyMap(),
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
@@ -25,6 +26,7 @@ data class AppState(
 class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle) : ViewModel() {
     private val mutable = MutableStateFlow(AppState(authLoading = repository != null,
         destination = saved.get<String>("destination")?.let { runCatching { Destination.valueOf(it) }.getOrNull() } ?: Destination.Today,
+        scale = saved.get<String>("scale")?.let { runCatching { TimeScale.valueOf(it) }.getOrNull() } ?: TimeScale.Day,
         day = saved.get<String>("day")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now(),
         month = saved.get<String>("month")?.let { runCatching { YearMonth.parse(it) }.getOrNull() } ?: YearMonth.now()))
     val state: StateFlow<AppState> = mutable.asStateFlow()
@@ -54,7 +56,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         mutable.value = AppState(authLoading = false, error = mutable.value.error)
                     }
                     is SessionStatus.RefreshFailure -> mutable.update { it.copy(authLoading = false,
-                        error = "Session refresh failed. Check your connection or sign in again.") }
+                        error = "Не удалось обновить сессию. Проверьте соединение или войдите снова.") }
                     else -> Unit
                 }
             }
@@ -89,28 +91,30 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 ensureActive()
                 if (generation != refreshGeneration) return@launch
                 val newToday = LocalDate.now(zone)
-                if (mutable.value.day == today && today != newToday) { mutable.update { it.copy(day = newToday) }; saveNavigation() }
+                if (mutable.value.day == today && today != newToday) { mutable.update { it.copy(day = newToday, month = YearMonth.from(newToday)) }; saveNavigation() }
                 today = newToday
                 val snapshot = mutable.value
                 val targets = repository.targets()
                 ensureActive()
                 if (generation != refreshGeneration) return@launch
-                val monthStart = snapshot.month.atDay(1)
                 val weekStart = snapshot.day.minusDays((snapshot.day.dayOfWeek.value - 1).toLong())
-                val calendarStart = monthStart.minusDays((monthStart.dayOfWeek.value - 1).toLong())
-                val start = minOf(weekStart, calendarStart)
-                val end = maxOf(weekStart.plusDays(7), snapshot.month.plusMonths(1).atDay(1))
+                val visibleStart = TimelinePeriods.start(snapshot.scale, snapshot.day)
+                // Include the complete preceding week to replay targets at month/quarter boundaries.
+                val start = minOf(weekStart, visibleStart.minusDays(visibleStart.dayOfWeek.value - 1L))
+                val end = maxOf(weekStart.plusDays(7), TimelinePeriods.endExclusive(snapshot.scale, snapshot.day))
                 val all = repository.entries(start, end, zone)
                 ensureActive()
                 if (generation != refreshGeneration) return@launch
                 val totals = all.groupBy { it.consumedAt.atZone(zone).toLocalDate() }
                     .mapValues { (_, entries) -> entries.sumOf { it.nutrition.calories } }
-                val week = targets?.let { WeekBudget.calculate(snapshot.day, it, totals) }
+                val asOf = if (snapshot.scale == TimeScale.Day) snapshot.day else
+                    when { weekStart.plusDays(6) < today -> weekStart.plusDays(6); weekStart > today -> weekStart; else -> today }
+                val week = targets?.let { WeekBudget.calculate(asOf, it, totals) }
                 val calendarTargets = if (targets == null) emptyMap() else totals.keys.associateWith {
                     WeekBudget.calculate(it, targets, totals).effectiveTarget
                 }
                 mutable.update { it.copy(entries = all.filter { row -> row.consumedAt.atZone(zone).toLocalDate() == snapshot.day },
-                    targets = targets, week = week, monthCalories = totals.filterKeys { YearMonth.from(it) == snapshot.month },
+                    targets = targets, week = week, monthCalories = totals,
                     monthTargets = calendarTargets) }
                 search("")
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -129,19 +133,33 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     }
 
     fun selectDestination(destination: Destination) {
-        val date = if (destination in listOf(Destination.Today, Destination.Week)) LocalDate.now() else mutable.value.day
-        mutable.update { it.copy(destination = destination, day = date,
-            entries = if (it.day == date) it.entries else emptyList(), week = if (it.day == date) it.week else null) }
-        saveNavigation()
-        refresh()
+        if (destination == Destination.Settings) openSettings()
+        else setTimeScale(when(destination) { Destination.Week -> TimeScale.Week; Destination.Calendar -> TimeScale.Month; else -> TimeScale.Day })
     }
-    fun openDate(date: LocalDate) { mutable.update { it.copy(day = date, destination = Destination.Today,
-        entries = if (it.day == date) it.entries else emptyList(), week = if (it.day == date) it.week else null) }; saveNavigation(); refresh() }
-    fun setMonth(month: YearMonth) { mutable.update { it.copy(month = month, monthCalories = emptyMap(), monthTargets = emptyMap()) }; saveNavigation(); refresh() }
+    fun openSettings() { mutable.update { it.copy(destination = Destination.Settings) }; saveNavigation() }
+    fun closeSettings() { mutable.update { it.copy(destination = destinationFor(it.scale)) }; saveNavigation() }
+    fun setTimeScale(scale: TimeScale) {
+        mutable.update { it.copy(scale = scale, destination = destinationFor(scale), week = null) }
+        saveNavigation(); refresh()
+    }
+    fun showPeriod(date: LocalDate) {
+        mutable.update { it.copy(day = date, month = YearMonth.from(date), entries = if(it.day == date) it.entries else emptyList(),
+            week = null, monthCalories = emptyMap(), monthTargets = emptyMap()) }
+        saveNavigation(); refresh()
+    }
+    fun movePeriod(offset: Int) = showPeriod(TimelinePeriods.move(mutable.value.scale, mutable.value.day, offset))
+    fun resetPeriod() = showPeriod(LocalDate.now())
+    fun openDate(date: LocalDate) {
+        mutable.update { it.copy(scale = TimeScale.Day, destination = Destination.Today) }
+        showPeriod(date)
+    }
+    fun setMonth(month: YearMonth) { mutable.update { it.copy(scale = TimeScale.Month, destination = Destination.Calendar) }; showPeriod(month.atDay(1)) }
+    private fun destinationFor(scale: TimeScale): Destination = when(scale) { TimeScale.Day -> Destination.Today; TimeScale.Week -> Destination.Week; else -> Destination.Calendar }
     private fun saveNavigation() {
         saved["destination"] = mutable.value.destination.name
         saved["day"] = mutable.value.day.toString()
         saved["month"] = mutable.value.month.toString()
+        saved["scale"] = mutable.value.scale.name
     }
     fun search(query: String) {
         val generation = ++searchGeneration
@@ -170,24 +188,24 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             else date.atTime(when (meal) { MealPeriod.Morning -> 8; MealPeriod.Day -> 13; MealPeriod.Evening -> 19; MealPeriod.Snack -> 15 }, 0)
                 .atZone(zone).toInstant()
         requireNotNull(tools).logFood(LogFood(candidate.id, quantity, consumedAt, meal))
-        mutable.update { it.copy(notice = "Food logged. Undo is available.") }; refresh()
+        mutable.update { it.copy(notice = "Еда добавлена. Можно отменить.") }; refresh()
     }
     fun edit(entry: DiaryEntry, quantity: Double) = action {
         requireNotNull(tools).updateLog(LogCorrection(entry.id, quantity))
-        mutable.update { it.copy(notice = "Quantity updated. Undo is available.") }; refresh()
+        mutable.update { it.copy(notice = "Количество изменено. Можно отменить.") }; refresh()
     }
     fun delete(entry: DiaryEntry) = action {
         requireNotNull(tools).deleteLog(entry.id)
-        mutable.update { it.copy(notice = "Entry removed. Undo is available.") }; refresh()
+        mutable.update { it.copy(notice = "Запись удалена. Можно отменить.") }; refresh()
     }
     fun undo() = action {
-        requireNotNull(tools).undoLastAction(); mutable.update { it.copy(notice = "Action undone.") }; refresh()
+        requireNotNull(tools).undoLastAction(); mutable.update { it.copy(notice = "Действие отменено.") }; refresh()
     }
     /** Invoked only by the explicit human target-review confirmation action. */
     fun saveTargets(targets: Targets) = action {
         val application = requireNotNull(tools)
         application.updateTargets(targets, application.confirmedByUser(targets))
-        mutable.update { it.copy(notice = "Targets saved.") }; refresh()
+        mutable.update { it.copy(notice = "Цели сохранены.") }; refresh()
     }
     fun dismissError() = mutable.update { it.copy(error = null, notice = null) }
     private fun action(operation: ErrorOperation = ErrorOperation.Data, block: suspend () -> Unit) = viewModelScope.launch {
