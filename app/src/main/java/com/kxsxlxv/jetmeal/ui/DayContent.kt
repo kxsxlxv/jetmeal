@@ -8,7 +8,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,10 +25,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
@@ -90,7 +92,7 @@ fun DayContent(
     ) {
         item(key = "nutrition") {
             if (targets == null) DayTargetsPrompt(onTargets)
-            else DailyRings(total, targets, effective ?: targets.calories)
+            else DailyRings(date, total, targets, effective ?: targets.calories)
         }
         item {
             Text("Приёмы пищи", style = MaterialTheme.typography.titleLargeEmphasized,
@@ -122,7 +124,7 @@ private fun DayTargetsPrompt(onTargets: () -> Unit) {
 }
 
 @Composable
-private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
+private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targets, effective: Double) {
     val palette = nutritionColors()
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val gap = 6.dp
@@ -145,6 +147,7 @@ private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
                     actual = total.calories,
                     target = effective,
                     colors = palette.calories,
+                    animationKey = animationKey,
                     modifier = Modifier.size(dialSize),
                 )
             }
@@ -156,6 +159,7 @@ private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
             ) {
                 MacroHealthCard(
                     label = "Белки",
+                    animationKey = animationKey,
                     actual = total.protein,
                     target = targets.protein,
                     colors = palette.protein,
@@ -164,6 +168,7 @@ private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
                 )
                 MacroHealthCard(
                     label = "Жиры",
+                    animationKey = animationKey,
                     actual = total.fat,
                     target = targets.fat,
                     colors = palette.fat,
@@ -172,6 +177,7 @@ private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
                 )
                 MacroHealthCard(
                     label = "Углеводы",
+                    animationKey = animationKey,
                     actual = total.carbs,
                     target = targets.carbs,
                     colors = palette.carbs,
@@ -184,23 +190,36 @@ private fun DailyRings(total: Nutrition, targets: Targets, effective: Double) {
 }
 
 @Composable
+private fun animatedHealthProgress(
+    animationKey: Any,
+    target: Float,
+): Float {
+    val boundedTarget = target.coerceAtLeast(0f)
+    val progress = remember(animationKey) { Animatable(0f) }
+    LaunchedEffect(animationKey, boundedTarget) {
+        progress.animateTo(
+            targetValue = boundedTarget,
+            animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
+        )
+    }
+    return progress.value
+}
+
+@Composable
 private fun CalorieHealthDial(
     actual: Double,
     target: Double,
     colors: RingColors,
+    animationKey: Any,
     modifier: Modifier = Modifier,
 ) {
     val fraction = ringFraction(actual, target)
-    val progress by animateFloatAsState(
-        targetValue = fraction.coerceIn(0f, 1f),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Прогресс калорий",
+    val displayedFraction = animatedHealthProgress(
+        animationKey = animationKey,
+        target = fraction.coerceIn(0f, 2f),
     )
-    val overflow by animateFloatAsState(
-        targetValue = (fraction - 1f).coerceIn(0f, 1f),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Превышение калорий",
-    )
+    val firstLap = displayedFraction.coerceIn(0f, 1f)
+    val overflowLap = (displayedFraction - 1f).coerceIn(0f, 1f)
     val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
     val density = LocalDensity.current
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -229,63 +248,89 @@ private fun CalorieHealthDial(
             val origin = Offset(center.x - radius, center.y - radius)
             val diameter = Size(radius * 2f, radius * 2f)
 
-            drawArc(
+            // The track is a closed ring, so it must not introduce a cap seam at 12 o'clock.
+            drawCircle(
                 color = track,
-                startAngle = -90f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = origin,
-                size = diameter,
-                style = Stroke(stroke, cap = StrokeCap.Round),
+                radius = radius,
+                center = center,
+                style = Stroke(stroke),
             )
 
-            if (progress > 0f) {
-                rotate(-90f, center) {
-                    val baseBrush = if (progress >= .999f) {
-                        Brush.sweepGradient(
-                            0f to colors.start,
-                            .50f to colors.end,
-                            1f to colors.start,
+            rotate(-90f, center) {
+                // Both lap gradients are fixed to the circumference. Animation reveals them;
+                // it never stretches/re-maps the gradient as the endpoint moves.
+                val baseBrush = Brush.sweepGradient(
+                    0f to colors.start,
+                    .50f to colors.end,
+                    1f to colors.start,
+                    center = center,
+                )
+                if (firstLap > 0f) {
+                    if (firstLap >= .9995f) {
+                        drawCircle(
+                            brush = baseBrush,
+                            radius = radius,
                             center = center,
+                            style = Stroke(stroke),
                         )
                     } else {
-                        Brush.sweepGradient(
-                            0f to colors.start,
-                            progress.coerceAtLeast(.001f) to colors.end,
-                            1f to colors.end,
-                            center = center,
+                        drawArc(
+                            brush = baseBrush,
+                            startAngle = 0f,
+                            sweepAngle = 360f * firstLap,
+                            useCenter = false,
+                            topLeft = origin,
+                            size = diameter,
+                            style = Stroke(stroke, cap = StrokeCap.Round),
                         )
                     }
-                    drawArc(
-                        brush = baseBrush,
-                        startAngle = 0f,
-                        sweepAngle = 360f * progress,
-                        useCenter = false,
-                        topLeft = origin,
-                        size = diameter,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
                 }
-            }
 
-            if (overflow > 0f) {
-                rotate(-90f, center) {
+                if (overflowLap > 0f) {
                     val overflowBrush = Brush.sweepGradient(
                         0f to colors.start,
-                        .05f to warningColor,
+                        .04f to warningColor,
                         .10f to errorColor,
-                        1f to errorColor,
+                        .90f to errorColor,
+                        .96f to warningColor,
+                        1f to colors.start,
                         center = center,
                     )
-                    drawArc(
-                        brush = overflowBrush,
-                        startAngle = 0f,
-                        sweepAngle = 360f * overflow,
-                        useCenter = false,
-                        topLeft = origin,
-                        size = diameter,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
+                    if (overflowLap >= .9995f) {
+                        drawCircle(
+                            brush = overflowBrush,
+                            radius = radius,
+                            center = center,
+                            style = Stroke(stroke),
+                        )
+                    } else {
+                        drawArc(
+                            brush = overflowBrush,
+                            startAngle = 0f,
+                            sweepAngle = 360f * overflowLap,
+                            useCenter = false,
+                            topLeft = origin,
+                            size = diameter,
+                            style = Stroke(stroke, cap = StrokeCap.Round),
+                        )
+
+                        // A new revolution is a layer above the completed one. Its start cap is
+                        // tucked under the previous lap, while the moving endpoint stays round.
+                        // Repainting only the pre-seam slice removes the 101% "capsule" without
+                        // changing the visible Round cap of the progress arc.
+                        val seamCoverSweep =
+                            (((stroke / 2f + 1.dp.toPx()) / radius) * (180f / PI.toFloat()))
+                                .coerceIn(1f, 18f)
+                        drawArc(
+                            brush = baseBrush,
+                            startAngle = -seamCoverSweep,
+                            sweepAngle = seamCoverSweep,
+                            useCenter = false,
+                            topLeft = origin,
+                            size = diameter,
+                            style = Stroke(stroke, cap = StrokeCap.Butt),
+                        )
+                    }
                 }
             }
 
@@ -332,16 +377,16 @@ private fun CalorieHealthDial(
 @Composable
 private fun MacroHealthCard(
     label: String,
+    animationKey: Any,
     actual: Double,
     target: Double,
     colors: RingColors,
     symbol: JetMealSymbol,
     modifier: Modifier = Modifier,
 ) {
-    val progress by animateFloatAsState(
-        targetValue = ringFraction(actual, target).coerceIn(0f, 1f),
-        animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
-        label = "Прогресс $label",
+    val progress = animatedHealthProgress(
+        animationKey = animationKey,
+        target = ringFraction(actual, target).coerceIn(0f, 1f),
     )
     val onSurface = MaterialTheme.colorScheme.onSurface
 
@@ -358,13 +403,23 @@ private fun MacroHealthCard(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             Box(
                 Modifier
-                    .fillMaxHeight()
-                    .width(maxWidth * progress)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(colors.container, colors.end.copy(alpha = .78f)),
-                        ),
-                    )
+                    .fillMaxSize()
+                    .drawBehind {
+                        val reveal = progress.coerceIn(0f, 1f)
+                        if (reveal > 0f) {
+                            clipRect(right = size.width * reveal) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        0f to colors.container,
+                                        .42f to colors.start,
+                                        1f to colors.end,
+                                        startX = 0f,
+                                        endX = size.width,
+                                    ),
+                                )
+                            }
+                        }
+                    }
                     .clearAndSetSemantics {},
             )
             Row(
