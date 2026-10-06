@@ -1,0 +1,134 @@
+name: Android release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One allocator/publisher at a time, including manual runs and reruns.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_REPO: ${{ github.repository }}
+      SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@f236b35da9d031e13b1005234ebe4392ed54c580 # v5.0.0
+        with:
+          # Restore benign PR caches; never upload caches from a signing job.
+          cache-read-only: true
+      - name: Install matching Android SDK
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-37.1' 'build-tools;36.0.0' < <(yes)
+          chmod +x gradlew
+      - name: Allocate a fresh increasing version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/git/matching-refs/tags/v1.1." \
+            --jq '.[].ref' > "$RUNNER_TEMP/release-tags.txt"
+          python3 scripts/android_release.py version \
+            --run-number "$GITHUB_RUN_NUMBER" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --tags "$RUNNER_TEMP/release-tags.txt" --output "$GITHUB_OUTPUT"
+      - name: Check project before signing
+        run: |
+          python3 -m unittest discover -s scripts -p test_android_release.py
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug \
+            --no-configuration-cache --console=plain
+      - name: Restore temporary release key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EXPECTED_CERT: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD EXPECTED_CERT SUPABASE_URL SUPABASE_PUBLISHABLE_KEY; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing Actions secret/variable: $name"
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/jetmeal-release.jks"
+          test -s "$RUNNER_TEMP/jetmeal-release.jks"
+      - name: Build signed release APK
+        env:
+          JETMEAL_VERSION_CODE: ${{ steps.version.outputs.code }}
+          JETMEAL_VERSION_NAME: ${{ steps.version.outputs.name }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/jetmeal-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleRelease -PrequireReleaseSigning=true \
+            --no-configuration-cache --no-daemon --console=plain
+      - name: Verify package, version and permanent signature
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.name }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          EXPECTED_CERT: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          apk=$(python3 scripts/android_release.py metadata \
+            --metadata app/build/outputs/apk/release/output-metadata.json \
+            --code "$VERSION_CODE" --name "$VERSION_NAME")
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+          python3 scripts/android_release.py badging --file "$RUNNER_TEMP/apk-badging.txt" \
+            --code "$VERSION_CODE" --name "$VERSION_NAME"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apk-signature.txt"
+          python3 - <<'PY'
+          import os, pathlib, re
+          text = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'apk-signature.txt').read_text()
+          certificates = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)', text)
+          assert len(certificates) == 1, 'Expected one APK signer'
+          assert certificates[0].lower() == os.environ['EXPECTED_CERT'].lower(), 'Signing certificate changed'
+          PY
+          mkdir -p dist
+          cp "$apk" "dist/JetMeal-$RELEASE_TAG.apk"
+          sha256sum "dist/JetMeal-$RELEASE_TAG.apk" > "dist/JetMeal-$RELEASE_TAG.apk.sha256"
+      - name: Stage APK and publish normal GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          EXPECTED_CERT: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          printf 'JetMeal release APK\n\nversionCode: %s\nCommit: %s\nSigning certificate SHA-256: %s\n\nInstall/update through Obtainium using https://github.com/%s\n' \
+            "$VERSION_CODE" "$GITHUB_SHA" "$EXPECTED_CERT" "$GH_REPO" > "$RUNNER_TEMP/release-notes.md"
+          # Keep an incomplete upload private; only publish after remote validation.
+          # Drafts alone need not create a tag. Reserve the version even if upload fails.
+          gh api --method POST "repos/$GH_REPO/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" > /dev/null
+          gh release create "$RELEASE_TAG" "dist/JetMeal-$RELEASE_TAG.apk" \
+            "dist/JetMeal-$RELEASE_TAG.apk.sha256" --target "$GITHUB_SHA" \
+            --title "JetMeal $RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft --verify-tag
+          gh api --paginate "repos/$GH_REPO/releases" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\")" > "$RUNNER_TEMP/staged-release.json"
+          python3 scripts/android_release.py upload --release "$RUNNER_TEMP/staged-release.json" \
+            --apk "dist/JetMeal-$RELEASE_TAG.apk"
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          printf '### Published JetMeal\n\n[Release](https://github.com/%s/releases/tag/%s)\n' \
+            "$GH_REPO" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary private key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/jetmeal-release.jks"

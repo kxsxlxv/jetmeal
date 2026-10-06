@@ -22,3 +22,11 @@ local.properties
 /supabase/.branches/
 **/build/
 __pycache__/
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+/signing.properties
+**/signing-credentials.json
+**/keystore.base64

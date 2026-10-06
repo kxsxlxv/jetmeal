@@ -70,6 +70,9 @@ Implementation should use the current Supabase local-development/migration workf
 
 ## Build
 
+Automatic signed GitHub Releases and Obtainium updates:
+[Android release pipeline](docs/ANDROID_RELEASES.md).
+
 The implemented app uses AGP 9.4.1, Gradle 9.8.0, Kotlin 2.4.20, Material 3
 1.5.0-alpha29 and its compatible Compose 1.13.0-alpha03 line. Install SDK 37.1;
 target SDK remains 37, minimum SDK 35. This host builds with Android Studio's
