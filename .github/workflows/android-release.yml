@@ -3,6 +3,17 @@ name: Android release
 on:
   push:
     branches: [master]
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'buildSrc/**'
   workflow_dispatch:
 
 permissions:
