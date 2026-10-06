@@ -1,12 +1,13 @@
 # Jetmeal launcher icon
 
-The Android launcher icon is implemented as a true adaptive icon rather than a pre-rounded bitmap.
+Jetmeal uses a true Android adaptive launcher icon.
 
-- `app/src/main/res/drawable/ic_launcher_foreground.xml` — full-color VectorDrawable foreground.
-- `app/src/main/res/drawable/ic_launcher_monochrome.xml` — dedicated Android themed-icon layer.
-- `app/src/main/res/drawable/ic_launcher_background.xml` — full-bleed dark blue/teal background.
+- `app/src/main/res/drawable/ic_launcher_foreground.xml` — full-color VectorDrawable mark.
+- `app/src/main/res/drawable/ic_launcher_monochrome.xml` — dedicated themed-icon layer.
+- `app/src/main/res/drawable/ic_launcher_background.xml` — full-bleed warm cream background.
 - `app/src/main/res/mipmap-anydpi/ic_launcher*.xml` — adaptive launcher definitions.
+- `docs/assets/branding/jetmeal-orbit-source.svg` — editable source/reference for the mark.
 
-The important Jetmeal mark is inset from the adaptive-icon mask edge. The identity combines a meal bowl, jet/wing motion, fresh food and a small AI-orbit sparkle.
+The Jetmeal identity is an orange-like fruit treated as a small orbiting planet: the leaf communicates food/freshness, while the Saturn-like ring implies speed and the "Jet" part of the name without using a literal airplane silhouette.
 
-Because the app currently has `minSdk = 35`, no pre-Android-8 launcher fallback is required. Existing density WebP files are retained only as inactive historical resources and can be removed later without changing runtime behavior.
+The mark is intentionally compact and centered so it survives Android launcher masks. Because the app currently has `minSdk = 35`, no pre-Android-8 launcher fallback is required. Existing density WebP files are inactive historical resources.
