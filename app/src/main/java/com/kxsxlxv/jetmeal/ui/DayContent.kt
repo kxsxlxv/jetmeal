@@ -9,7 +9,7 @@ import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -199,7 +199,7 @@ private fun animatedHealthProgress(
             targetValue = boundedTarget,
             animationSpec = tween(
                 durationMillis = 700,
-                easing = FastOutSlowInEasing,
+                easing = LinearEasing,
             ),
         )
     }
@@ -227,9 +227,8 @@ private fun CalorieHealthDial(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val errorColor = MaterialTheme.colorScheme.error
-    val badgeTextColor = MaterialTheme.colorScheme.onSurface
-    val badgeOverlayColor = Color.White.copy(alpha = .16f)
-    val badgeOutlineColor = Color.White.copy(alpha = .38f)
+    val badgeTextColor = Color(0xFF102018)
+    val badgeOverlayColor = Color.White.copy(alpha = .14f)
     val warningColor = Color(0xFFFFC34D)
     val deltaText = signed(actual - target)
     val bottomPaint = remember(labelColor, density.density, density.fontScale) {
@@ -350,7 +349,7 @@ private fun CalorieHealthDial(
                 val endAngle = -90f + 360f * activeLap
                 val badgeHeight = minOf(14.dp.toPx(), stroke - 4.dp.toPx())
                 val horizontalPadding = 4.dp.toPx()
-                val frontInset = 1.dp.toPx()
+                val frontInset = (stroke - badgeHeight) / 2f
                 badgeTextPaint.color = badgeTextColor.toArgb()
                 val badgeTextWidth = badgeTextPaint.measureText(deltaText)
                 val geometry = curvedBadgeGeometry(
@@ -361,16 +360,6 @@ private fun CalorieHealthDial(
                     textWidth = badgeTextWidth,
                     horizontalPadding = horizontalPadding,
                     frontInset = frontInset,
-                )
-                val outlineWidth = 1.25.dp.toPx()
-                drawArc(
-                    color = badgeOutlineColor,
-                    startAngle = geometry.badgeStartAngle,
-                    sweepAngle = geometry.badgeSweepAngle,
-                    useCenter = false,
-                    topLeft = origin,
-                    size = diameter,
-                    style = Stroke(badgeHeight + outlineWidth * 2f, cap = StrokeCap.Round),
                 )
                 drawArc(
                     color = badgeOverlayColor,

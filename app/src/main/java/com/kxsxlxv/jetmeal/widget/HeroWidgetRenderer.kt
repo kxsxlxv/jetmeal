@@ -304,9 +304,9 @@ internal object HeroWidgetRenderer {
             val deltaText = signed(actual - target)
             val badgeHeight = minOf(dp(14f, pxPerDp), stroke - dp(4f, pxPerDp))
             val horizontalPadding = dp(4f, pxPerDp)
-            val frontInset = dp(1f, pxPerDp)
+            val frontInset = (stroke - badgeHeight) / 2f
             val badgeTextPaint = textPaint(
-                color = onSurface.toArgb(),
+                color = Color(0xFF102018).toArgb(),
                 sizePx = sp(9f, pxPerDp, fontScale),
                 weight = 500,
             )
@@ -320,26 +320,12 @@ internal object HeroWidgetRenderer {
                 horizontalPadding = horizontalPadding,
                 frontInset = frontInset,
             )
-            val outlineWidth = dp(1.25f, pxPerDp)
-            val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.White.copy(alpha = .38f).toArgb()
-                style = Paint.Style.STROKE
-                strokeWidth = badgeHeight + outlineWidth * 2f
-                strokeCap = Paint.Cap.ROUND
-            }
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.White.copy(alpha = .16f).toArgb()
+                color = Color.White.copy(alpha = .14f).toArgb()
                 style = Paint.Style.STROKE
                 strokeWidth = badgeHeight
                 strokeCap = Paint.Cap.ROUND
             }
-            canvas.drawArc(
-                ringBounds,
-                geometry.badgeStartAngle,
-                geometry.badgeSweepAngle,
-                false,
-                outlinePaint,
-            )
             canvas.drawArc(
                 ringBounds,
                 geometry.badgeStartAngle,
