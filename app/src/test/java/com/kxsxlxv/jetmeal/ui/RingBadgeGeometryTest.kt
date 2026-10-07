@@ -10,7 +10,7 @@ class RingBadgeGeometryTest {
         val radius = 72f
         val badgeHeight = 14f
         val parentCapRadius = 11.5f
-        val frontInset = 2f
+        val frontInset = (parentCapRadius * 2f - badgeHeight) / 2f
         val endAngle = 32f
         val geometry = curvedBadgeGeometry(
             endAngle = endAngle,
@@ -45,7 +45,7 @@ class RingBadgeGeometryTest {
             parentCapRadius = parentCapRadius,
             textWidth = 28f,
             horizontalPadding = 4f,
-            frontInset = 2f,
+            frontInset = (parentCapRadius * 2f - 14f) / 2f,
         )
         val upperRight = curvedBadgeGeometry(
             endAngle = -65f,
@@ -54,7 +54,7 @@ class RingBadgeGeometryTest {
             parentCapRadius = parentCapRadius,
             textWidth = 28f,
             horizontalPadding = 4f,
-            frontInset = 2f,
+            frontInset = (parentCapRadius * 2f - 14f) / 2f,
         )
 
         assertTrue(lowerRight.textSweepAngle < 0f)
@@ -71,7 +71,7 @@ class RingBadgeGeometryTest {
             parentCapRadius = parentCapRadius,
             textWidth = 14f,
             horizontalPadding = 4f,
-            frontInset = 2f,
+            frontInset = (parentCapRadius * 2f - 14f) / 2f,
         )
         val long = curvedBadgeGeometry(
             endAngle = 45f,
@@ -80,7 +80,7 @@ class RingBadgeGeometryTest {
             parentCapRadius = parentCapRadius,
             textWidth = 42f,
             horizontalPadding = 4f,
-            frontInset = 2f,
+            frontInset = (parentCapRadius * 2f - 14f) / 2f,
         )
 
         assertTrue(long.badgeSweepAngle > short.badgeSweepAngle)
