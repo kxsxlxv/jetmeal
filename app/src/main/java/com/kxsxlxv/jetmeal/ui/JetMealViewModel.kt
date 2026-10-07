@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.kxsxlxv.jetmeal.data.*
 import com.kxsxlxv.jetmeal.domain.*
+import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.*
@@ -23,7 +24,7 @@ data class AppState(
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
 
-class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle) : ViewModel() {
+class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle, private val widgetCoordinator: HeroWidgetCoordinator? = null) : ViewModel() {
     private val mutable = MutableStateFlow(AppState(authLoading = repository != null,
         destination = saved.get<String>("destination")?.let { runCatching { Destination.valueOf(it) }.getOrNull() } ?: Destination.Today,
         scale = saved.get<String>("scale")?.let { runCatching { TimeScale.valueOf(it) }.getOrNull() } ?: TimeScale.Day,
@@ -46,6 +47,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 when (status) {
                     is SessionStatus.Authenticated -> {
                         mutable.update { it.copy(authLoading = false, email = repository.client.auth.currentUserOrNull()?.email) }
+                        widgetCoordinator?.requestSync()
                         refresh()
                     }
                     is SessionStatus.NotAuthenticated -> {
@@ -72,6 +74,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refreshInFlight = false
         mutable.update { it.copy(searching = false) }
         requireNotNull(repository).client.auth.signOut()
+        widgetCoordinator?.showSignedOut()
         mutable.value = AppState(authLoading = false)
         saveNavigation()
     }
@@ -118,6 +121,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 mutable.update { it.copy(entries = all.filter { row -> row.consumedAt.atZone(zone).toLocalDate() == snapshot.day },
                     targets = targets, week = week, monthCalories = totals,
                     monthTargets = calendarTargets) }
+                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone)
                 search("")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
@@ -190,23 +194,28 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             else date.atTime(when (meal) { MealPeriod.Morning -> 8; MealPeriod.Day -> 13; MealPeriod.Evening -> 19; MealPeriod.Snack -> 15 }, 0)
                 .atZone(zone).toInstant()
         requireNotNull(tools).logFood(LogFood(candidate.id, quantity, consumedAt, meal))
+        widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = "Еда добавлена. Можно отменить.") }; refresh()
     }
     fun edit(entry: DiaryEntry, quantity: Double) = action {
         requireNotNull(tools).updateLog(LogCorrection(entry.id, quantity))
+        widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = "Количество изменено. Можно отменить.") }; refresh()
     }
     fun delete(entry: DiaryEntry) = action {
         requireNotNull(tools).deleteLog(entry.id)
+        widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = "Запись удалена. Можно отменить.") }; refresh()
     }
     fun undo() = action {
-        requireNotNull(tools).undoLastAction(); mutable.update { it.copy(notice = "Действие отменено.") }; refresh()
+        requireNotNull(tools).undoLastAction(); widgetCoordinator?.requestSync()
+        mutable.update { it.copy(notice = "Действие отменено.") }; refresh()
     }
     /** Invoked only by the explicit human target-review confirmation action. */
     fun saveTargets(targets: Targets) = action {
         val application = requireNotNull(tools)
         application.updateTargets(targets, application.confirmedByUser(targets))
+        widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = "Цели сохранены.") }; refresh()
     }
     fun dismissError() = mutable.update { it.copy(error = null, notice = null) }
