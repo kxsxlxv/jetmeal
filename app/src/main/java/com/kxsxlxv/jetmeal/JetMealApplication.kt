@@ -6,6 +6,8 @@ import android.os.LocaleList
 import com.russhwolf.settings.SharedPreferencesSettings
 import com.kxsxlxv.jetmeal.data.ProjectSessionStorage
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
+import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
+import com.kxsxlxv.jetmeal.widget.HeroWidgetScheduler
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.createSupabaseClient
@@ -23,6 +25,7 @@ class JetMealApplication : Application() {
         if (localeManager.applicationLocales != russian) {
             localeManager.applicationLocales = russian
         }
+        HeroWidgetScheduler.ensurePeriodicIfPresent(this)
     }
 
     val repository: SupabaseRepository? by lazy {
@@ -47,5 +50,9 @@ class JetMealApplication : Application() {
                 }
             })
         }
+    }
+
+    val widgetCoordinator: HeroWidgetCoordinator by lazy {
+        HeroWidgetCoordinator(this, repository)
     }
 }
