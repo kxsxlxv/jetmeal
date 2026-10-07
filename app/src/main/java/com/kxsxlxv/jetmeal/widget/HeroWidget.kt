@@ -17,9 +17,7 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.appWidgetBackground
-import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
-import androidx.glance.background
 import androidx.glance.color.ColorProvider as DayNightColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
@@ -82,17 +80,10 @@ private fun HeroWidgetContent(
             .putExtra(MainActivity.EXTRA_OPEN_TODAY, true)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     )
-    val background = DayNightColorProvider(
-        day = MealLightColors.background,
-        night = MealDarkColors.background,
-    )
-
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
             .appWidgetBackground()
-            .background(background)
-            .cornerRadius(android.R.dimen.system_app_widget_background_radius)
             .clickable(openToday)
             .padding(8.dp),
     ) {
