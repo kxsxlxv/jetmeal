@@ -1,0 +1,73 @@
+package com.kxsxlxv.jetmeal.ui
+
+import kotlin.math.PI
+import kotlin.math.max
+
+internal data class CurvedBadgeGeometry(
+    val badgeStartAngle: Float,
+    val badgeSweepAngle: Float,
+    val textStartAngle: Float,
+    val textSweepAngle: Float,
+)
+
+/**
+ * Geometry for a curved capsule that sits fully inside a circular ring end cap.
+ *
+ * Angles use Android Canvas conventions: 0° at 3 o'clock, positive clockwise.
+ */
+internal fun curvedBadgeGeometry(
+    endAngle: Float,
+    radius: Float,
+    badgeHeight: Float,
+    textWidth: Float,
+    horizontalPadding: Float,
+    frontInset: Float,
+): CurvedBadgeGeometry {
+    if (radius <= 0f) {
+        return CurvedBadgeGeometry(endAngle, .01f, endAngle, .01f)
+    }
+
+    fun lengthToDegrees(length: Float): Float =
+        (length / radius * 180f / PI.toFloat())
+
+    fun normalize(angle: Float): Float {
+        val value = angle % 360f
+        return if (value < 0f) value + 360f else value
+    }
+
+    // A round stroked arc extends badgeHeight / 2 past its centerline endpoint.
+    // Pull the centerline endpoint backwards so the visible front edge remains
+    // inside the parent ring's round cap.
+    val badgeCenterlineEnd =
+        endAngle - lengthToDegrees(badgeHeight / 2f + frontInset)
+
+    val visibleLength = max(badgeHeight, textWidth + horizontalPadding * 2f)
+    val centerlineLength = max(.5f, visibleLength - badgeHeight)
+    val badgeSweep = lengthToDegrees(centerlineLength).coerceAtLeast(.01f)
+    val badgeStart = badgeCenterlineEnd - badgeSweep
+    val badgeMid = badgeCenterlineEnd - badgeSweep / 2f
+
+    val textSweepMagnitude = lengthToDegrees(textWidth).coerceAtLeast(.01f)
+
+    // Clockwise text is upside-down on the lower half of the ring because its
+    // tangent points from 90° through 270°. Reverse the text path there while
+    // leaving the capsule itself untouched.
+    val normalizedMid = normalize(badgeMid)
+    val reverseText = normalizedMid in 0f..180f
+
+    return if (reverseText) {
+        CurvedBadgeGeometry(
+            badgeStartAngle = badgeStart,
+            badgeSweepAngle = badgeSweep,
+            textStartAngle = badgeMid + textSweepMagnitude / 2f,
+            textSweepAngle = -textSweepMagnitude,
+        )
+    } else {
+        CurvedBadgeGeometry(
+            badgeStartAngle = badgeStart,
+            badgeSweepAngle = badgeSweep,
+            textStartAngle = badgeMid - textSweepMagnitude / 2f,
+            textSweepAngle = textSweepMagnitude,
+        )
+    }
+}

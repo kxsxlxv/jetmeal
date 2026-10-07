@@ -235,6 +235,20 @@ private fun CalorieHealthDial(
     }
     val textPath = remember { Path() }
     val textBounds = remember { RectF() }
+    val badgeTextPath = remember { Path() }
+    val badgeTextBounds = remember { RectF() }
+    val badgeTextPaint = remember(
+        density.density,
+        density.fontScale,
+        colors.onContainer,
+        onErrorContainerColor,
+    ) {
+        Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+            textSize = with(density) { 9.sp.toPx() }
+            textAlign = Paint.Align.LEFT
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
 
     Box(
         modifier.semantics(mergeDescendants = true) {
@@ -257,9 +271,9 @@ private fun CalorieHealthDial(
             )
 
             rotate(-90f, center) {
-                // Use Butt arcs plus an explicit moving end cap. This keeps the geometry
-                // continuous while the animation crosses 100% / 12 o'clock: the active cap
-                // simply changes from the first lap to the overflow lap at the same position.
+                // Keep one drawing primitive for the whole animation. A 359.999° arc plus
+                // explicit caps is visually closed at 100% without switching to drawCircle
+                // in the final frames.
                 val baseBrush = Brush.sweepGradient(
                     0f to colors.start,
                     .50f to colors.end,
@@ -277,50 +291,34 @@ private fun CalorieHealthDial(
                 )
 
                 if (firstLap > 0f) {
-                    if (firstLap >= .9995f) {
-                        drawCircle(
-                            brush = baseBrush,
-                            radius = radius,
-                            center = center,
-                            style = Stroke(stroke),
-                        )
-                    } else {
-                        drawArc(
-                            brush = baseBrush,
-                            startAngle = 0f,
-                            sweepAngle = 360f * firstLap,
-                            useCenter = false,
-                            topLeft = origin,
-                            size = diameter,
-                            style = Stroke(stroke, cap = StrokeCap.Butt),
-                        )
-                        drawCircle(
-                            brush = baseBrush,
-                            radius = stroke / 2f,
-                            center = Offset(center.x + radius, center.y),
-                        )
-                    }
+                    drawArc(
+                        brush = baseBrush,
+                        startAngle = 0f,
+                        sweepAngle = (360f * firstLap).coerceAtMost(359.999f),
+                        useCenter = false,
+                        topLeft = origin,
+                        size = diameter,
+                        style = Stroke(stroke, cap = StrokeCap.Butt),
+                    )
+                    // Permanent start cap. At 100% the moving cap overlaps it with the same
+                    // opaque gradient, so there is no geometry transition or visible jump.
+                    drawCircle(
+                        brush = baseBrush,
+                        radius = stroke / 2f,
+                        center = Offset(center.x + radius, center.y),
+                    )
                 }
 
                 if (overflowLap > 0f) {
-                    if (overflowLap >= .9995f) {
-                        drawCircle(
-                            brush = overflowBrush,
-                            radius = radius,
-                            center = center,
-                            style = Stroke(stroke),
-                        )
-                    } else {
-                        drawArc(
-                            brush = overflowBrush,
-                            startAngle = 0f,
-                            sweepAngle = 360f * overflowLap,
-                            useCenter = false,
-                            topLeft = origin,
-                            size = diameter,
-                            style = Stroke(stroke, cap = StrokeCap.Butt),
-                        )
-                    }
+                    drawArc(
+                        brush = overflowBrush,
+                        startAngle = 0f,
+                        sweepAngle = (360f * overflowLap).coerceAtMost(359.999f),
+                        useCenter = false,
+                        topLeft = origin,
+                        size = diameter,
+                        style = Stroke(stroke, cap = StrokeCap.Butt),
+                    )
                 }
 
                 val activeLap = if (overflowLap > 0f) overflowLap else firstLap
@@ -338,60 +336,74 @@ private fun CalorieHealthDial(
                 }
             }
 
-            // Google Health-style delta chip lives inside the moving end cap.
-            // It follows the active lap; after 100% it moves with the overflow revolution.
+            // The delta is a curved sub-segment of the ring itself, not a rotated pill.
+            // Its visible front edge remains inside the parent round cap; longer values grow
+            // backwards along the arc. Text follows the same curvature and reverses on the
+            // lower half so it never becomes upside-down.
             val activeLap = if (overflowLap > 0f) overflowLap else firstLap
             if (activeLap > .001f) {
                 val endAngle = -90f + 360f * activeLap
-                val radians = Math.toRadians(endAngle.toDouble())
-                val endX = center.x + kotlin.math.cos(radians).toFloat() * radius
-                val endY = center.y + kotlin.math.sin(radians).toFloat() * radius
                 val badgeHeight = minOf(14.dp.toPx(), stroke - 4.dp.toPx())
                 val horizontalPadding = 4.dp.toPx()
-                val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-                    color = (if (overflowLap > 0f) onErrorContainerColor else colors.onContainer).toArgb()
-                    textSize = 9.sp.toPx()
-                    textAlign = Paint.Align.CENTER
-                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                }
-                val badgeWidth = maxOf(
-                    badgeHeight,
-                    badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
-                )
-                // The path endpoint is the centre of the round cap. Keep the capsule's
-                // front edge inside that cap and let any extra width grow backwards along
-                // the tangent, matching the Google Health treatment.
-                val capRadius = stroke / 2f
                 val frontInset = 2.dp.toPx()
-                val backShift =
-                    (badgeWidth / 2f - capRadius + frontInset).coerceAtLeast(0f)
-                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = (if (overflowLap > 0f) errorContainerColor else colors.container).toArgb()
-                    style = Paint.Style.FILL
-                }
-                val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = (if (overflowLap > 0f) errorColor else colors.end).toArgb()
-                    style = Paint.Style.STROKE
-                    strokeWidth = 1.25.dp.toPx()
-                }
+                badgeTextPaint.color =
+                    (if (overflowLap > 0f) onErrorContainerColor else colors.onContainer).toArgb()
+                val badgeTextWidth = badgeTextPaint.measureText(deltaText)
+                val geometry = curvedBadgeGeometry(
+                    endAngle = endAngle,
+                    radius = radius,
+                    badgeHeight = badgeHeight,
+                    textWidth = badgeTextWidth,
+                    horizontalPadding = horizontalPadding,
+                    frontInset = frontInset,
+                )
+                val outlineWidth = 1.25.dp.toPx()
+                val fillColor =
+                    if (overflowLap > 0f) errorContainerColor else colors.container
+                val outlineColor =
+                    if (overflowLap > 0f) errorColor else colors.end
+
+                drawArc(
+                    color = outlineColor,
+                    startAngle = geometry.badgeStartAngle,
+                    sweepAngle = geometry.badgeSweepAngle,
+                    useCenter = false,
+                    topLeft = origin,
+                    size = diameter,
+                    style = Stroke(badgeHeight + outlineWidth * 2f, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = fillColor,
+                    startAngle = geometry.badgeStartAngle,
+                    sweepAngle = geometry.badgeSweepAngle,
+                    useCenter = false,
+                    topLeft = origin,
+                    size = diameter,
+                    style = Stroke(badgeHeight, cap = StrokeCap.Round),
+                )
+
+                badgeTextBounds.set(
+                    center.x - radius,
+                    center.y - radius,
+                    center.x + radius,
+                    center.y + radius,
+                )
+                badgeTextPath.rewind()
+                badgeTextPath.addArc(
+                    badgeTextBounds,
+                    geometry.textStartAngle,
+                    geometry.textSweepAngle,
+                )
+                val metrics = badgeTextPaint.fontMetrics
+                val verticalOffset = -(metrics.ascent + metrics.descent) / 2f
                 drawIntoCanvas { canvas ->
-                    val native = canvas.nativeCanvas
-                    native.save()
-                    native.rotate(endAngle + 90f, endX, endY)
-                    val badgeCenterX = endX - backShift
-                    val badgeBounds = RectF(
-                        badgeCenterX - badgeWidth / 2f,
-                        endY - badgeHeight / 2f,
-                        badgeCenterX + badgeWidth / 2f,
-                        endY + badgeHeight / 2f,
+                    canvas.nativeCanvas.drawTextOnPath(
+                        deltaText,
+                        badgeTextPath,
+                        0f,
+                        verticalOffset,
+                        badgeTextPaint,
                     )
-                    val corner = badgeHeight / 2f
-                    native.drawRoundRect(badgeBounds, corner, corner, fillPaint)
-                    native.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
-                    val metrics = badgeTextPaint.fontMetrics
-                    val baseline = endY - (metrics.ascent + metrics.descent) / 2f
-                    native.drawText(deltaText, badgeCenterX, baseline, badgeTextPaint)
-                    native.restore()
                 }
             }
 
