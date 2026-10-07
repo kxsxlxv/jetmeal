@@ -41,10 +41,13 @@ object HeroWidgetScheduler {
         .setRequiredNetworkType(NetworkType.CONNECTED)
         .build()
 
-    fun ensurePeriodicIfPresent(context: Context) {
-        val ids = AppWidgetManager.getInstance(context)
+    private fun hasWidgets(context: Context): Boolean =
+        AppWidgetManager.getInstance(context)
             .getAppWidgetIds(ComponentName(context, HeroWidgetReceiver::class.java))
-        if (ids.isNotEmpty()) ensurePeriodic(context)
+            .isNotEmpty()
+
+    fun ensurePeriodicIfPresent(context: Context) {
+        if (hasWidgets(context)) ensurePeriodic(context)
     }
 
     fun ensurePeriodic(context: Context) {
@@ -64,6 +67,7 @@ object HeroWidgetScheduler {
     }
 
     fun enqueueImmediate(context: Context) {
+        if (!hasWidgets(context)) return
         val request = OneTimeWorkRequest.Builder(HeroWidgetSyncWorker::class.java)
             .setConstraints(constraints())
             .build()
