@@ -225,9 +225,9 @@ private fun EmptyHero() =
     MessageHero("JetMeal", "Откройте приложение для первой синхронизации")
 
 private data class MacroPalette(
-    val container: ColorProvider,
-    val content: ColorProvider,
-    val progress: ColorProvider,
+    val container: androidx.glance.unit.ColorProvider,
+    val content: androidx.glance.unit.ColorProvider,
+    val progress: androidx.glance.unit.ColorProvider,
 ) {
     companion object {
         val Protein = MacroPalette(
