@@ -41,10 +41,16 @@ object HeroWidgetScheduler {
         .setRequiredNetworkType(NetworkType.CONNECTED)
         .build()
 
-    private fun hasWidgets(context: Context): Boolean =
-        AppWidgetManager.getInstance(context)
-            .getAppWidgetIds(ComponentName(context, HeroWidgetReceiver::class.java))
-            .isNotEmpty()
+    private fun hasWidgets(context: Context): Boolean {
+        val manager = AppWidgetManager.getInstance(context)
+        return listOf(
+            HeroWidgetReceiver::class.java,
+            HeroTonalWidgetReceiver::class.java,
+            CalorieRingWidgetReceiver::class.java,
+        ).any { receiver ->
+            manager.getAppWidgetIds(ComponentName(context, receiver)).isNotEmpty()
+        }
+    }
 
     fun ensurePeriodicIfPresent(context: Context) {
         if (hasWidgets(context)) ensurePeriodic(context)
@@ -79,7 +85,8 @@ object HeroWidgetScheduler {
         )
     }
 
-    fun cancel(context: Context) {
+    fun cancelIfNone(context: Context) {
+        if (hasWidgets(context)) return
         WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK)
         WorkManager.getInstance(context).cancelUniqueWork(IMMEDIATE_WORK)
     }
