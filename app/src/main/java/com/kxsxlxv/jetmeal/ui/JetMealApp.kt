@@ -11,11 +11,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
@@ -68,19 +68,15 @@ private sealed interface Editor {
             state.authLoading -> LoadingContent("Восстанавливаем сессию…")
             state.email==null -> AuthContent(state,viewModel::signIn)
             else -> Scaffold(
-                topBar={ TopAppBar(
-                    title={ Text(if(settings) "Настройки" else "JetMeal",style=MaterialTheme.typography.titleLargeEmphasized) },
-                    navigationIcon={ if(settings) IconButton(onClick=viewModel::closeSettings) { SymbolIcon(JetMealSymbol.Back,"Назад") } },
-                    actions={ if(!settings) {
-                        IconButton(onClick=viewModel::refresh,enabled=!state.busy) { SymbolIcon(JetMealSymbol.Refresh,"Обновить дневник") }
-                        IconButton(onClick={ editor=null; viewModel.openSettings() }) { SymbolIcon(JetMealSymbol.Settings,"Настройки") }
-                    } },
+                topBar={ if(settings) TopAppBar(
+                    title={ Text("Настройки",style=MaterialTheme.typography.titleLargeEmphasized) },
+                    navigationIcon={ IconButton(onClick=viewModel::closeSettings) { SymbolIcon(JetMealSymbol.Back,"Назад") } },
                     colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.surface)
                 ) },
                 snackbarHost={ SnackbarHost(snackbar) },
             ) { insets ->
                 Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
-                    if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if(settings && state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     NavDisplay(backStack=backStack,onBack=viewModel::closeSettings,
                         modifier=Modifier.fillMaxSize(),entryProvider=entryProvider {
                             entry<MainScreen> { screen -> when(screen) {
@@ -124,28 +120,42 @@ private sealed interface Editor {
 }
 
 @Composable private fun NutritionTimeline(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
-    Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally) {
-        BoxWithConstraints(Modifier.widthIn(max=760.dp).fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp)) {
-            val fontScale=LocalDensity.current.fontScale.coerceAtLeast(1f)
-            val rows=TimeScale.entries.chunked(if(maxWidth<(360*fontScale).dp) 2 else 4)
-            Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                rows.forEach { options ->
-                    ScaleButtonGroup(options,state.scale,model::setTimeScale)
-                }
+    PullToRefreshBox(
+        isRefreshing=state.refreshing,
+        onRefresh=model::pullToRefresh,
+        modifier=Modifier.fillMaxSize(),
+    ) {
+        Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally) {
+            Row(
+                Modifier.widthIn(max=760.dp).fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),
+                horizontalArrangement=Arrangement.spacedBy(8.dp),
+                verticalAlignment=Alignment.CenterVertically,
+            ) {
+                ScaleButtonGroup(TimeScale.entries.toList(),state.scale,model::setTimeScale,Modifier.weight(1f))
+                FilledTonalIconButton(
+                    onClick={ model.openSettings() },
+                    shapes=IconButtonDefaults.shapes(),
+                    modifier=Modifier.size(48.dp),
+                ) { SymbolIcon(JetMealSymbol.Settings,"Настройки") }
             }
-        }
-        val effects=MaterialTheme.motionScheme.fastEffectsSpec<Float>()
-        AnimatedContent(state.scale,modifier=Modifier.weight(1f),label="Масштаб времени",
-            transitionSpec={fadeIn(effects) togetherWith fadeOut(effects)}) { scale ->
-            key(scale) { PeriodPager(state.copy(scale=scale),model,onAdd,onEdit) }
+            val effects=MaterialTheme.motionScheme.fastEffectsSpec<Float>()
+            AnimatedContent(state.scale,modifier=Modifier.weight(1f),label="Масштаб времени",
+                transitionSpec={fadeIn(effects) togetherWith fadeOut(effects)}) { scale ->
+                key(scale) { PeriodPager(state.copy(scale=scale),model,onAdd,onEdit) }
+            }
         }
     }
 }
 
-@Composable private fun ScaleButtonGroup(options:List<TimeScale>,selected:TimeScale,onSelect:(TimeScale)->Unit) {
+@Composable private fun ScaleButtonGroup(
+    options:List<TimeScale>,
+    selected:TimeScale,
+    onSelect:(TimeScale)->Unit,
+    modifier:Modifier=Modifier,
+) {
     val interactions=remember(options) { options.map {MutableInteractionSource()} }
     ButtonGroup(overflowIndicator={menu->ButtonGroupDefaults.OverflowIndicator(menu)},
-        modifier=Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(2.dp)) {
+        modifier=modifier,horizontalArrangement=Arrangement.spacedBy(2.dp)) {
         options.forEachIndexed {index,scale->
             customItem(buttonGroupContent={
                 ToggleButton(checked=selected==scale,onCheckedChange={if(it) onSelect(scale)},
@@ -156,7 +166,7 @@ private sealed interface Editor {
                     },
                     contentPadding=PaddingValues(horizontal=8.dp,vertical=10.dp),
                     interactionSource=interactions[index],
-                    modifier=Modifier.weight(1f).animateWidth(interactions[index],compressionLimit=8.dp)
+                    modifier=Modifier.animateWidth(interactions[index],compressionLimit=8.dp)
                         .heightIn(min=48.dp).semantics {role=Role.RadioButton}) {
                     Text(scale.label,style=MaterialTheme.typography.labelLarge,maxLines=1,softWrap=false)
                 }
