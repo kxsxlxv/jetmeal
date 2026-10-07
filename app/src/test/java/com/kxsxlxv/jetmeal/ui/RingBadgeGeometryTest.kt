@@ -6,30 +6,38 @@ import org.junit.Test
 
 class RingBadgeGeometryTest {
     @Test
-    fun visibleBadgeFrontStaysBehindRingEndpoint() {
+    fun visibleBadgeFrontReachesParentCapFrontWithInset() {
         val radius = 72f
         val badgeHeight = 14f
+        val parentCapRadius = 11.5f
         val frontInset = 2f
         val endAngle = 32f
         val geometry = curvedBadgeGeometry(
             endAngle = endAngle,
             radius = radius,
             badgeHeight = badgeHeight,
+            parentCapRadius = parentCapRadius,
             textWidth = 28f,
             horizontalPadding = 4f,
             frontInset = frontInset,
         )
 
         val centerlineEnd = geometry.badgeStartAngle + geometry.badgeSweepAngle
-        val roundCapExtension =
+        val badgeCapExtension =
             (badgeHeight / 2f / radius * 180f / PI.toFloat())
-        val visibleFront = centerlineEnd + roundCapExtension
+        val parentCapExtension =
+            (parentCapRadius / radius * 180f / PI.toFloat())
+        val insetAngle =
+            (frontInset / radius * 180f / PI.toFloat())
+        val visibleFront = centerlineEnd + badgeCapExtension
+        val expectedFront = endAngle + parentCapExtension - insetAngle
 
-        assertTrue(visibleFront < endAngle)
+        assertTrue(kotlin.math.abs(visibleFront - expectedFront) < 0.001f)
     }
 
     @Test
     fun textReversesOnLowerHalfWhereClockwiseTangentIsUpsideDown() {
+        val parentCapRadius = 11.5f
         val lowerRight = curvedBadgeGeometry(
             endAngle = 32f,
             radius = 72f,
@@ -53,6 +61,7 @@ class RingBadgeGeometryTest {
 
     @Test
     fun longerDeltaGetsLongerCurvedCapsule() {
+        val parentCapRadius = 11.5f
         val short = curvedBadgeGeometry(
             endAngle = 45f,
             radius = 72f,
