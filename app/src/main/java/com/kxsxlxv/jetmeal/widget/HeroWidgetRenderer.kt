@@ -14,6 +14,7 @@ import android.graphics.Typeface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.kxsxlxv.jetmeal.R
+import com.kxsxlxv.jetmeal.ui.curvedBadgeGeometry
 import com.kxsxlxv.jetmeal.ui.number
 import com.kxsxlxv.jetmeal.ui.signed
 import com.kxsxlxv.jetmeal.ui.theme.DarkNutritionColors
@@ -272,21 +273,25 @@ internal object HeroWidgetRenderer {
         canvas.rotate(-90f, centerX, centerY)
         if (firstLap > 0f) {
             progressPaint.shader = baseGradient
-            if (firstLap >= .9995f) {
-                canvas.drawCircle(centerX, centerY, radius, progressPaint)
-            } else {
-                canvas.drawArc(ringBounds, 0f, 360f * firstLap, false, progressPaint)
-                capPaint.shader = baseGradient
-                canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
-            }
+            canvas.drawArc(
+                ringBounds,
+                0f,
+                (360f * firstLap).coerceAtMost(359.999f),
+                false,
+                progressPaint,
+            )
+            capPaint.shader = baseGradient
+            canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
         }
         if (overflowLap > 0f) {
             progressPaint.shader = overflowGradient
-            if (overflowLap >= .9995f) {
-                canvas.drawCircle(centerX, centerY, radius, progressPaint)
-            } else {
-                canvas.drawArc(ringBounds, 0f, 360f * overflowLap, false, progressPaint)
-            }
+            canvas.drawArc(
+                ringBounds,
+                0f,
+                (360f * overflowLap).coerceAtMost(359.999f),
+                false,
+                progressPaint,
+            )
         }
 
         val movingCapLap = if (overflowLap > 0f) overflowLap else firstLap
@@ -302,52 +307,64 @@ internal object HeroWidgetRenderer {
         val activeLap = if (overflowLap > 0f) overflowLap else firstLap
         if (activeLap > .001f) {
             val endAngle = -90f + 360f * activeLap
-            val radians = Math.toRadians(endAngle.toDouble())
-            val endX = centerX + Math.cos(radians).toFloat() * radius
-            val endY = centerY + Math.sin(radians).toFloat() * radius
             val deltaText = signed(actual - target)
             val badgeHeight = minOf(dp(14f, pxPerDp), stroke - dp(4f, pxPerDp))
             val horizontalPadding = dp(4f, pxPerDp)
+            val frontInset = dp(2f, pxPerDp)
             val badgeTextPaint = textPaint(
                 color = (if (overflowLap > 0f) onErrorContainer else colors.onContainer).toArgb(),
                 sizePx = sp(9f, pxPerDp, fontScale),
                 weight = 500,
-                align = Paint.Align.CENTER,
             )
-            val badgeWidth = maxOf(
-                badgeHeight,
-                badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
+            val badgeTextWidth = badgeTextPaint.measureText(deltaText)
+            val geometry = curvedBadgeGeometry(
+                endAngle = endAngle,
+                radius = radius,
+                badgeHeight = badgeHeight,
+                textWidth = badgeTextWidth,
+                horizontalPadding = horizontalPadding,
+                frontInset = frontInset,
             )
-            val capRadius = stroke / 2f
-            val frontInset = dp(2f, pxPerDp)
-            val backShift =
-                (badgeWidth / 2f - capRadius + frontInset).coerceAtLeast(0f)
-            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = (if (overflowLap > 0f) errorContainer else colors.container).toArgb()
-                style = Paint.Style.FILL
-            }
+            val outlineWidth = dp(1.25f, pxPerDp)
             val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = (if (overflowLap > 0f) error else colors.end).toArgb()
                 style = Paint.Style.STROKE
-                strokeWidth = dp(1.25f, pxPerDp)
+                strokeWidth = badgeHeight + outlineWidth * 2f
+                strokeCap = Paint.Cap.ROUND
             }
-
-            canvas.save()
-            canvas.rotate(endAngle + 90f, endX, endY)
-            val badgeCenterX = endX - backShift
-            val badgeBounds = RectF(
-                badgeCenterX - badgeWidth / 2f,
-                endY - badgeHeight / 2f,
-                badgeCenterX + badgeWidth / 2f,
-                endY + badgeHeight / 2f,
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = (if (overflowLap > 0f) errorContainer else colors.container).toArgb()
+                style = Paint.Style.STROKE
+                strokeWidth = badgeHeight
+                strokeCap = Paint.Cap.ROUND
+            }
+            canvas.drawArc(
+                ringBounds,
+                geometry.badgeStartAngle,
+                geometry.badgeSweepAngle,
+                false,
+                outlinePaint,
             )
-            val corner = badgeHeight / 2f
-            canvas.drawRoundRect(badgeBounds, corner, corner, fillPaint)
-            canvas.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
+            canvas.drawArc(
+                ringBounds,
+                geometry.badgeStartAngle,
+                geometry.badgeSweepAngle,
+                false,
+                fillPaint,
+            )
+
+            val textPath = Path().apply {
+                addArc(ringBounds, geometry.textStartAngle, geometry.textSweepAngle)
+            }
             val metrics = badgeTextPaint.fontMetrics
-            val baseline = endY - (metrics.ascent + metrics.descent) / 2f
-            canvas.drawText(deltaText, badgeCenterX, baseline, badgeTextPaint)
-            canvas.restore()
+            val verticalOffset = -(metrics.ascent + metrics.descent) / 2f
+            canvas.drawTextOnPath(
+                deltaText,
+                textPath,
+                0f,
+                verticalOffset,
+                badgeTextPaint,
+            )
         }
 
         val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
