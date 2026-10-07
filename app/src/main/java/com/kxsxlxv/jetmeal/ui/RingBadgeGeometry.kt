@@ -19,6 +19,7 @@ internal fun curvedBadgeGeometry(
     endAngle: Float,
     radius: Float,
     badgeHeight: Float,
+    parentCapRadius: Float,
     textWidth: Float,
     horizontalPadding: Float,
     frontInset: Float,
@@ -35,11 +36,14 @@ internal fun curvedBadgeGeometry(
         return if (value < 0f) value + 360f else value
     }
 
-    // A round stroked arc extends badgeHeight / 2 past its centerline endpoint.
-    // Pull the centerline endpoint backwards so the visible front edge remains
-    // inside the parent ring's round cap.
+    // Let the smaller badge cap reach almost to the visible front of the parent
+    // round cap. Its centerline therefore moves slightly *past* the ring path
+    // endpoint; the badge's own round cap still remains inside the larger parent cap.
+    val badgeCapRadius = badgeHeight / 2f
+    val forwardShift =
+        (parentCapRadius - badgeCapRadius - frontInset).coerceAtLeast(0f)
     val badgeCenterlineEnd =
-        endAngle - lengthToDegrees(badgeHeight / 2f + frontInset)
+        endAngle + lengthToDegrees(forwardShift)
 
     val visibleLength = max(badgeHeight, textWidth + horizontalPadding * 2f)
     val centerlineLength = max(.5f, visibleLength - badgeHeight)

@@ -9,6 +9,8 @@ import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -195,7 +197,10 @@ private fun animatedHealthProgress(
     LaunchedEffect(animationKey, boundedTarget) {
         progress.animateTo(
             targetValue = boundedTarget,
-            animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
+            animationSpec = tween(
+                durationMillis = 700,
+                easing = FastOutSlowInEasing,
+            ),
         )
     }
     return progress.value
@@ -222,8 +227,9 @@ private fun CalorieHealthDial(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val errorColor = MaterialTheme.colorScheme.error
-    val errorContainerColor = MaterialTheme.colorScheme.errorContainer
-    val onErrorContainerColor = MaterialTheme.colorScheme.onErrorContainer
+    val badgeTextColor = MaterialTheme.colorScheme.onSurface
+    val badgeOverlayColor = Color.White.copy(alpha = .16f)
+    val badgeOutlineColor = Color.White.copy(alpha = .38f)
     val warningColor = Color(0xFFFFC34D)
     val deltaText = signed(actual - target)
     val bottomPaint = remember(labelColor, density.density, density.fontScale) {
@@ -240,8 +246,7 @@ private fun CalorieHealthDial(
     val badgeTextPaint = remember(
         density.density,
         density.fontScale,
-        colors.onContainer,
-        onErrorContainerColor,
+        badgeTextColor,
     ) {
         Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             textSize = with(density) { 9.sp.toPx() }
@@ -345,26 +350,21 @@ private fun CalorieHealthDial(
                 val endAngle = -90f + 360f * activeLap
                 val badgeHeight = minOf(14.dp.toPx(), stroke - 4.dp.toPx())
                 val horizontalPadding = 4.dp.toPx()
-                val frontInset = 2.dp.toPx()
-                badgeTextPaint.color =
-                    (if (overflowLap > 0f) onErrorContainerColor else colors.onContainer).toArgb()
+                val frontInset = 1.dp.toPx()
+                badgeTextPaint.color = badgeTextColor.toArgb()
                 val badgeTextWidth = badgeTextPaint.measureText(deltaText)
                 val geometry = curvedBadgeGeometry(
                     endAngle = endAngle,
                     radius = radius,
                     badgeHeight = badgeHeight,
+                    parentCapRadius = stroke / 2f,
                     textWidth = badgeTextWidth,
                     horizontalPadding = horizontalPadding,
                     frontInset = frontInset,
                 )
                 val outlineWidth = 1.25.dp.toPx()
-                val fillColor =
-                    if (overflowLap > 0f) errorContainerColor else colors.container
-                val outlineColor =
-                    if (overflowLap > 0f) errorColor else colors.end
-
                 drawArc(
-                    color = outlineColor,
+                    color = badgeOutlineColor,
                     startAngle = geometry.badgeStartAngle,
                     sweepAngle = geometry.badgeSweepAngle,
                     useCenter = false,
@@ -373,7 +373,7 @@ private fun CalorieHealthDial(
                     style = Stroke(badgeHeight + outlineWidth * 2f, cap = StrokeCap.Round),
                 )
                 drawArc(
-                    color = fillColor,
+                    color = badgeOverlayColor,
                     startAngle = geometry.badgeStartAngle,
                     sweepAngle = geometry.badgeSweepAngle,
                     useCenter = false,

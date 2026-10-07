@@ -92,8 +92,6 @@ internal object HeroWidgetRenderer {
             onSurface = scheme.onSurface,
             onSurfaceVariant = scheme.onSurfaceVariant,
             error = scheme.error,
-            errorContainer = scheme.errorContainer,
-            onErrorContainer = scheme.onErrorContainer,
             pxPerDp = pxPerDp,
             fontScale = fontScale,
         )
@@ -183,8 +181,6 @@ internal object HeroWidgetRenderer {
             onSurface = scheme.onSurface,
             onSurfaceVariant = scheme.onSurfaceVariant,
             error = scheme.error,
-            errorContainer = scheme.errorContainer,
-            onErrorContainer = scheme.onErrorContainer,
             pxPerDp = pxPerDp,
             fontScale = fontScale,
         )
@@ -202,8 +198,6 @@ internal object HeroWidgetRenderer {
         onSurface: Color,
         onSurfaceVariant: Color,
         error: Color,
-        errorContainer: Color,
-        onErrorContainer: Color,
         pxPerDp: Float,
         fontScale: Float,
     ) {
@@ -310,9 +304,9 @@ internal object HeroWidgetRenderer {
             val deltaText = signed(actual - target)
             val badgeHeight = minOf(dp(14f, pxPerDp), stroke - dp(4f, pxPerDp))
             val horizontalPadding = dp(4f, pxPerDp)
-            val frontInset = dp(2f, pxPerDp)
+            val frontInset = dp(1f, pxPerDp)
             val badgeTextPaint = textPaint(
-                color = (if (overflowLap > 0f) onErrorContainer else colors.onContainer).toArgb(),
+                color = onSurface.toArgb(),
                 sizePx = sp(9f, pxPerDp, fontScale),
                 weight = 500,
             )
@@ -321,19 +315,20 @@ internal object HeroWidgetRenderer {
                 endAngle = endAngle,
                 radius = radius,
                 badgeHeight = badgeHeight,
+                parentCapRadius = stroke / 2f,
                 textWidth = badgeTextWidth,
                 horizontalPadding = horizontalPadding,
                 frontInset = frontInset,
             )
             val outlineWidth = dp(1.25f, pxPerDp)
             val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = (if (overflowLap > 0f) error else colors.end).toArgb()
+                color = Color.White.copy(alpha = .38f).toArgb()
                 style = Paint.Style.STROKE
                 strokeWidth = badgeHeight + outlineWidth * 2f
                 strokeCap = Paint.Cap.ROUND
             }
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = (if (overflowLap > 0f) errorContainer else colors.container).toArgb()
+                color = Color.White.copy(alpha = .16f).toArgb()
                 style = Paint.Style.STROKE
                 strokeWidth = badgeHeight
                 strokeCap = Paint.Cap.ROUND
