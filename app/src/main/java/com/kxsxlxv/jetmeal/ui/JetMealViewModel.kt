@@ -15,7 +15,7 @@ import java.time.*
 enum class Destination { Today, Week, Calendar, Settings }
 data class AppState(
     val authLoading: Boolean = true, val email: String? = null,
-    val busy: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
+    val busy: Boolean = false, val refreshing: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
     val destination: Destination = Destination.Today, val month: YearMonth = YearMonth.now(),
     val scale: TimeScale = TimeScale.Day,
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
@@ -77,13 +77,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     }
 
     /** Resume synchronizes the system timezone and refreshes external AI writes. */
-    fun refresh() {
+    fun refresh() = refresh(showPullIndicator = false)
+    fun pullToRefresh() = refresh(showPullIndicator = true)
+    private fun refresh(showPullIndicator: Boolean) {
         if (repository?.client?.auth?.currentUserOrNull() == null) return
         val generation = ++refreshGeneration
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             refreshInFlight = true
-            mutable.update { it.copy(busy = true, error = null) }
+            mutable.update { it.copy(busy = true, refreshing = showPullIndicator, error = null) }
             try {
                 val zone = ZoneId.systemDefault()
                 repository.invalidateSearch()
@@ -126,7 +128,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             finally {
                 if (generation == refreshGeneration) {
                     refreshInFlight = false
-                    mutable.update { it.copy(busy = writeInFlight) }
+                    mutable.update { it.copy(busy = writeInFlight, refreshing = false) }
                 }
             }
         }
