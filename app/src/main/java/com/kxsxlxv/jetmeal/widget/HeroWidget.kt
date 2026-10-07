@@ -22,6 +22,7 @@ import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.unit.ColorProvider
+import androidx.glance.color.ColorProvider as DayNightColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
 import androidx.glance.layout.ContentScale
@@ -230,43 +231,43 @@ private data class MacroPalette(
 ) {
     companion object {
         val Protein = MacroPalette(
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.protein.container,
                 night = DarkNutritionColors.protein.container,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.protein.onContainer,
                 night = DarkNutritionColors.protein.onContainer,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.protein.end,
                 night = DarkNutritionColors.protein.end,
             ),
         )
         val Fat = MacroPalette(
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.fat.container,
                 night = DarkNutritionColors.fat.container,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.fat.onContainer,
                 night = DarkNutritionColors.fat.onContainer,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.fat.end,
                 night = DarkNutritionColors.fat.end,
             ),
         )
         val Carbs = MacroPalette(
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.carbs.container,
                 night = DarkNutritionColors.carbs.container,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.carbs.onContainer,
                 night = DarkNutritionColors.carbs.onContainer,
             ),
-            ColorProvider(
+            DayNightColorProvider(
                 day = LightNutritionColors.carbs.end,
                 night = DarkNutritionColors.carbs.end,
             ),
