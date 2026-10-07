@@ -223,7 +223,10 @@ private fun CalorieHealthDial(
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val errorColor = MaterialTheme.colorScheme.error
+    val errorContainerColor = MaterialTheme.colorScheme.errorContainer
+    val onErrorContainerColor = MaterialTheme.colorScheme.onErrorContainer
     val warningColor = Color(0xFFFFC34D)
+    val deltaText = signed(actual - target)
     val bottomPaint = remember(labelColor, density.density, density.fontScale) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = labelColor.toArgb()
@@ -329,6 +332,55 @@ private fun CalorieHealthDial(
                             style = Stroke(stroke, cap = StrokeCap.Butt),
                         )
                     }
+                }
+            }
+
+            // Google Health-style delta chip lives inside the moving end cap.
+            // It follows the active lap; after 100% it moves with the overflow revolution.
+            val activeLap = if (overflowLap > 0f) overflowLap else firstLap
+            if (activeLap > .001f) {
+                val endAngle = -90f + 360f * activeLap
+                val radians = Math.toRadians(endAngle.toDouble())
+                val endX = center.x + kotlin.math.cos(radians).toFloat() * radius
+                val endY = center.y + kotlin.math.sin(radians).toFloat() * radius
+                val badgeHeight = 16.dp.toPx()
+                val horizontalPadding = 5.dp.toPx()
+                val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                    color = (if (overflowLap > 0f) onErrorContainerColor else colors.onContainer).toArgb()
+                    textSize = 9.5.sp.toPx()
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                }
+                val badgeWidth = maxOf(
+                    badgeHeight,
+                    badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
+                )
+                val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = (if (overflowLap > 0f) errorContainerColor else colors.container).toArgb()
+                    style = Paint.Style.FILL
+                }
+                val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = (if (overflowLap > 0f) errorColor else colors.end).toArgb()
+                    style = Paint.Style.STROKE
+                    strokeWidth = 1.25.dp.toPx()
+                }
+                drawIntoCanvas { canvas ->
+                    val native = canvas.nativeCanvas
+                    native.save()
+                    native.rotate(endAngle + 90f, endX, endY)
+                    val badgeBounds = RectF(
+                        endX - badgeWidth / 2f,
+                        endY - badgeHeight / 2f,
+                        endX + badgeWidth / 2f,
+                        endY + badgeHeight / 2f,
+                    )
+                    val corner = badgeHeight / 2f
+                    native.drawRoundRect(badgeBounds, corner, corner, fillPaint)
+                    native.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
+                    val metrics = badgeTextPaint.fontMetrics
+                    val baseline = endY - (metrics.ascent + metrics.descent) / 2f
+                    native.drawText(deltaText, endX, baseline, badgeTextPaint)
+                    native.restore()
                 }
             }
 
