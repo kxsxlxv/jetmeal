@@ -22,7 +22,7 @@ class HeroWidgetCoordinator(
         val data = repository
         if (data == null) {
             store.write(HeroWidgetState.Empty)
-            HeroWidget().updateAll(appContext)
+            updateWidgets()
             return
         }
 
@@ -44,7 +44,7 @@ class HeroWidgetCoordinator(
             val entries = data.entries(weekStart, today.plusDays(1), zone)
             store.write(HeroWidgetSnapshot.calculate(today, entries, targets, zone))
         }
-        HeroWidget().updateAll(appContext)
+        updateWidgets()
     }
 
     suspend fun updateFromLoaded(
@@ -62,11 +62,17 @@ class HeroWidgetCoordinator(
             if (targets == null) HeroWidgetState.MissingTargets
             else HeroWidgetSnapshot.calculate(today, entries, targets, zone)
         )
-        HeroWidget().updateAll(appContext)
+        updateWidgets()
     }
 
     suspend fun showSignedOut() {
         store.write(HeroWidgetState.SignedOut)
+        updateWidgets()
+    }
+
+    private suspend fun updateWidgets() {
         HeroWidget().updateAll(appContext)
+        HeroTonalWidget().updateAll(appContext)
+        CalorieRingWidget().updateAll(appContext)
     }
 }
