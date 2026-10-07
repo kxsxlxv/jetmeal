@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">JetMeal</string>
+    <string name="hero_widget_description">Калории и БЖУ за сегодня</string>
 </resources>
