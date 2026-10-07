@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.kxsxlxv.jetmeal.R
 import com.kxsxlxv.jetmeal.ui.number
+import com.kxsxlxv.jetmeal.ui.signed
 import com.kxsxlxv.jetmeal.ui.theme.DarkNutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.LightNutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.MealDarkColors
@@ -87,9 +88,12 @@ internal object HeroWidgetRenderer {
             target = state.calorieTarget,
             colors = nutrition.calories,
             track = scheme.surfaceContainerHighest,
+            innerSurface = scheme.surfaceContainerLow,
             onSurface = scheme.onSurface,
             onSurfaceVariant = scheme.onSurfaceVariant,
             error = scheme.error,
+            errorContainer = scheme.errorContainer,
+            onErrorContainer = scheme.onErrorContainer,
             pxPerDp = pxPerDp,
             fontScale = fontScale,
         )
@@ -138,6 +142,55 @@ internal object HeroWidgetRenderer {
         return bitmap
     }
 
+    fun renderRing(
+        context: Context,
+        state: HeroWidgetState.Ready,
+        widthDp: Float,
+        heightDp: Float,
+    ): Bitmap {
+        val metrics = context.resources.displayMetrics
+        val screenPixels = metrics.widthPixels.toLong() * metrics.heightPixels.toLong()
+        val requestedPixels = widthDp.coerceAtLeast(1f) * heightDp.coerceAtLeast(1f)
+        val memorySafeScale = sqrt(screenPixels / requestedPixels).toFloat()
+        val pxPerDp = minOf(metrics.density, memorySafeScale).coerceAtLeast(1f)
+        val widthPx = (widthDp * pxPerDp).roundToInt().coerceAtLeast(1)
+        val heightPx = (heightDp * pxPerDp).roundToInt().coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        val scheme = if (dark) MealDarkColors else MealLightColors
+        val nutrition = if (dark) DarkNutritionColors else LightNutritionColors
+        val fontScale = context.resources.configuration.fontScale
+        val dialDp = minOf(widthDp, heightDp).coerceAtLeast(1f)
+        val dialSizePx = dp(dialDp, pxPerDp)
+        val bounds = RectF(
+            (widthPx - dialSizePx) / 2f,
+            (heightPx - dialSizePx) / 2f,
+            (widthPx + dialSizePx) / 2f,
+            (heightPx + dialSizePx) / 2f,
+        )
+
+        drawCalorieDial(
+            canvas = canvas,
+            bounds = bounds,
+            actual = state.total.calories,
+            target = state.calorieTarget,
+            colors = nutrition.calories,
+            track = scheme.surfaceContainerHighest,
+            innerSurface = scheme.surfaceContainerLow,
+            onSurface = scheme.onSurface,
+            onSurfaceVariant = scheme.onSurfaceVariant,
+            error = scheme.error,
+            errorContainer = scheme.errorContainer,
+            onErrorContainer = scheme.onErrorContainer,
+            pxPerDp = pxPerDp,
+            fontScale = fontScale,
+        )
+        return bitmap
+    }
+
     private fun drawCalorieDial(
         canvas: Canvas,
         bounds: RectF,
@@ -145,9 +198,12 @@ internal object HeroWidgetRenderer {
         target: Double,
         colors: RingColors,
         track: Color,
+        innerSurface: Color,
         onSurface: Color,
         onSurfaceVariant: Color,
         error: Color,
+        errorContainer: Color,
+        onErrorContainer: Color,
         pxPerDp: Float,
         fontScale: Float,
     ) {
@@ -168,6 +224,13 @@ internal object HeroWidgetRenderer {
         }.coerceIn(0f, 2f)
         val firstLap = fraction.coerceAtMost(1f)
         val overflowLap = (fraction - 1f).coerceIn(0f, 1f)
+
+        val innerRadius = (radius - stroke / 2f).coerceAtLeast(0f)
+        val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = innerSurface.toArgb()
+        }
+        canvas.drawCircle(centerX, centerY, innerRadius, innerPaint)
 
         val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -229,6 +292,52 @@ internal object HeroWidgetRenderer {
             }
         }
         canvas.restore()
+
+        val activeLap = if (overflowLap > 0f) overflowLap else firstLap
+        if (activeLap > .001f) {
+            val endAngle = -90f + 360f * activeLap
+            val radians = Math.toRadians(endAngle.toDouble())
+            val endX = centerX + Math.cos(radians).toFloat() * radius
+            val endY = centerY + Math.sin(radians).toFloat() * radius
+            val deltaText = signed(actual - target)
+            val badgeHeight = dp(16f, pxPerDp)
+            val horizontalPadding = dp(5f, pxPerDp)
+            val badgeTextPaint = textPaint(
+                color = (if (overflowLap > 0f) onErrorContainer else colors.onContainer).toArgb(),
+                sizePx = sp(9.5f, pxPerDp, fontScale),
+                weight = 500,
+                align = Paint.Align.CENTER,
+            )
+            val badgeWidth = maxOf(
+                badgeHeight,
+                badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
+            )
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = (if (overflowLap > 0f) errorContainer else colors.container).toArgb()
+                style = Paint.Style.FILL
+            }
+            val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = (if (overflowLap > 0f) error else colors.end).toArgb()
+                style = Paint.Style.STROKE
+                strokeWidth = dp(1.25f, pxPerDp)
+            }
+
+            canvas.save()
+            canvas.rotate(endAngle + 90f, endX, endY)
+            val badgeBounds = RectF(
+                endX - badgeWidth / 2f,
+                endY - badgeHeight / 2f,
+                endX + badgeWidth / 2f,
+                endY + badgeHeight / 2f,
+            )
+            val corner = badgeHeight / 2f
+            canvas.drawRoundRect(badgeBounds, corner, corner, fillPaint)
+            canvas.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
+            val metrics = badgeTextPaint.fontMetrics
+            val baseline = endY - (metrics.ascent + metrics.descent) / 2f
+            canvas.drawText(deltaText, endX, baseline, badgeTextPaint)
+            canvas.restore()
+        }
 
         val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
         val percentPaint = textPaint(
