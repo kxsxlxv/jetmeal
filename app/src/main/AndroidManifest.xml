@@ -26,13 +26,36 @@
         </activity>
         <receiver
             android:name=".widget.HeroWidgetReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/hero_widget_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/hero_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".widget.HeroTonalWidgetReceiver"
+            android:exported="true"
+            android:label="@string/hero_tonal_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hero_tonal_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".widget.CalorieRingWidgetReceiver"
+            android:exported="true"
+            android:label="@string/calorie_ring_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/calorie_ring_widget_info" />
         </receiver>
     </application>
 

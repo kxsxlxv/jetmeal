@@ -17,7 +17,9 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.appWidgetBackground
+import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
+import androidx.glance.background
 import androidx.glance.color.ColorProvider as DayNightColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
@@ -31,18 +33,42 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.kxsxlxv.jetmeal.MainActivity
 import com.kxsxlxv.jetmeal.ui.number
+import com.kxsxlxv.jetmeal.ui.signed
 import com.kxsxlxv.jetmeal.ui.theme.MealDarkColors
 import com.kxsxlxv.jetmeal.ui.theme.MealLightColors
 
+private enum class WidgetContent { Hero, Ring }
+private enum class WidgetSurface { Transparent, Tonal }
+
 class HeroWidget : GlanceAppWidget() {
-    // Launchers give slightly different physical sizes to the same 5x2 cell request.
-    // Exact makes LocalSize match the actual host allocation so the Hero keeps its geometry.
     override val sizeMode: SizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val state = HeroWidgetStore(context).read()
         provideContent {
-            HeroWidgetContent(context, state)
+            JetMealWidgetContent(context, state, WidgetContent.Hero, WidgetSurface.Transparent)
+        }
+    }
+}
+
+class HeroTonalWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val state = HeroWidgetStore(context).read()
+        provideContent {
+            JetMealWidgetContent(context, state, WidgetContent.Hero, WidgetSurface.Tonal)
+        }
+    }
+}
+
+class CalorieRingWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val state = HeroWidgetStore(context).read()
+        provideContent {
+            JetMealWidgetContent(context, state, WidgetContent.Ring, WidgetSurface.Transparent)
         }
     }
 }
@@ -63,15 +89,59 @@ class HeroWidgetReceiver : GlanceAppWidgetReceiver() {
     }
 
     override fun onDisabled(context: Context) {
-        HeroWidgetScheduler.cancel(context)
         super.onDisabled(context)
+        HeroWidgetScheduler.cancelIfNone(context)
+    }
+}
+
+class HeroTonalWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = HeroTonalWidget()
+
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        HeroWidgetScheduler.ensurePeriodic(context)
+        HeroWidgetScheduler.enqueueImmediate(context)
+    }
+
+    override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
+        super.onUpdate(context, manager, appWidgetIds)
+        HeroWidgetScheduler.ensurePeriodic(context)
+        HeroWidgetScheduler.enqueueImmediate(context)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        HeroWidgetScheduler.cancelIfNone(context)
+    }
+}
+
+class CalorieRingWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = CalorieRingWidget()
+
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        HeroWidgetScheduler.ensurePeriodic(context)
+        HeroWidgetScheduler.enqueueImmediate(context)
+    }
+
+    override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
+        super.onUpdate(context, manager, appWidgetIds)
+        HeroWidgetScheduler.ensurePeriodic(context)
+        HeroWidgetScheduler.enqueueImmediate(context)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        HeroWidgetScheduler.cancelIfNone(context)
     }
 }
 
 @Composable
-private fun HeroWidgetContent(
+private fun JetMealWidgetContent(
     context: Context,
     state: HeroWidgetState,
+    content: WidgetContent,
+    surface: WidgetSurface,
 ) {
     val size = LocalSize.current
     val openToday = actionStartActivity(
@@ -80,43 +150,47 @@ private fun HeroWidgetContent(
             .putExtra(MainActivity.EXTRA_OPEN_TODAY, true)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     )
-    Column(
-        modifier = GlanceModifier
-            .fillMaxSize()
-            .appWidgetBackground()
-            .clickable(openToday)
-            .padding(8.dp),
-    ) {
+    val tonalBackground = DayNightColorProvider(
+        day = MealLightColors.surfaceContainer,
+        night = MealDarkColors.surfaceContainer,
+    )
+
+    var rootModifier = GlanceModifier
+        .fillMaxSize()
+        .appWidgetBackground()
+    if (surface == WidgetSurface.Tonal) {
+        rootModifier = rootModifier
+            .background(tonalBackground)
+            .cornerRadius(android.R.dimen.system_app_widget_background_radius)
+    }
+    rootModifier = rootModifier
+        .clickable(openToday)
+        .padding(8.dp)
+
+    Column(modifier = rootModifier) {
         when (state) {
             is HeroWidgetState.Ready -> {
                 val widthDp = (size.width.value - 16f).coerceAtLeast(1f)
                 val heightDp = (size.height.value - 16f).coerceAtLeast(1f)
-                val hero = HeroWidgetRenderer.render(
-                    context = context,
-                    state = state,
-                    widthDp = widthDp,
-                    heightDp = heightDp,
-                )
+                val bitmap = when (content) {
+                    WidgetContent.Hero -> HeroWidgetRenderer.render(
+                        context = context,
+                        state = state,
+                        widthDp = widthDp,
+                        heightDp = heightDp,
+                    )
+                    WidgetContent.Ring -> HeroWidgetRenderer.renderRing(
+                        context = context,
+                        state = state,
+                        widthDp = widthDp,
+                        heightDp = heightDp,
+                    )
+                }
                 Image(
-                    provider = ImageProvider(hero),
-                    contentDescription = buildString {
-                        append("Калории: ")
-                        append(number(state.total.calories))
-                        append(" из ")
-                        append(number(state.calorieTarget))
-                        append(" ккал. Белки: ")
-                        append(number(state.total.protein, 1))
-                        append(" из ")
-                        append(number(state.targets.protein, 1))
-                        append(" г. Жиры: ")
-                        append(number(state.total.fat, 1))
-                        append(" из ")
-                        append(number(state.targets.fat, 1))
-                        append(" г. Углеводы: ")
-                        append(number(state.total.carbs, 1))
-                        append(" из ")
-                        append(number(state.targets.carbs, 1))
-                        append(" г.")
+                    provider = ImageProvider(bitmap),
+                    contentDescription = when (content) {
+                        WidgetContent.Hero -> heroDescription(state)
+                        WidgetContent.Ring -> ringDescription(state)
                     },
                     contentScale = ContentScale.FillBounds,
                     modifier = GlanceModifier.fillMaxSize(),
@@ -130,6 +204,33 @@ private fun HeroWidgetContent(
             )
         }
     }
+}
+
+private fun ringDescription(state: HeroWidgetState.Ready): String = buildString {
+    append("Калории: ")
+    append(number(state.total.calories))
+    append(" из ")
+    append(number(state.calorieTarget))
+    append(" ккал, разница ")
+    append(signed(state.total.calories - state.calorieTarget))
+    append(" ккал.")
+}
+
+private fun heroDescription(state: HeroWidgetState.Ready): String = buildString {
+    append(ringDescription(state))
+    append(" Белки: ")
+    append(number(state.total.protein, 1))
+    append(" из ")
+    append(number(state.targets.protein, 1))
+    append(" г. Жиры: ")
+    append(number(state.total.fat, 1))
+    append(" из ")
+    append(number(state.targets.fat, 1))
+    append(" г. Углеводы: ")
+    append(number(state.total.carbs, 1))
+    append(" из ")
+    append(number(state.targets.carbs, 1))
+    append(" г.")
 }
 
 @Composable
