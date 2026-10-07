@@ -1,4 +1,9 @@
 <resources>
     <string name="app_name">JetMeal</string>
-    <string name="hero_widget_description">Калории и БЖУ за сегодня</string>
+    <string name="hero_widget_name">Hero — прозрачный</string>
+    <string name="hero_widget_description">Калории и БЖУ за сегодня без общей подложки</string>
+    <string name="hero_tonal_widget_name">Hero — tonal</string>
+    <string name="hero_tonal_widget_description">Калории и БЖУ за сегодня на tonal-подложке</string>
+    <string name="calorie_ring_widget_name">Кольцо калорий</string>
+    <string name="calorie_ring_widget_description">Компактное кольцо калорий за сегодня</string>
 </resources>
