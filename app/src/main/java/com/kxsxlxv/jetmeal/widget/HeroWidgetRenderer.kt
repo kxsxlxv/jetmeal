@@ -289,9 +289,9 @@ internal object HeroWidgetRenderer {
             }
         }
 
-        val activeLap = if (overflowLap > 0f) overflowLap else firstLap
-        if (activeLap > .001f) {
-            val angle = Math.toRadians((360f * activeLap).toDouble())
+        val movingCapLap = if (overflowLap > 0f) overflowLap else firstLap
+        if (movingCapLap > .001f) {
+            val angle = Math.toRadians((360f * movingCapLap).toDouble())
             val activeX = centerX + Math.cos(angle).toFloat() * radius
             val activeY = centerY + Math.sin(angle).toFloat() * radius
             capPaint.shader = if (overflowLap > 0f) overflowGradient else baseGradient
