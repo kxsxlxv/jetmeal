@@ -22,7 +22,6 @@ import com.kxsxlxv.jetmeal.ui.theme.MealDarkColors
 import com.kxsxlxv.jetmeal.ui.theme.MealLightColors
 import com.kxsxlxv.jetmeal.ui.theme.NutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.RingColors
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -245,51 +244,58 @@ internal object HeroWidgetRenderer {
             intArrayOf(colors.start.toArgb(), colors.end.toArgb(), colors.start.toArgb()),
             floatArrayOf(0f, .5f, 1f),
         )
+        val overflowGradient = SweepGradient(
+            centerX,
+            centerY,
+            intArrayOf(
+                colors.start.toArgb(),
+                0xFFFFC34D.toInt(),
+                error.toArgb(),
+                error.toArgb(),
+                0xFFFFC34D.toInt(),
+                colors.start.toArgb(),
+            ),
+            floatArrayOf(0f, .04f, .10f, .90f, .96f, 1f),
+        )
         val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = stroke
+            strokeCap = Paint.Cap.BUTT
+            shader = baseGradient
+        }
+        val capPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
             shader = baseGradient
         }
 
         canvas.save()
         canvas.rotate(-90f, centerX, centerY)
         if (firstLap > 0f) {
+            progressPaint.shader = baseGradient
             if (firstLap >= .9995f) {
-                progressPaint.strokeCap = Paint.Cap.BUTT
                 canvas.drawCircle(centerX, centerY, radius, progressPaint)
             } else {
-                progressPaint.strokeCap = Paint.Cap.ROUND
                 canvas.drawArc(ringBounds, 0f, 360f * firstLap, false, progressPaint)
+                capPaint.shader = baseGradient
+                canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
             }
         }
         if (overflowLap > 0f) {
-            progressPaint.shader = SweepGradient(
-                centerX,
-                centerY,
-                intArrayOf(
-                    colors.start.toArgb(),
-                    0xFFFFC34D.toInt(),
-                    error.toArgb(),
-                    error.toArgb(),
-                    0xFFFFC34D.toInt(),
-                    colors.start.toArgb(),
-                ),
-                floatArrayOf(0f, .04f, .10f, .90f, .96f, 1f),
-            )
+            progressPaint.shader = overflowGradient
             if (overflowLap >= .9995f) {
-                progressPaint.strokeCap = Paint.Cap.BUTT
                 canvas.drawCircle(centerX, centerY, radius, progressPaint)
             } else {
-                progressPaint.strokeCap = Paint.Cap.ROUND
                 canvas.drawArc(ringBounds, 0f, 360f * overflowLap, false, progressPaint)
-
-                val seamCoverSweep =
-                    (((stroke / 2f + dp(1f, pxPerDp)) / radius) * (180f / PI.toFloat()))
-                        .coerceIn(1f, 18f)
-                progressPaint.shader = baseGradient
-                progressPaint.strokeCap = Paint.Cap.BUTT
-                canvas.drawArc(ringBounds, -seamCoverSweep, seamCoverSweep, false, progressPaint)
             }
+        }
+
+        val movingCapLap = if (overflowLap > 0f) overflowLap else firstLap
+        if (movingCapLap > .001f) {
+            val angle = Math.toRadians((360f * movingCapLap).toDouble())
+            val activeX = centerX + Math.cos(angle).toFloat() * radius
+            val activeY = centerY + Math.sin(angle).toFloat() * radius
+            capPaint.shader = if (overflowLap > 0f) overflowGradient else baseGradient
+            canvas.drawCircle(activeX, activeY, stroke / 2f, capPaint)
         }
         canvas.restore()
 
@@ -300,11 +306,11 @@ internal object HeroWidgetRenderer {
             val endX = centerX + Math.cos(radians).toFloat() * radius
             val endY = centerY + Math.sin(radians).toFloat() * radius
             val deltaText = signed(actual - target)
-            val badgeHeight = dp(16f, pxPerDp)
-            val horizontalPadding = dp(5f, pxPerDp)
+            val badgeHeight = minOf(dp(14f, pxPerDp), stroke - dp(4f, pxPerDp))
+            val horizontalPadding = dp(4f, pxPerDp)
             val badgeTextPaint = textPaint(
                 color = (if (overflowLap > 0f) onErrorContainer else colors.onContainer).toArgb(),
-                sizePx = sp(9.5f, pxPerDp, fontScale),
+                sizePx = sp(9f, pxPerDp, fontScale),
                 weight = 500,
                 align = Paint.Align.CENTER,
             )
@@ -312,6 +318,10 @@ internal object HeroWidgetRenderer {
                 badgeHeight,
                 badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
             )
+            val capRadius = stroke / 2f
+            val frontInset = dp(2f, pxPerDp)
+            val backShift =
+                (badgeWidth / 2f - capRadius + frontInset).coerceAtLeast(0f)
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = (if (overflowLap > 0f) errorContainer else colors.container).toArgb()
                 style = Paint.Style.FILL
@@ -324,10 +334,11 @@ internal object HeroWidgetRenderer {
 
             canvas.save()
             canvas.rotate(endAngle + 90f, endX, endY)
+            val badgeCenterX = endX - backShift
             val badgeBounds = RectF(
-                endX - badgeWidth / 2f,
+                badgeCenterX - badgeWidth / 2f,
                 endY - badgeHeight / 2f,
-                endX + badgeWidth / 2f,
+                badgeCenterX + badgeWidth / 2f,
                 endY + badgeHeight / 2f,
             )
             val corner = badgeHeight / 2f
@@ -335,7 +346,7 @@ internal object HeroWidgetRenderer {
             canvas.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
             val metrics = badgeTextPaint.fontMetrics
             val baseline = endY - (metrics.ascent + metrics.descent) / 2f
-            canvas.drawText(deltaText, endX, baseline, badgeTextPaint)
+            canvas.drawText(deltaText, badgeCenterX, baseline, badgeTextPaint)
             canvas.restore()
         }
 

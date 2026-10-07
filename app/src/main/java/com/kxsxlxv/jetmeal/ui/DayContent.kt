@@ -46,7 +46,6 @@ import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import kotlin.math.PI
 
 /** Initial expansion is presentation state only; meal assignment remains a domain rule. */
 internal fun initialExpandedMeal(
@@ -258,14 +257,25 @@ private fun CalorieHealthDial(
             )
 
             rotate(-90f, center) {
-                // Both lap gradients are fixed to the circumference. Animation reveals them;
-                // it never stretches/re-maps the gradient as the endpoint moves.
+                // Use Butt arcs plus an explicit moving end cap. This keeps the geometry
+                // continuous while the animation crosses 100% / 12 o'clock: the active cap
+                // simply changes from the first lap to the overflow lap at the same position.
                 val baseBrush = Brush.sweepGradient(
                     0f to colors.start,
                     .50f to colors.end,
                     1f to colors.start,
                     center = center,
                 )
+                val overflowBrush = Brush.sweepGradient(
+                    0f to colors.start,
+                    .04f to warningColor,
+                    .10f to errorColor,
+                    .90f to errorColor,
+                    .96f to warningColor,
+                    1f to colors.start,
+                    center = center,
+                )
+
                 if (firstLap > 0f) {
                     if (firstLap >= .9995f) {
                         drawCircle(
@@ -282,21 +292,17 @@ private fun CalorieHealthDial(
                             useCenter = false,
                             topLeft = origin,
                             size = diameter,
-                            style = Stroke(stroke, cap = StrokeCap.Round),
+                            style = Stroke(stroke, cap = StrokeCap.Butt),
+                        )
+                        drawCircle(
+                            brush = baseBrush,
+                            radius = stroke / 2f,
+                            center = Offset(center.x + radius, center.y),
                         )
                     }
                 }
 
                 if (overflowLap > 0f) {
-                    val overflowBrush = Brush.sweepGradient(
-                        0f to colors.start,
-                        .04f to warningColor,
-                        .10f to errorColor,
-                        .90f to errorColor,
-                        .96f to warningColor,
-                        1f to colors.start,
-                        center = center,
-                    )
                     if (overflowLap >= .9995f) {
                         drawCircle(
                             brush = overflowBrush,
@@ -312,26 +318,23 @@ private fun CalorieHealthDial(
                             useCenter = false,
                             topLeft = origin,
                             size = diameter,
-                            style = Stroke(stroke, cap = StrokeCap.Round),
-                        )
-
-                        // A new revolution is a layer above the completed one. Its start cap is
-                        // tucked under the previous lap, while the moving endpoint stays round.
-                        // Repainting only the pre-seam slice removes the 101% "capsule" without
-                        // changing the visible Round cap of the progress arc.
-                        val seamCoverSweep =
-                            (((stroke / 2f + 1.dp.toPx()) / radius) * (180f / PI.toFloat()))
-                                .coerceIn(1f, 18f)
-                        drawArc(
-                            brush = baseBrush,
-                            startAngle = -seamCoverSweep,
-                            sweepAngle = seamCoverSweep,
-                            useCenter = false,
-                            topLeft = origin,
-                            size = diameter,
                             style = Stroke(stroke, cap = StrokeCap.Butt),
                         )
                     }
+                }
+
+                val activeLap = if (overflowLap > 0f) overflowLap else firstLap
+                if (activeLap > .001f) {
+                    val angle = Math.toRadians((360f * activeLap).toDouble())
+                    val activeCenter = Offset(
+                        center.x + kotlin.math.cos(angle).toFloat() * radius,
+                        center.y + kotlin.math.sin(angle).toFloat() * radius,
+                    )
+                    drawCircle(
+                        brush = if (overflowLap > 0f) overflowBrush else baseBrush,
+                        radius = stroke / 2f,
+                        center = activeCenter,
+                    )
                 }
             }
 
@@ -343,11 +346,11 @@ private fun CalorieHealthDial(
                 val radians = Math.toRadians(endAngle.toDouble())
                 val endX = center.x + kotlin.math.cos(radians).toFloat() * radius
                 val endY = center.y + kotlin.math.sin(radians).toFloat() * radius
-                val badgeHeight = 16.dp.toPx()
-                val horizontalPadding = 5.dp.toPx()
+                val badgeHeight = minOf(14.dp.toPx(), stroke - 4.dp.toPx())
+                val horizontalPadding = 4.dp.toPx()
                 val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
                     color = (if (overflowLap > 0f) onErrorContainerColor else colors.onContainer).toArgb()
-                    textSize = 9.5.sp.toPx()
+                    textSize = 9.sp.toPx()
                     textAlign = Paint.Align.CENTER
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 }
@@ -355,6 +358,13 @@ private fun CalorieHealthDial(
                     badgeHeight,
                     badgeTextPaint.measureText(deltaText) + horizontalPadding * 2f,
                 )
+                // The path endpoint is the centre of the round cap. Keep the capsule's
+                // front edge inside that cap and let any extra width grow backwards along
+                // the tangent, matching the Google Health treatment.
+                val capRadius = stroke / 2f
+                val frontInset = 2.dp.toPx()
+                val backShift =
+                    (badgeWidth / 2f - capRadius + frontInset).coerceAtLeast(0f)
                 val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = (if (overflowLap > 0f) errorContainerColor else colors.container).toArgb()
                     style = Paint.Style.FILL
@@ -368,10 +378,11 @@ private fun CalorieHealthDial(
                     val native = canvas.nativeCanvas
                     native.save()
                     native.rotate(endAngle + 90f, endX, endY)
+                    val badgeCenterX = endX - backShift
                     val badgeBounds = RectF(
-                        endX - badgeWidth / 2f,
+                        badgeCenterX - badgeWidth / 2f,
                         endY - badgeHeight / 2f,
-                        endX + badgeWidth / 2f,
+                        badgeCenterX + badgeWidth / 2f,
                         endY + badgeHeight / 2f,
                     )
                     val corner = badgeHeight / 2f
@@ -379,7 +390,7 @@ private fun CalorieHealthDial(
                     native.drawRoundRect(badgeBounds, corner, corner, outlinePaint)
                     val metrics = badgeTextPaint.fontMetrics
                     val baseline = endY - (metrics.ascent + metrics.descent) / 2f
-                    native.drawText(deltaText, endX, baseline, badgeTextPaint)
+                    native.drawText(deltaText, badgeCenterX, baseline, badgeTextPaint)
                     native.restore()
                 }
             }
