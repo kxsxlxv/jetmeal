@@ -110,6 +110,8 @@ dependencies {
     implementation(libs.ktor.okhttp)
     implementation(libs.kotlinx.coroutines)
     implementation(libs.kotlinx.serialization)
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.work.runtime)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
