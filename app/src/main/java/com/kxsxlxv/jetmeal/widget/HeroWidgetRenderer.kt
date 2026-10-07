@@ -386,7 +386,7 @@ internal object HeroWidgetRenderer {
         this.color = color
         textSize = sizePx
         textAlign = align
-        typeface = Typeface.create("sans-serif", weight, false)
+        typeface = Typeface.create(Typeface.create("sans-serif", Typeface.NORMAL), weight, false)
     }
 
     private fun drawTextInLineBox(
