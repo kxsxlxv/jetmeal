@@ -57,14 +57,14 @@ data class RingColors(val start: Color, val end: Color, val container: Color, va
 data class NutritionColors(val calories: RingColors, val protein: RingColors, val fat: RingColors, val carbs: RingColors)
 
 internal val LightNutritionColors = NutritionColors(
-    calories = RingColors(Color(0xFF79BE86), Color(0xFF23634B), Color(0xFFDCEFD9), Color(0xFF16442C)),
+    calories = RingColors(Color(0xFF5FCC78), Color(0xFF0F7048), Color(0xFFD7F3DD), Color(0xFF0B4A2D)),
     protein = RingColors(Color(0xFFBD9AE6), Color(0xFF7445A3), Color(0xFFEEE2FB), Color(0xFF54277D)),
     fat = RingColors(Color(0xFFEBC67A), Color(0xFF946000), Color(0xFFF8EBCC), Color(0xFF704900)),
     carbs = RingColors(Color(0xFFE89E85), Color(0xFFAF4A31), Color(0xFFFFE3D8), Color(0xFF853321)),
 )
 
 internal val DarkNutritionColors = NutritionColors(
-    calories = RingColors(Color(0xFF507C54), Color(0xFF9FE0B4), Color(0xFF243E2D), Color(0xFFBCEDC9)),
+    calories = RingColors(Color(0xFF3F9053), Color(0xFF83E7A5), Color(0xFF214B2E), Color(0xFFC1F3CF)),
     protein = RingColors(Color(0xFF80619D), Color(0xFFDAC0FC), Color(0xFF3A2B4C), Color(0xFFE4CBFF)),
     fat = RingColors(Color(0xFF9F803F), Color(0xFFF1D28A), Color(0xFF44391D), Color(0xFFFFDE9D)),
     carbs = RingColors(Color(0xFF9B6150), Color(0xFFFFBA9F), Color(0xFF4B2E24), Color(0xFFFFCDBA)),
