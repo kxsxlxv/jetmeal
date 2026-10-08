@@ -20,6 +20,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.WeightMeasurement
+import com.kxsxlxv.jetmeal.domain.WeightGoal
+import androidx.compose.ui.graphics.PathEffect
 import com.kxsxlxv.jetmeal.domain.WeightTrend
 import java.time.LocalDate
 import java.time.ZoneId
@@ -28,16 +30,20 @@ import java.time.format.DateTimeFormatter
 @Composable
 internal fun WeightSection(
     weights: List<WeightMeasurement>,
+    goal: WeightGoal?,
     connected: Boolean,
     loading: Boolean,
     busy: Boolean,
     onAddWeight: (Double) -> Unit,
+    onSetGoal: (Double, LocalDate) -> Unit,
     onConnect: (String,String,String) -> Unit,
     onSync: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val zone = ZoneId.systemDefault()
     var weightText by remember { mutableStateOf("") }
+    var goalKg by remember(goal) { mutableStateOf(goal?.targetKilograms?.let { number(it,1) } ?: "") }
+    var deadlineText by remember(goal) { mutableStateOf(goal?.targetDate?.toString() ?: "") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var profileName by remember { mutableStateOf("") }
@@ -62,7 +68,15 @@ internal fun WeightSection(
                     val change = current!!.kilograms - requireNotNull(early).kilograms
                     Text("Изменение за доступную историю: ${if(change>0) "+" else ""}${number(change,1)} кг",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    WeightLineGraph(normalized)
+                    WeightLineGraph(normalized,goal)
+                }
+                goal?.let { plan ->
+                    val expected=plan.expected(LocalDate.now(zone))
+                    Text("План на сегодня: ${number(expected,1)} кг" +
+                        (smoothed?.let { " · отклонение ${number(it-expected,1)} кг" } ?: ""),
+                        color=MaterialTheme.colorScheme.primary)
+                    Text("К ${plan.targetDate}: ${number(plan.targetKilograms,1)} кг",
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 current?.let {
                     Text("Последнее измерение: ${it.measuredAt.atZone(zone).format(
@@ -82,6 +96,25 @@ internal fun WeightSection(
                 modifier=Modifier.heightIn(min=56.dp),shapes=ButtonDefaults.shapes()) {
                 Text("Записать")
             }
+        }
+        Text("Цель веса",style=MaterialTheme.typography.titleMediumEmphasized)
+        Text("Используется только для сравнения с траекторией. Не меняет автоматически дефицит калорий.",
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        TextField(value=goalKg,onValueChange={goalKg=it},
+            label={Text("Желаемый вес, кг")},singleLine=true,modifier=Modifier.fillMaxWidth(),
+            keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),
+            shape=TextFieldDefaults.roundedShape,colors=TextFieldDefaults.tonalColors())
+        TextField(value=deadlineText,onValueChange={deadlineText=it},
+            label={Text("Желаемая дата (ГГГГ-ММ-ДД)")},singleLine=true,
+            modifier=Modifier.fillMaxWidth(),shape=TextFieldDefaults.roundedShape,
+            colors=TextFieldDefaults.tonalColors())
+        val targetKg=goalKg.replace(',','.').toDoubleOrNull()?.takeIf { it.isFinite() && it in 20.0..500.0 }
+        val targetDate=runCatching { LocalDate.parse(deadlineText.trim()) }.getOrNull()
+            ?.takeIf { it>LocalDate.now() && it<=LocalDate.now().plusDays(730) }
+        OutlinedButton(onClick={
+            if(targetKg!=null && targetDate!=null) onSetGoal(targetKg,targetDate)
+        },enabled=targetKg!=null && targetDate!=null && current!=null && !busy) {
+            Text("Сохранить цель веса")
         }
         HorizontalDivider()
         Text("Автоматически из PICOOC",style=MaterialTheme.typography.titleMediumEmphasized)
@@ -118,13 +151,18 @@ internal fun WeightSection(
 }
 
 @Composable
-private fun WeightLineGraph(weights: List<WeightMeasurement>) {
+private fun WeightLineGraph(weights: List<WeightMeasurement>, goal: WeightGoal?) {
     val points=weights.sortedBy { it.measuredAt }.takeLast(90)
-    val min=points.minOf { it.kilograms }
-    val max=points.maxOf { it.kilograms }
+    val min=minOf(points.minOf { it.kilograms },goal?.targetKilograms ?: Double.POSITIVE_INFINITY,
+        goal?.startKilograms ?: Double.POSITIVE_INFINITY)
+    val max=maxOf(points.maxOf { it.kilograms },goal?.targetKilograms ?: Double.NEGATIVE_INFINITY,
+        goal?.startKilograms ?: Double.NEGATIVE_INFINITY)
     val range=(max-min).coerceAtLeast(.5)
-    val start=points.first().measuredAt.epochSecond
-    val end=points.last().measuredAt.epochSecond
+    val zone=ZoneId.systemDefault()
+    val start=minOf(points.first().measuredAt.epochSecond,
+        goal?.startDate?.atStartOfDay(zone)?.toEpochSecond() ?: Long.MAX_VALUE)
+    val end=maxOf(points.last().measuredAt.epochSecond,
+        goal?.targetDate?.atStartOfDay(zone)?.toEpochSecond() ?: Long.MIN_VALUE)
     Canvas(Modifier.fillMaxWidth().height(132.dp)) {
         val path=Path()
         points.forEachIndexed { index, p ->
@@ -135,5 +173,15 @@ private fun WeightLineGraph(weights: List<WeightMeasurement>) {
         }
         drawPath(path,color=androidx.compose.ui.graphics.Color(0xFF43A68A),
             style=Stroke(width=3.dp.toPx()))
+        goal?.let { plan ->
+            fun x(date: LocalDate):Float=size.width*
+                ((date.atStartOfDay(zone).toEpochSecond()-start).toFloat()/(end-start).coerceAtLeast(1))
+            fun y(kg: Double):Float=size.height*(.9f-((kg-min)/range).toFloat()*.8f)
+            drawLine(androidx.compose.ui.graphics.Color(0xFFB38C47),
+                Offset(x(plan.startDate),y(plan.startKilograms)),
+                Offset(x(plan.targetDate),y(plan.targetKilograms)),
+                strokeWidth=2.dp.toPx(),pathEffect=PathEffect.dashPathEffect(
+                    floatArrayOf(7.dp.toPx(),4.dp.toPx())))
+        }
     }
 }
