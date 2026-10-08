@@ -124,6 +124,16 @@ class NutritionRulesTest {
         assertEquals(DayLoggingStatus.Recorded, state.days[1].status)
     }
 
+    @Test fun historicalLastDayIsMissingWhenPastButNotWhenStillInProgress() {
+        val sunday = monday.plusDays(6)
+        val beforeFinish = WeekBudget.calculate(sunday, targets, emptyMap())
+        val afterFinish = WeekBudget.calculate(sunday, targets, emptyMap(), asOfDayCompleted = true)
+        assertEquals(DayLoggingStatus.InProgress, beforeFinish.days.last().status)
+        assertEquals(DayLoggingStatus.Missing, afterFinish.days.last().status)
+        assertEquals(6, beforeFinish.missingCompletedDays.size)
+        assertEquals(7, afterFinish.missingCompletedDays.size)
+    }
+
     @Test fun yearAndMonthBoundariesFollowLocalMondayThroughSunday() {
         val newYear = LocalDate.of(2027, 1, 1)
         val state = WeekBudget.calculate(newYear, targets, emptyMap())
