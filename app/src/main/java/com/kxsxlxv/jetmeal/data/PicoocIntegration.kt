@@ -42,7 +42,8 @@ internal class PicoocCloud {
     private val api = "https://api2.picooc-int.com/v1/api/"
     private val appVersion = "i4.1.11.0"
 
-    suspend fun fetch(email: String, password: String, deviceId: String): List<Reading> =
+    suspend fun fetch(email: String, password: String, deviceId: String,
+                      profileName: String = ""): List<Reading> =
         withContext(Dispatchers.IO) {
             val loginParameters = parameters("user_login_new", deviceId)
             val loginJson = JSONObject().apply {
@@ -76,8 +77,21 @@ internal class PicoocCloud {
                 ?: throw IllegalStateException("PICOOC не вернул данные пользователя.")
             val userId = auth.optString("user_id").takeIf { it.isNotBlank() }
                 ?: throw IllegalStateException("Не получен идентификатор PICOOC.")
-            val roleId = auth.optString("role_id").takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException("Не получен профиль пользователя PICOOC.")
+            val profiles = auth.optJSONArray("roles")
+            val roles = (0 until (profiles?.length() ?: 0)).mapNotNull { index ->
+                val profile = profiles?.optJSONObject(index) ?: return@mapNotNull null
+                profile.optString("role_name") to profile.optString("role_id")
+            }.filter { it.first.isNotBlank() && it.second.isNotBlank() }
+            val roleId = if (profileName.isNotBlank()) {
+                roles.firstOrNull { it.first.equals(profileName.trim(), ignoreCase = true) }?.second
+                    ?: throw IllegalStateException("Профиль PICOOC не найден. Доступны: " +
+                        roles.joinToString(", ") { it.first })
+            } else {
+                if (roles.size > 1) throw IllegalStateException(
+                    "В аккаунте несколько профилей PICOOC. Укажите нужный: " +
+                        roles.joinToString(", ") { it.first })
+                auth.optString("role_id").takeIf { it.isNotBlank() }
+            } ?: throw IllegalStateException("Не получен профиль пользователя PICOOC.")
             val weights = mutableMapOf<String, Reading>()
             val seenPages = mutableSetOf<String>()
             var cursor: String? = null
@@ -161,7 +175,8 @@ internal class PicoocCloud {
 internal class PicoocCredentialStore(private val context: Context) {
     private val pref=context.getSharedPreferences("picooc_account_v1",Context.MODE_PRIVATE)
     private val keyAlias="com.kxsxlxv.jetmeal.picooc.v1"
-    data class Credentials(val owner: String,val email: String,val password: String,val deviceId: String)
+    data class Credentials(val owner: String,val email: String,val password: String,
+                           val deviceId: String,val profileName: String)
 
     private fun key(): SecretKey {
         val store=KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -175,7 +190,8 @@ internal class PicoocCredentialStore(private val context: Context) {
     }
     fun save(credentials: Credentials) {
         val plain=JSONObject().put("owner",credentials.owner).put("email",credentials.email)
-            .put("password",credentials.password).put("deviceId",credentials.deviceId).toString()
+            .put("password",credentials.password).put("deviceId",credentials.deviceId)
+            .put("profileName",credentials.profileName).toString()
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE,key())
         val encrypted=cipher.doFinal(plain.toByteArray(StandardCharsets.UTF_8))
@@ -190,7 +206,7 @@ internal class PicoocCredentialStore(private val context: Context) {
             cipher.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,bytes.copyOfRange(0,12)))
             val obj=JSONObject(String(cipher.doFinal(bytes.copyOfRange(12,bytes.size)),StandardCharsets.UTF_8))
             Credentials(obj.getString("owner"),obj.getString("email"),
-                obj.getString("password"),obj.getString("deviceId"))
+                obj.getString("password"),obj.getString("deviceId"),obj.optString("profileName"))
         }.getOrNull()?.takeIf { it.owner==owner }
     }
     fun remove() { pref.edit().remove("data").apply() }
@@ -199,13 +215,15 @@ internal class PicoocCredentialStore(private val context: Context) {
 class PicoocIntegration(private val context: Context,private val repository: SupabaseRepository?) {
     private val store=PicoocCredentialStore(context)
     fun connected(owner: String): Boolean=store.load(owner)!=null
-    suspend fun connect(email: String,password: String): Int {
+    suspend fun connect(email: String,password: String,profileName: String = ""): Int {
         require(email.isNotBlank() && password.isNotEmpty())
         val user=requireNotNull(repository?.client?.auth?.currentUserOrNull())
         val credentials=PicoocCredentialStore.Credentials(user.id,email.trim(),password,
-            UUID.randomUUID().toString().uppercase())
+            UUID.randomUUID().toString().uppercase(),profileName)
         // Authenticate before storing credentials. No fake "connected" state.
-        val readings=PicoocCloud().fetch(credentials.email,credentials.password,credentials.deviceId)
+        val readings=PicoocCloud().fetch(credentials.email,credentials.password,
+            credentials.deviceId,credentials.profileName)
+            .filter { it.measuredAt >= Instant.now().minusSeconds(180L*86400L) }
         store.save(credentials)
         enqueue()
         return persist(readings)
@@ -214,7 +232,8 @@ class PicoocIntegration(private val context: Context,private val repository: Sup
         val user=requireNotNull(repository?.client?.auth?.currentUserOrNull())
         val account=store.load(user.id) ?: return 0
         val since = Instant.now().minusSeconds(60L * 86400L)
-        val recent = PicoocCloud().fetch(account.email,account.password,account.deviceId)
+        val recent = PicoocCloud().fetch(account.email,account.password,account.deviceId,
+            account.profileName)
             .filter { it.measuredAt >= since }
         return persist(recent)
     }
