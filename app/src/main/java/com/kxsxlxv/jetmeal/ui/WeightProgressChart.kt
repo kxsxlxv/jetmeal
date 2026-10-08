@@ -12,11 +12,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.kxsxlxv.jetmeal.domain.WeightChartDay
 import com.kxsxlxv.jetmeal.domain.WeightProgressData
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -70,7 +68,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
     val range = remember(data, mode) { chartRange(data, mode) }
     val goalFuture = mode == WeightChartMode.Goal &&
         data.goal != null && data.goal.targetDate > days.last().date
-    val density = LocalDensity.current
+    val selectedSurface = MaterialTheme.colorScheme.surface
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically,
@@ -167,7 +165,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
                     val center = Offset(xIndex(index),range.y(sample.kilograms,top,bottom))
                     val chosen = sample.date == selected.date
                     drawCircle(actualColor,radius=(if(chosen) 5.5f else 3.3f).dp.toPx(),center=center)
-                    if(chosen) drawCircle(MaterialTheme.colorScheme.surface,
+                    if(chosen) drawCircle(selectedSurface,
                         radius=2.0.dp.toPx(),center=center)
                 }
                 data.goal?.let { goal ->
@@ -218,6 +216,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
                 Text(
                     if(onPlan!=null) "По плану: ${number(onPlan,1)} кг · факт − план: " +
                         "${signedKg(selected.kilograms-onPlan)}"
+                    else if (data.goal == null) "План веса пока не задан"
                     else "На эту дату план ещё не действовал",
                     style=MaterialTheme.typography.bodySmall,
                     color=labelColor,
