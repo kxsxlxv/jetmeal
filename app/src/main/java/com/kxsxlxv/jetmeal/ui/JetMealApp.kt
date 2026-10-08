@@ -82,7 +82,11 @@ private sealed interface Editor {
                         modifier=Modifier.fillMaxSize(),entryProvider=entryProvider {
                             entry<MainScreen> { screen -> when(screen) {
                                 MainScreen.Settings -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
-                                    Box(Modifier.widthIn(max=760.dp)) { SettingsContent(state.targets,state.email.orEmpty(),state.busy,viewModel::saveTargets,viewModel::signOut) }
+                                    Box(Modifier.widthIn(max=760.dp)) { SettingsContent(state.targets,state.email.orEmpty(),state.busy,viewModel::saveTargets,viewModel::signOut,
+                                        targetVersions=state.targetVersions, weights=state.weightMeasurements,
+                                        picoocConnected=state.picoocConnected, weightLoading=state.weightLoading,
+                                        onAddWeight=viewModel::addWeight, onConnectPicooc=viewModel::connectPicooc,
+                                        onSyncPicooc=viewModel::syncPicooc, onDisconnectPicooc=viewModel::disconnectPicooc) }
                                 }
                                 MainScreen.Timeline -> NutritionTimeline(state,viewModel,
                                     onAdd={ viewModel.dismissError(); editor=Editor.Add(it); chosenFood=null; viewModel.search("") },
@@ -210,7 +214,9 @@ private sealed interface Editor {
             Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
                 if(date!=TimelinePeriods.start(state.scale,state.day) || (state.busy && state.week==null)) LoadingContent("Загружаем период…")
                 else Box(Modifier.widthIn(max=1000.dp).fillMaxSize()) { when(state.scale) {
-                    TimeScale.Day -> DayContent(state.day,state.entries,state.targets,state.week,onAdd,onEdit,model::openSettings,
+                    TimeScale.Day -> DayContent(state.day,state.entries,
+                        state.targetVersions.lastOrNull { it.date <= state.day }?.targets ?: state.targets,
+                        state.week,onAdd,onEdit,model::openSettings,
                         confirmedZero=state.day in state.confirmedZeroDays,onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
                     TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate)
                     TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),state.monthCalories,state.monthTargets,model::setMonth,model::openDate,selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
