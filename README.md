@@ -106,7 +106,7 @@ through the typed `NutritionTools.createFood` application operation and its
 `jetmeal_create_food` RPC. The app deliberately has no catalogue-authoring screen.
 
 The timeline, manual quantity logging/editing, soft delete, grouped undo,
-weekly redistribution and target confirmation are implemented. See the dated
+weekly redistribution and target confirmation are implemented. A past date without logged food is now **unknown**, not a zero-kcal day; users may explicitly confirm zero intake, and a later food entry automatically clears that confirmation. The Week view reports gaps rather than generating artificial calorie credit. See the dated
 [research](docs/implementation/RESEARCH_NOTES.md) and
 [verification report](docs/implementation/VERIFICATION.md) for actual evidence.
 The existing hosted project's legacy tables have not been changed. Hosted data
