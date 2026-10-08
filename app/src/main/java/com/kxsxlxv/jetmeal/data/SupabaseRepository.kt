@@ -69,6 +69,51 @@ class SupabaseRepository(val client: SupabaseClient) {
                 it.number("daily_fat_g"), it.number("daily_carbs_g"), it.number("adjustment_limit_ratio"))
         }
 
+    suspend fun targetHistory(): List<TargetVersion> =
+        client.from("nutrition_target_history").select {
+            order("effective_date", Order.ASCENDING)
+        }.decodeList<JsonObject>().map {
+            TargetVersion(LocalDate.parse(it.string("effective_date")),
+                Targets(it.number("daily_calories_kcal"), it.number("daily_protein_g"),
+                    it.number("daily_fat_g"), it.number("daily_carbs_g"),
+                    it.number("adjustment_limit_ratio")))
+        }
+
+    suspend fun weights(start: LocalDate, endExclusive: LocalDate, zone: ZoneId): List<WeightMeasurement> {
+        val collected = mutableListOf<WeightMeasurement>()
+        var offset = 0L
+        do {
+            val page = client.from("weight_measurements").select {
+                filter { and {
+                    gte("measured_at", start.atStartOfDay(zone).toInstant().toString())
+                    lt("measured_at", endExclusive.atStartOfDay(zone).toInstant().toString())
+                } }
+                order("measured_at", Order.ASCENDING)
+                range(offset, offset + PAGE_SIZE - 1)
+            }.decodeList<JsonObject>()
+            collected += page.map {
+                WeightMeasurement(it.string("id"), Instant.parse(it.string("measured_at")),
+                    it.number("weight_kg"), it["body_fat_percent"]?.jsonPrimitive?.doubleOrNull,
+                    it.string("source"))
+            }
+            offset += page.size
+        } while (page.size == PAGE_SIZE)
+        return collected
+    }
+
+    suspend fun logWeight(kilograms: Double, measuredAt: Instant, source: String = "manual",
+                          externalId: String? = null, bodyFatPercent: Double? = null) {
+        require(kilograms.isFinite() && kilograms in 20.0..500.0)
+        require(source in setOf("manual", "picooc", "health_connect"))
+        client.postgrest.rpc("jetmeal_log_weight", buildJsonObject {
+            put("p_weight_kg", kilograms)
+            put("p_measured_at", measuredAt.toString())
+            put("p_source", source)
+            externalId?.let { put("p_external_id", it) }
+            bodyFatPercent?.let { put("p_body_fat_percent", it) }
+        })
+    }
+
     suspend fun confirmedZeroDays(start: LocalDate, endExclusive: LocalDate): Set<LocalDate> {
         val rows = client.from("zero_calorie_days").select(columns = Columns.list("local_date")) {
             filter {
