@@ -69,7 +69,11 @@ fun DayContent(
     onAdd: (MealPeriod) -> Unit,
     onEdit: (DiaryEntry) -> Unit,
     onTargets: () -> Unit,
+    confirmedZero: Boolean = false,
+    onZeroDay: (Boolean) -> Unit = {},
+    busy: Boolean = false,
 ) {
+    val historical = date < LocalDate.now()
     val total = entries.fold(Nutrition.Zero) { sum, entry -> sum + entry.nutrition }
     val effective = week?.days?.firstOrNull { it.date == date }?.target ?: targets?.calories
     // Wait for a historical day's first real records before choosing its initial expansion.
@@ -88,8 +92,28 @@ fun DayContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "nutrition") {
-            if (targets == null) DayTargetsPrompt(onTargets)
+            if (historical && entries.isEmpty() && !confirmedZero) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.extraLarge) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Нет данных за этот день", style = MaterialTheme.typography.titleLargeEmphasized)
+                        Text("Пустой дневник не означает 0 ккал. Такой день не увеличивает доступный бюджет следующих дней.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (targets == null) DayTargetsPrompt(onTargets)
             else DailyRings(date, total, targets, effective ?: targets.calories)
+        }
+        if (historical && entries.isEmpty()) item(key = "zero-status") {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.large) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (confirmedZero) "0 ккал подтверждено" else "День не заполнен",
+                        modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { onZeroDay(!confirmedZero) }, enabled = !busy) {
+                        Text(if (confirmedZero) "Отменить" else "Подтвердить 0 ккал")
+                    }
+                }
+            }
         }
         item {
             Text("Приёмы пищи", style = MaterialTheme.typography.titleLargeEmphasized,
