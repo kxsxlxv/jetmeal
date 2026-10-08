@@ -274,8 +274,12 @@ internal object HeroWidgetRenderer {
                 false,
                 progressPaint,
             )
-            capPaint.shader = baseGradient
-            canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
+            val capOverlapFraction =
+                (stroke / radius / (2f * Math.PI.toFloat())).coerceIn(0f, .25f)
+            if (overflowLap <= 0f && firstLap < 1f - capOverlapFraction) {
+                capPaint.shader = baseGradient
+                canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
+            }
         }
         if (overflowLap > 0f) {
             progressPaint.shader = overflowGradient
@@ -321,7 +325,7 @@ internal object HeroWidgetRenderer {
                 frontInset = frontInset,
             )
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.White.copy(alpha = .14f).toArgb()
+                color = Color.Black.copy(alpha = .10f).toArgb()
                 style = Paint.Style.STROKE
                 strokeWidth = badgeHeight
                 strokeCap = Paint.Cap.ROUND
