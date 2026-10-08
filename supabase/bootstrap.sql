@@ -810,7 +810,7 @@ declare
     uid uuid := (select auth.uid());
     zone text;
 begin
-    if uid is null then
+    if uid is null or coalesce((auth.jwt()->>'is_anonymous')::boolean,false) then
         raise exception 'Authentication required' using errcode='42501';
     end if;
     if p_date is null or p_confirmed is null then
