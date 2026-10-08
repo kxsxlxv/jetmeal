@@ -210,10 +210,11 @@ private sealed interface Editor {
             Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
                 if(date!=TimelinePeriods.start(state.scale,state.day) || (state.busy && state.week==null)) LoadingContent("Загружаем период…")
                 else Box(Modifier.widthIn(max=1000.dp).fillMaxSize()) { when(state.scale) {
-                    TimeScale.Day -> DayContent(state.day,state.entries,state.targets,state.week,onAdd,onEdit,model::openSettings)
+                    TimeScale.Day -> DayContent(state.day,state.entries,state.targets,state.week,onAdd,onEdit,model::openSettings,
+                        confirmedZero=state.day in state.confirmedZeroDays,onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
                     TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate)
-                    TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),state.monthCalories,state.monthTargets,model::setMonth,model::openDate,selectedDate=state.day)
-                    TimeScale.Quarter -> QuarterContent(date,state.monthCalories,state.monthTargets,model::openDate)
+                    TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),state.monthCalories,state.monthTargets,model::setMonth,model::openDate,selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
+                    TimeScale.Quarter -> QuarterContent(date,state.monthCalories,state.monthTargets,model::openDate,confirmedZeroDays=state.confirmedZeroDays)
                 } }
             }
         }
