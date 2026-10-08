@@ -24,6 +24,7 @@ data class AppState(
     val scale: TimeScale = TimeScale.Day,
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
     val monthCalories: Map<LocalDate, Double> = emptyMap(), val monthTargets: Map<LocalDate, Double> = emptyMap(),
+    val confirmedZeroDays: Set<LocalDate> = emptySet(),
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
 
@@ -152,18 +153,22 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val all = repository.entries(start, end, zone)
                 ensureActive()
                 if (generation != refreshGeneration) return@launch
+                val confirmedZero = repository.confirmedZeroDays(start, end)
+                ensureActive()
+                if (generation != refreshGeneration) return@launch
                 val totals = all.groupBy { it.consumedAt.atZone(zone).toLocalDate() }
                     .mapValues { (_, entries) -> entries.sumOf { it.nutrition.calories } }
+                val knownTotals = totals + confirmedZero.filterNot { it in totals }.associateWith { 0.0 }
                 val asOf = if (snapshot.scale == TimeScale.Day) snapshot.day else
                     when { weekStart.plusDays(6) < today -> weekStart.plusDays(6); weekStart > today -> weekStart; else -> today }
-                val week = targets?.let { WeekBudget.calculate(asOf, it, totals) }
-                val calendarTargets = if (targets == null) emptyMap() else totals.keys.associateWith {
-                    WeekBudget.calculate(it, targets, totals).effectiveTarget
+                val week = targets?.let { WeekBudget.calculate(asOf, it, totals, confirmedZero) }
+                val calendarTargets = if (targets == null) emptyMap() else knownTotals.keys.associateWith {
+                    WeekBudget.calculate(it, targets, totals, confirmedZero).effectiveTarget
                 }
                 mutable.update { it.copy(entries = all.filter { row -> row.consumedAt.atZone(zone).toLocalDate() == snapshot.day },
                     targets = targets, week = week, monthCalories = totals,
-                    monthTargets = calendarTargets) }
-                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone)
+                    monthTargets = calendarTargets, confirmedZeroDays = confirmedZero) }
+                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone, confirmedZero)
                 // The catalogue belongs to the Add/search flow. Loading and ranking it
                 // here blocked the main thread while a newly opened day's Hero animated.
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -194,7 +199,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     }
     fun showPeriod(date: LocalDate) {
         mutable.update { it.copy(day = date, month = YearMonth.from(date), entries = if(it.day == date) it.entries else emptyList(),
-            week = null, monthCalories = emptyMap(), monthTargets = emptyMap()) }
+            week = null, monthCalories = emptyMap(), monthTargets = emptyMap(), confirmedZeroDays = emptySet()) }
         saveNavigation(); refresh()
     }
     fun movePeriod(offset: Int) = showPeriod(TimelinePeriods.move(mutable.value.scale, mutable.value.day, offset))
@@ -233,6 +238,14 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             }
         }
     }
+    fun setZeroDay(date: LocalDate, confirmed: Boolean) = action {
+        require(date < LocalDate.now(ZoneId.systemDefault())) { "Only past days can be confirmed." }
+        requireNotNull(tools).confirmZeroDay(date, confirmed)
+        widgetCoordinator?.requestSync()
+        mutable.update { it.copy(notice = if (confirmed) "Подтверждено: 0 ккал за день." else "Подтверждение нулевого дня снято.") }
+        refresh()
+    }
+
     fun log(candidate: FoodCandidate, quantity: Double, meal: MealPeriod, date: LocalDate) = action {
         val zone = ZoneId.systemDefault()
         val consumedAt = if (date == LocalDate.now(zone)) Instant.now()
