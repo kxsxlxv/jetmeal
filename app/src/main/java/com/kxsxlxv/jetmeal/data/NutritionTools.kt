@@ -138,7 +138,7 @@ class NutritionTools(
             .groupBy { it.consumedAt.atZone(zone).toLocalDate() }
             .mapValues { (_, rows) -> rows.sumOf { it.nutrition.calories } }
         val zeroDays = repository.confirmedZeroDays(start, start.plusDays(7))
-        return ToolResult(true, null, WeekBudget.calculate(date, targets, actual, zeroDays))
+        return ToolResult(true, null, WeekBudget.calculate(date, targets, actual, zeroDays, asOfDayCompleted = date < LocalDate.now(zone)))
     }
 
     suspend fun getDay(date: LocalDate): ToolResult<DayData> {
