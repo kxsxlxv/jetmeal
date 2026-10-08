@@ -55,9 +55,13 @@ internal class PicoocCloud {
                 put("push_token", loginParameters.getValue("push_token"))
                 put("device_id", deviceId)
                 put("req", JSONObject().apply {
+                    put("app_channel", "")
                     put("app_version", appVersion)
                     put("email", email)
                     put("password", password)
+                    put("phone", "")
+                    put("phone_system", "")
+                    put("phone_type", "")
                 })
             }
             val authResponse = request(
@@ -209,7 +213,10 @@ class PicoocIntegration(private val context: Context,private val repository: Sup
     suspend fun sync(): Int {
         val user=requireNotNull(repository?.client?.auth?.currentUserOrNull())
         val account=store.load(user.id) ?: return 0
-        return persist(PicoocCloud().fetch(account.email,account.password,account.deviceId))
+        val since = Instant.now().minusSeconds(60L * 86400L)
+        val recent = PicoocCloud().fetch(account.email,account.password,account.deviceId)
+            .filter { it.measuredAt >= since }
+        return persist(recent)
     }
     private suspend fun persist(readings: List<PicoocCloud.Reading>): Int {
         val data=requireNotNull(repository)
