@@ -93,11 +93,35 @@ class NutritionRulesTest {
         assertEquals(0.0, state.days[2].actual, 0.0)
     }
 
-    @Test fun missingCompletedDaysCountAsZeroAndMacrosStayFixed() {
-        val state = WeekBudget.calculate(monday.plusDays(1), targets, emptyMap())
-        assertEquals(-2000.0, state.deviation, 0.0)
-        assertEquals(2200.0, state.effectiveTarget, 0.0)
+    @Test fun missingCompletedDayDoesNotCreateArtificialCalorieCredit() {
+        val tuesday = monday.plusDays(1)
+        val state = WeekBudget.calculate(tuesday, targets, emptyMap())
+        assertEquals(0.0, state.deviation, 0.0)
+        assertEquals(2000.0, state.effectiveTarget, 0.0)
+        assertEquals(listOf(monday), state.missingCompletedDays)
+        assertEquals(DayLoggingStatus.Missing, state.days[0].status)
+        assertEquals(DayLoggingStatus.InProgress, state.days[1].status)
         assertEquals(Targets(2000.0, 170.0, 70.0, 180.0), targets)
+    }
+
+    @Test fun confirmedZeroCountsAsARealZeroAndCanBeReverted() {
+        val tuesday = monday.plusDays(1)
+        val confirmed = WeekBudget.calculate(tuesday, targets, emptyMap(), setOf(monday))
+        assertEquals(-2000.0, confirmed.deviation, 0.0)
+        assertEquals(2200.0, confirmed.effectiveTarget, 0.0)
+        assertEquals(emptyList<LocalDate>(), confirmed.missingCompletedDays)
+        assertEquals(DayLoggingStatus.ConfirmedZero, confirmed.days[0].status)
+        val reverted = WeekBudget.calculate(tuesday, targets, emptyMap())
+        assertEquals(2000.0, reverted.effectiveTarget, 0.0)
+    }
+
+    @Test fun gapsBeforeRecordedDaysAreExcludedWhileKnownDeviationsRemain() {
+        val wednesday = monday.plusDays(2)
+        val state = WeekBudget.calculate(wednesday, targets, mapOf(monday.plusDays(1) to 2400.0))
+        assertEquals(400.0, state.deviation, 0.0)
+        assertEquals(1920.0, state.effectiveTarget, 0.0)
+        assertEquals(listOf(monday), state.missingCompletedDays)
+        assertEquals(DayLoggingStatus.Recorded, state.days[1].status)
     }
 
     @Test fun yearAndMonthBoundariesFollowLocalMondayThroughSunday() {
