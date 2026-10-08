@@ -37,7 +37,7 @@ private fun chartRange(data: WeightProgressData, mode: WeightChartMode): ChartRa
     if (goal != null && days.isNotEmpty()) {
         val from = maxOf(goal.startDate, days.first().date)
         val until = if (mode == WeightChartMode.Goal) goal.targetDate
-            else minOf(goal.targetDate, days.last().date)
+            else minOf(goal.targetDate, maxOf(data.today,days.last().date).plusDays(7))
         if (from <= until) {
             values += goal.expected(from)
             values += goal.expected(until)
@@ -66,8 +66,11 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val range = remember(data, mode) { chartRange(data, mode) }
-    val goalFuture = mode == WeightChartMode.Goal &&
-        data.goal != null && data.goal.targetDate > days.last().date
+    val projectionEnd = data.goal?.let { goal ->
+        if (mode == WeightChartMode.Goal) goal.targetDate
+        else minOf(goal.targetDate, maxOf(data.today,days.last().date).plusDays(7))
+    }
+    val goalFuture = projectionEnd != null && projectionEnd > days.last().date
     val selectedSurface = MaterialTheme.colorScheme.surface
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -103,11 +106,12 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
             Canvas(
                 Modifier.weight(1f).height(218.dp)
                     .semantics { contentDescription = chartLabel }
-                    .pointerInput(days, goalFuture) {
+                    .pointerInput(days, goalFuture, mode) {
                         detectTapGestures { tap ->
                             val left = 12.dp.toPx()
                             val right = size.width - 12.dp.toPx()
-                            val actualEnd = if (goalFuture) right * .69f else right
+                            val actualEnd = if (goalFuture) right *
+                                (if (mode == WeightChartMode.Goal) .69f else .77f) else right
                             val count = days.size
                             val nearest = days.indices.minByOrNull { i ->
                                 val x = if (count == 1) (left + actualEnd) / 2f
@@ -122,7 +126,8 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
                 val right = size.width - 12.dp.toPx()
                 val top = 12.dp.toPx()
                 val bottom = size.height - 12.dp.toPx()
-                val actualEnd = if (goalFuture) right * .69f else right
+                val actualEnd = if (goalFuture) right *
+                    (if (mode == WeightChartMode.Goal) .69f else .77f) else right
 
                 fun xIndex(index: Int): Float =
                     if (days.size == 1) (left + actualEnd) / 2f
@@ -141,8 +146,8 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
                             return xIndex(i-1)+(xIndex(i)-xIndex(i-1))*elapsed.toFloat()/length
                         }
                     }
-                    if (goalFuture && data.goal != null) {
-                        val length = ChronoUnit.DAYS.between(days.last().date, data.goal.targetDate).coerceAtLeast(1)
+                    if (goalFuture && projectionEnd != null) {
+                        val length = ChronoUnit.DAYS.between(days.last().date,projectionEnd).coerceAtLeast(1)
                         val elapsed = ChronoUnit.DAYS.between(days.last().date,date).coerceIn(0,length)
                         return xIndex(days.lastIndex)+(right-xIndex(days.lastIndex))*elapsed.toFloat()/length
                     }
@@ -170,8 +175,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
                 }
                 data.goal?.let { goal ->
                     val start = maxOf(goal.startDate,days.first().date)
-                    val end = if(mode==WeightChartMode.Goal) goal.targetDate
-                        else minOf(goal.targetDate,days.last().date)
+                    val end = projectionEnd ?: minOf(goal.targetDate,days.last().date)
                     if(start <= end) {
                         val planDates=(listOf(start)+days.map { it.date }
                             .filter { it>start && it<end }+end).distinct()
@@ -198,7 +202,8 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
             Text(shortDate(days.first().date),style=MaterialTheme.typography.labelSmall,color=labelColor)
             if(goalFuture && data.goal!=null) {
                 Text(shortDate(days.last().date),style=MaterialTheme.typography.labelSmall,color=labelColor)
-                Text("Цель · ${shortDate(data.goal.targetDate)}",
+                Text((if (mode == WeightChartMode.Goal) "Цель" else "Прогноз") +
+                    " · ${shortDate(projectionEnd!!)}",
                     style=MaterialTheme.typography.labelSmall,color=planColor)
             } else {
                 Text(shortDate(days.last().date),style=MaterialTheme.typography.labelSmall,color=labelColor)
@@ -227,7 +232,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
         }
         Text(
             if (mode==WeightChartMode.Measurements)
-                "Промежутки между измерениями одинаковые, даже если прошло разное число дней. План сравнивается по датам."
+                "Измерения показаны через равные промежутки, план рассчитан по датам. Справа — прогноз на ближайшую неделю."
             else "История показана с равными интервалами между измерениями; справа отдельно отведено место до целевой даты.",
             style=MaterialTheme.typography.labelSmall,color=labelColor)
     }
