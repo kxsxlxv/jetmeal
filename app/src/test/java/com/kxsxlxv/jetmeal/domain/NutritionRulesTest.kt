@@ -149,6 +149,13 @@ class NutritionRulesTest {
         assertEquals(2000.0 + 2300.0 * 6, state.baseBudget, .000001)
     }
 
+    @Test fun plannedWeightTrajectoryInterpolatesAndClampsToGoalDates() {
+        val goal = WeightGoal(monday,monday.plusDays(60),90.0,82.0)
+        assertEquals(90.0, goal.expected(monday.minusDays(3)),.000001)
+        assertEquals(86.0, goal.expected(monday.plusDays(30)),.000001)
+        assertEquals(82.0, goal.expected(monday.plusDays(61)),.000001)
+    }
+
     @Test fun weightTrendUsesDailyMeanAndSevenCalendarDays() {
         val zone = ZoneId.of("UTC")
         fun weight(day: Long, kg: Double) = WeightMeasurement(
