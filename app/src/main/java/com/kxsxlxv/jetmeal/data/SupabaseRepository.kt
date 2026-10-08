@@ -69,6 +69,25 @@ class SupabaseRepository(val client: SupabaseClient) {
                 it.number("daily_fat_g"), it.number("daily_carbs_g"), it.number("adjustment_limit_ratio"))
         }
 
+    suspend fun confirmedZeroDays(start: LocalDate, endExclusive: LocalDate): Set<LocalDate> {
+        val rows = client.from("zero_calorie_days").select(columns = Columns.list("local_date")) {
+            filter {
+                and {
+                    gte("local_date", start.toString())
+                    lt("local_date", endExclusive.toString())
+                }
+            }
+        }.decodeList<JsonObject>()
+        return rows.mapTo(mutableSetOf()) { LocalDate.parse(it.string("local_date")) }
+    }
+
+    suspend fun confirmZeroDay(date: LocalDate, confirmed: Boolean) {
+        client.postgrest.rpc("jetmeal_confirm_zero_day", buildJsonObject {
+            put("p_date", date.toString())
+            put("p_confirmed", confirmed)
+        })
+    }
+
     suspend fun entries(start: LocalDate, endExclusive: LocalDate, zone: ZoneId): List<DiaryEntry> {
         val entries = mutableListOf<DiaryEntry>()
         var offset = 0L

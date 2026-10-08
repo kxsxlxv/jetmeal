@@ -79,13 +79,30 @@ class DayRedesignTest {
         assertEquals(0.0, week.effectiveTarget, 0.0)
         compose.setContent {
             JetmealTheme {
-                Surface { DayContent(date, emptyList(), targets, week, {}, {}, {}) }
+                Surface { DayContent(date, emptyList(), targets, week, {}, {}, {}, confirmedZero = true) }
             }
         }
         compose.onNodeWithContentDescription("Калории: 0 из 0 ккал", substring = true).assertIsDisplayed()
         compose.onNodeWithText("% нормы", substring = true).assertDoesNotExist()
         compose.onNodeWithText("NaN", substring = true).assertDoesNotExist()
         compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun missingHistoricalDayIsNotDisplayedAsZeroConsumption() {
+        var confirmed = false
+        compose.setContent {
+            JetmealTheme {
+                Surface {
+                    DayContent(date, emptyList(), Targets(2000.0, 100.0, 60.0, 200.0), null,
+                        {}, {}, {}, onZeroDay = { confirmed = it })
+                }
+            }
+        }
+        compose.onNodeWithText("Нет данных за этот день").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Калории:", substring = true).assertDoesNotExist()
+        compose.onNodeWithTag("day-diary").performScrollToNode(hasText("Подтвердить 0 ккал"))
+        compose.onNodeWithText("Подтвердить 0 ккал").performClick()
+        compose.runOnIdle { assertEquals(true, confirmed) }
     }
 
     @Test fun consumptionWithZeroAllowanceKeepsActualAndExhaustedStateInHero() {

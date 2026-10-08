@@ -108,7 +108,14 @@ data class FoodCandidate(
     }
 }
 
-data class BudgetDay(val date: LocalDate, val actual: Double, val target: Double)
+enum class DayLoggingStatus { Recorded, ConfirmedZero, Missing, InProgress, Future }
+
+data class BudgetDay(
+    val date: LocalDate,
+    val actual: Double,
+    val target: Double,
+    val status: DayLoggingStatus = DayLoggingStatus.Recorded,
+)
 
 data class WeekState(
     val start: LocalDate,
@@ -123,4 +130,5 @@ data class WeekState(
     val residual: Double,
     val baseDailyCalories: Double = baseBudget / 7,
     val adjustmentLimitRatio: Double = 0.10,
+    val missingCompletedDays: List<LocalDate> = emptyList(),
 )

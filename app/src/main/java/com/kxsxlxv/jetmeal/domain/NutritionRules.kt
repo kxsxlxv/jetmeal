@@ -33,47 +33,77 @@ object MealPeriods {
 
 object WeekBudget {
     /**
-     * An as-of local-date calculation. Missing completed days count as zero consumption.
-     * Historical targets replay actuals preceding that date. Today and future dates share the
-     * current allowance; future unlogged days must never be counted as completed days.
+     * As-of calculation. An absent past day is UNKNOWN, not zero.
+     * A day with logged entries (even 0-kcal entries) or an explicitly confirmed
+     * zero-calorie day contributes to the redistribution. Current/future days
+     * never contribute to the completed-day deviation.
      */
-    fun calculate(date: LocalDate, targets: Targets, actual: Map<LocalDate, Double>): WeekState {
+    fun calculate(
+        date: LocalDate,
+        targets: Targets,
+        actual: Map<LocalDate, Double>,
+        confirmedZeroDays: Set<LocalDate> = emptySet(),
+        asOfDayCompleted: Boolean = false,
+    ): WeekState {
         val start = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val end = start.plusDays(6)
         val completedDays = date.dayOfWeek.value - 1
         val remainingDays = 7 - completedDays
         val weekActual = (0L..6L).associate { offset ->
             val day = start.plusDays(offset)
-            val amount = if (day <= date) actual[day] ?: 0.0 else 0.0
-            require(amount.isFinite() && amount >= 0.0) { "Actual calories must be finite and non-negative." }
+            val amount = when {
+                day > date -> null
+                actual.containsKey(day) -> actual.getValue(day)
+                day in confirmedZeroDays -> 0.0
+                else -> null
+            }
+            if (amount != null) require(amount.isFinite() && amount >= 0.0) {
+                "Actual calories must be finite and non-negative."
+            }
             day to amount
         }
         val base = targets.calories
         val lowerBound = base * (1.0 - targets.limitRatio)
         val upperBound = base * (1.0 + targets.limitRatio)
         var deviation = 0.0
+        val missing = mutableListOf<LocalDate>()
         val days = (0L..6L).map { offset ->
             val day = start.plusDays(offset)
             val count = 7 - offset.toInt()
             val target = (base - deviation / count).coerceIn(lowerBound, upperBound)
-            val dayActual = weekActual.getValue(day)
-            if (day < date) deviation += dayActual - base
-            BudgetDay(day, dayActual, target)
+            val actualCalories = weekActual.getValue(day)
+            if (day < date) {
+                if (actualCalories != null) deviation += actualCalories - base
+            }
+            if ((day < date || (day == date && asOfDayCompleted)) && actualCalories == null) {
+                missing += day
+            }
+            val status = when {
+                actual.containsKey(day) && day <= date -> DayLoggingStatus.Recorded
+                day in confirmedZeroDays && day <= date -> DayLoggingStatus.ConfirmedZero
+                day < date || (day == date && asOfDayCompleted) -> DayLoggingStatus.Missing
+                day == date -> DayLoggingStatus.InProgress
+                else -> DayLoggingStatus.Future
+            }
+            BudgetDay(day, actualCalories ?: 0.0, target, status)
         }
         val effective = (base - deviation / remainingDays).coerceIn(lowerBound, upperBound)
-        val effectiveDays = days.map { day -> if (day.date >= date) day.copy(target = effective) else day }
+        val effectiveDays = days.map { day ->
+            if (day.date >= date) day.copy(target = effective) else day
+        }
         return WeekState(
             start = start,
             end = end,
             days = effectiveDays,
             baseBudget = base * 7,
-            totalConsumed = weekActual.values.sum(),
+            totalConsumed = weekActual.values.filterNotNull().sum(),
             deviation = deviation,
             remainingDays = remainingDays,
             effectiveTarget = effective,
             residual = deviation + (effective - base) * remainingDays,
             baseDailyCalories = base,
             adjustmentLimitRatio = targets.limitRatio,
+            missingCompletedDays = missing,
         )
     }
 }

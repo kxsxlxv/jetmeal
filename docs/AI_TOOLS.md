@@ -15,6 +15,7 @@ AI clients do not receive arbitrary SQL access. ChatGPT, a future on-device mode
 | `delete_log` | write | no | Soft-delete a diary entry. |
 | `repeat_meal` | write | no | Copy a previous meal/group into a new consumed time. |
 | `get_day` | read | no | Read active diary entries, meal grouping and totals for a local date. |
+| `confirm_zero_day` | write | explicit user intent | Mark a past, entry-free day as confirmed 0 kcal, or retract that mark. |
 | `get_week` | read | no | Read daily totals and deterministic weekly-budget state. |
 | `get_targets` | read | no | Read current calorie/macronutrient targets and redistribution limit. |
 | `search_catalog` | read | no | Find foods satisfying calorie/macro constraints. |
