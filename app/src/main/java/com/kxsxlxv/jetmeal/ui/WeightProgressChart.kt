@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -76,7 +77,7 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Динамика веса", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text("Динамика веса · кг", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             FilterChip(selected = mode == WeightChartMode.Measurements,
                 onClick = { mode = WeightChartMode.Measurements },
                 label = { Text("Измерения") })
@@ -86,7 +87,8 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
         }
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            ChartLegend(color = actualColor, dashed = false, label = "PICOOC / факт")
+            ChartLegend(color = actualColor, dashed = false,
+                label = if (days.all { it.source == "picooc" }) "PICOOC · факт" else "Факт")
             if (data.goal != null) ChartLegend(color = planColor, dashed = true, label = "План")
         }
 
@@ -105,7 +107,14 @@ internal fun WeightProgressChart(data: WeightProgressData, modifier: Modifier = 
             }
             Canvas(
                 Modifier.weight(1f).height(218.dp)
-                    .semantics { contentDescription = chartLabel }
+                    .semantics {
+                        contentDescription = chartLabel
+                        onClick(label = "Следующее измерение") {
+                            val index = days.indexOfFirst { it.date == selected.date }
+                            selectedDate = days[(index + 1) % days.size].date
+                            true
+                        }
+                    }
                     .pointerInput(days, goalFuture, mode) {
                         detectTapGestures { tap ->
                             val left = 12.dp.toPx()
