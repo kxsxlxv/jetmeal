@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.Targets
 import com.kxsxlxv.jetmeal.domain.TargetVersion
 import com.kxsxlxv.jetmeal.domain.WeightMeasurement
+import com.kxsxlxv.jetmeal.domain.WeightGoal
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
@@ -27,9 +29,11 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
     onSave: (Targets) -> Unit, onSignOut: () -> Unit,
     targetVersions: List<TargetVersion> = emptyList(),
     weights: List<WeightMeasurement> = emptyList(),
+    weightGoal: WeightGoal? = null,
     picoocConnected: Boolean = false,
     weightLoading: Boolean = false,
     onAddWeight: (Double) -> Unit = {},
+    onSetWeightGoal: (Double, LocalDate) -> Unit = { _,_ -> },
     onConnectPicooc: (String,String,String) -> Unit = { _,_,_ -> },
     onSyncPicooc: () -> Unit = {},
     onDisconnectPicooc: () -> Unit = {},
@@ -105,7 +109,7 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
                 }
             }
             HorizontalDivider()
-            WeightSection(weights,picoocConnected,weightLoading,busy,onAddWeight,
+            WeightSection(weights,weightGoal,picoocConnected,weightLoading,busy,onAddWeight,onSetWeightGoal,
                 onConnectPicooc,onSyncPicooc,onDisconnectPicooc)
             HorizontalDivider()
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
