@@ -79,6 +79,24 @@ class SupabaseRepository(val client: SupabaseClient) {
                     it.number("adjustment_limit_ratio")))
         }
 
+    suspend fun weightGoal(): WeightGoal? =
+        client.from("weight_goals").select().decodeList<JsonObject>().singleOrNull()?.let {
+            WeightGoal(LocalDate.parse(it.string("start_date")),
+                LocalDate.parse(it.string("target_date")),
+                it.number("start_weight_kg"),it.number("target_weight_kg"))
+        }
+
+    suspend fun setWeightGoal(startKg: Double,targetKg: Double,deadline: LocalDate) {
+        require(startKg.isFinite() && startKg in 20.0..500.0)
+        require(targetKg.isFinite() && targetKg in 20.0..500.0)
+        require(deadline>LocalDate.now())
+        client.postgrest.rpc("jetmeal_set_weight_goal",buildJsonObject {
+            put("p_start_weight_kg",startKg)
+            put("p_target_weight_kg",targetKg)
+            put("p_target_date",deadline.toString())
+        })
+    }
+
     suspend fun weights(start: LocalDate, endExclusive: LocalDate, zone: ZoneId): List<WeightMeasurement> {
         val collected = mutableListOf<WeightMeasurement>()
         var offset = 0L
