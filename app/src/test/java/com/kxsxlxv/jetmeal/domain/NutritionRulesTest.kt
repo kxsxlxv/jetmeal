@@ -161,7 +161,7 @@ class NutritionRulesTest {
         fun weight(day: Long, kg: Double) = WeightMeasurement(
             "item$day:$kg", monday.plusDays(day).atStartOfDay(zone).toInstant(), kg, null, "manual")
         val measurements = listOf(weight(0, 80.0),weight(0, 82.0),
-            weight(1, 80.0),weight(2, 79.0),weight(9, 76.0))
+            weight(1, 80.0),weight(2, 79.0),weight(8, 76.0))
         assertEquals((79.0 + 76.0)/2.0,
             WeightTrend.smoothedLast7Days(measurements,zone)!!, .000001)
     }
