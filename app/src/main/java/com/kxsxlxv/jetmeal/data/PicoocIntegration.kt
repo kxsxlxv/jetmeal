@@ -36,6 +36,8 @@ import javax.crypto.spec.GCMParameterSpec
  * implementation (AlexxIT/SmartScaleConnect). No vendor partnership or SLA.
  * The account is authenticated directly over TLS on the user's phone.
  */
+class PicoocSyncException(val publicMessage: String): RuntimeException("PICOOC synchronization failed")
+
 internal class PicoocCloud {
     data class Reading(val externalId: String, val measuredAt: Instant,
                        val kilograms: Double, val bodyFatPercent: Double?)
@@ -71,12 +73,12 @@ internal class PicoocCloud {
                 post = true,
             )
             if (authResponse.optInt("code", -1) != 0) {
-                throw IllegalStateException("PICOOC не принял логин или пароль либо изменил API.")
+                throw PicoocSyncException("PICOOC не принял логин или пароль либо изменил API.")
             }
             val auth = authResponse.optJSONObject("resp")
-                ?: throw IllegalStateException("PICOOC не вернул данные пользователя.")
+                ?: throw PicoocSyncException("PICOOC не вернул данные пользователя.")
             val userId = auth.optString("user_id").takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException("Не получен идентификатор PICOOC.")
+                ?: throw PicoocSyncException("Не получен идентификатор PICOOC.")
             val profiles = auth.optJSONArray("roles")
             val roles = (0 until (profiles?.length() ?: 0)).mapNotNull { index ->
                 val profile = profiles?.optJSONObject(index) ?: return@mapNotNull null
@@ -84,14 +86,14 @@ internal class PicoocCloud {
             }.filter { it.first.isNotBlank() && it.second.isNotBlank() }
             val roleId = if (profileName.isNotBlank()) {
                 roles.firstOrNull { it.first.equals(profileName.trim(), ignoreCase = true) }?.second
-                    ?: throw IllegalStateException("Профиль PICOOC не найден. Доступны: " +
+                    ?: throw PicoocSyncException("Профиль PICOOC не найден. Доступны: " +
                         roles.joinToString(", ") { it.first })
             } else {
-                if (roles.size > 1) throw IllegalStateException(
+                if (roles.size > 1) throw PicoocSyncException(
                     "В аккаунте несколько профилей PICOOC. Укажите нужный: " +
                         roles.joinToString(", ") { it.first })
                 auth.optString("role_id").takeIf { it.isNotBlank() }
-            } ?: throw IllegalStateException("Не получен профиль пользователя PICOOC.")
+            } ?: throw PicoocSyncException("Не получен профиль пользователя PICOOC.")
             val weights = mutableMapOf<String, Reading>()
             val seenPages = mutableSetOf<String>()
             var cursor: String? = null
@@ -103,9 +105,9 @@ internal class PicoocCloud {
                 params["roleId"] = roleId
                 val response = request("bodyIndex/bodyIndexList", params, post = false)
                 val page = response.optJSONObject("resp")
-                    ?: throw IllegalStateException("PICOOC не вернул журнал измерений.")
+                    ?: throw PicoocSyncException("PICOOC не вернул журнал измерений.")
                 val records = page.optJSONArray("records")
-                    ?: throw IllegalStateException("PICOOC вернул неизвестный формат измерений.")
+                    ?: throw PicoocSyncException("PICOOC вернул неизвестный формат измерений.")
                 for (i in 0 until records.length()) {
                     val record = records.optJSONObject(i) ?: continue
                     if (record.optInt("is_del") != 0 || record.optInt("abnormal_flag") != 0) continue
@@ -123,11 +125,11 @@ internal class PicoocCloud {
                 if (!page.optBoolean("continue",false)) return@withContext weights.values.toList()
                 val next = page.optString("lastTime")
                 if (next.isBlank() || !seenPages.add(next)) {
-                    throw IllegalStateException("Не удалось завершить загрузку истории PICOOC.")
+                    throw PicoocSyncException("Не удалось завершить загрузку истории PICOOC.")
                 }
                 cursor = next
             }
-            throw IllegalStateException("Слишком много страниц измерений PICOOC.")
+            throw PicoocSyncException("Слишком много страниц измерений PICOOC.")
         }
 
     private fun parameters(method: String, deviceId: String): Map<String,String> {
@@ -162,10 +164,10 @@ internal class PicoocCloud {
                 it.write(encoded.toByteArray(StandardCharsets.UTF_8))
             }
             if(connection.responseCode !in 200..299) {
-                throw IllegalStateException("PICOOC недоступен (HTTP ${connection.responseCode}).")
+                throw PicoocSyncException("PICOOC недоступен (HTTP ${connection.responseCode}).")
             }
             val data=connection.inputStream.bufferedReader().use { it.readText() }
-            if (data.length>8_000_000) throw IllegalStateException("Слишком большой ответ PICOOC.")
+            if (data.length>8_000_000) throw PicoocSyncException("Слишком большой ответ PICOOC.")
             return JSONObject(data)
         } finally { connection.disconnect() }
     }
