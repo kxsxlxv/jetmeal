@@ -177,14 +177,14 @@ The engine tries to keep the week's total consumption aligned with:
 weekly_base_budget = base_daily_calories * 7
 ```
 
-Both over-consumption and under-consumption from completed days are redistributed across the remaining days.
+Both over-consumption and under-consumption from **recorded** completed days are redistributed across the remaining days. A completed day with no diary entries is **unknown**, not a zero-calorie day. An explicitly confirmed zero-calorie day counts as zero. Only past dates may be confirmed; logging food on such a date clears the confirmation.
 
 ### Deterministic algorithm
 
 For a day with `n` remaining days in the current Monday–Sunday week, including the current day:
 
 ```text
-cumulative_deviation = sum(actual_completed_day_calories - base_daily_calories)
+cumulative_deviation = sum(known_completed_day_calories - base_daily_calories)
 unclamped_target = base_daily_calories - cumulative_deviation / n
 lower_bound = base_daily_calories * (1 - adjustment_limit_ratio)
 upper_bound = base_daily_calories * (1 + adjustment_limit_ratio)
@@ -201,7 +201,7 @@ Example with a 2000 kcal base target:
 - six days remain;
 - Tuesday target before clamp = 2000 - 500/6 ≈ 1917 kcal.
 
-If the deviation is small enough, the algorithm fully distributes it across the remaining days. If a deviation is too large to reconcile while respecting the configured ± limit, the limit wins. The unreconciled residual may remain at the end of the week and is then discarded rather than carried into the next week.
+If some completed days are missing, their unknown consumption is not used in the calculation and the UI reports incomplete weekly data. This is not a guarantee that the true weekly intake meets the target. If the known deviation is small enough, the algorithm distributes it across the remaining days. If a deviation is too large to reconcile while respecting the configured ± limit, the limit wins. The unreconciled residual may remain at the end of the week and is then discarded rather than carried into the next week.
 
 This replaces the old YapMeal `carry_over_ratio` / fixed-kcal-clamp model.
 
