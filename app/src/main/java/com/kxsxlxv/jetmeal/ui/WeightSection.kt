@@ -32,7 +32,7 @@ internal fun WeightSection(
     loading: Boolean,
     busy: Boolean,
     onAddWeight: (Double) -> Unit,
-    onConnect: (String,String) -> Unit,
+    onConnect: (String,String,String) -> Unit,
     onSync: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -40,6 +40,7 @@ internal fun WeightSection(
     var weightText by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var profileName by remember { mutableStateOf("") }
     val current = weights.maxByOrNull { it.measuredAt }
     val smoothed = WeightTrend.smoothedLast7Days(weights, zone)
     val normalized = weights.sortedBy { it.measuredAt }
@@ -102,8 +103,12 @@ internal fun WeightSection(
                 label={Text("Пароль PICOOC")},singleLine=true,
                 visualTransformation=PasswordVisualTransformation(),modifier=Modifier.fillMaxWidth(),
                 shape=TextFieldDefaults.roundedShape,colors=TextFieldDefaults.tonalColors())
+            TextField(value=profileName,onValueChange={profileName=it},
+                label={Text("Имя профиля PICOOC (если несколько)")},
+                singleLine=true,modifier=Modifier.fillMaxWidth(),
+                shape=TextFieldDefaults.roundedShape,colors=TextFieldDefaults.tonalColors())
             Button(onClick={
-                onConnect(email,password)
+                onConnect(email,password,profileName)
                 password=""
             },enabled=email.isNotBlank() && password.isNotEmpty() && !busy,
                 modifier=Modifier.fillMaxWidth().heightIn(min=56.dp),
