@@ -65,7 +65,7 @@ select is((select is_estimated_snapshot from diary_entries where deleted_at is n
 select lives_ok($select jetmeal_confirm_zero_day('2026-10-04',true)$,'A can confirm a past day with no food');
 select is((select count(*)::integer from zero_calorie_days where local_date='2026-10-04'),1,'Confirmed day is visible to its owner');
 select throws_ok($select jetmeal_confirm_zero_day('2026-10-05',true)$,'23514','Day already has diary entries','Cannot confirm an existing meal day as empty');
-select throws_ok($select jetmeal_confirm_zero_day(current_date,true)$,'22023','Only past days can be confirmed empty','Cannot confirm current day as finished');
+select throws_ok($select jetmeal_confirm_zero_day((now() at time zone 'Europe/Istanbul')::date,true)$,'22023','Only past days can be confirmed empty','Cannot confirm current day as finished');
 savepoint zero_day_write_test;
 select lives_ok($select jetmeal_log_food('{"snapshot_name":"Later logged meal","quantity":1,"quantity_unit":"piece","calories":100,"protein_g":10,"fat_g":2,"carbs_g":5,"consumed_at":"2026-10-04T12:00:00Z"}')$,'Log food on a previously confirmed zero day');
 select is((select count(*)::integer from zero_calorie_days where local_date='2026-10-04'),0,'Adding food clears stale zero-day marker');
