@@ -1,30 +1,25 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class,
+)
 
 package com.kxsxlxv.jetmeal.ui
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.WeightMeasurement
 import com.kxsxlxv.jetmeal.domain.WeightGoal
-import androidx.compose.ui.graphics.PathEffect
-import com.kxsxlxv.jetmeal.domain.WeightTrend
+import com.kxsxlxv.jetmeal.domain.WeightProgress
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -43,46 +38,84 @@ internal fun WeightSection(
     val zone = ZoneId.systemDefault()
     var weightText by remember { mutableStateOf("") }
     var goalKg by remember(goal) { mutableStateOf(goal?.targetKilograms?.let { number(it,1) } ?: "") }
-    var deadlineText by remember(goal) { mutableStateOf(goal?.targetDate?.toString() ?: "") }
+    var targetDate by remember(goal) { mutableStateOf(goal?.targetDate) }
+    var showDatePicker by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var profileName by remember { mutableStateOf("") }
-    val current = weights.maxByOrNull { it.measuredAt }
-    val smoothed = WeightTrend.smoothedLast7Days(weights, zone)
-    val normalized = weights.sortedBy { it.measuredAt }
-    val early = normalized.firstOrNull()
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val today = LocalDate.now(zone)
+    val progress = remember(weights,goal,today,zone) {
+        WeightProgress.build(weights,goal,today,zone)
+    }
+    val latest = progress.latest
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Вес и прогресс", style = MaterialTheme.typography.titleLargeEmphasized)
-        Text("Измерения не изменяют автоматически калорийность тренировок или дневную норму.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        Text("Вес отображается отдельно от дневной нормы калорий и тренировок.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall)
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = MaterialTheme.shapes.extraLarge) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if(current==null) "Пока нет измерений" else
-                    "${number(current.kilograms,1)} кг",style=MaterialTheme.typography.headlineLargeEmphasized)
-                Text(if(current==null) "Добавьте первое взвешивание или подключите PICOOC."
-                    else "Сглаженный тренд за 7 дней: ${smoothed?.let { number(it,2) } ?: "—"} кг",
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-                if (normalized.size>=2) {
-                    val change = current!!.kilograms - requireNotNull(early).kilograms
-                    Text("Изменение за доступную историю: ${if(change>0) "+" else ""}${number(change,1)} кг",
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    WeightLineGraph(normalized,goal)
+            Column(Modifier.fillMaxWidth().padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if(latest==null) "Пока нет измерений" else
+                    "${number(latest.kilograms,1)} кг",
+                    style=MaterialTheme.typography.headlineLargeEmphasized)
+                Text(if(latest==null) "Добавьте взвешивание или подключите PICOOC."
+                    else "Последнее взвешивание · ${latest.date.format(
+                        DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale))}",
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,
+                    style=MaterialTheme.typography.bodySmall)
+
+                if(latest!=null) {
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                        WeightFact("Средний вес · 7 дней",
+                            progress.trend7Kg?.let { "${number(it,1)} кг" } ?: "—",
+                            Modifier.weight(1f))
+                        WeightFact("Факт − план",
+                            progress.actualMinusPlanKg?.let(::signedKg) ?: "—",
+                            Modifier.weight(1f))
+                    }
+                    if(goal!=null && progress.actualMinusPlanKg==null) {
+                        Text("План действует с ${goal.startDate.format(
+                            DateTimeFormatter.ofPattern("d MMM",RussianLocale))}. " +
+                            "Дельта появится после взвешивания в период действия цели.",
+                            style=MaterialTheme.typography.bodySmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if(progress.actualMinusPlanKg!=null) {
+                        Text("Отклонение рассчитано по последнему фактическому весу " +
+                            "и плану на дату этого взвешивания, не по среднему за неделю.",
+                            style=MaterialTheme.typography.labelSmall,
+                            color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    WeightProgressChart(progress)
                 }
                 goal?.let { plan ->
-                    val expected=plan.expected(LocalDate.now(zone))
-                    Text("План на сегодня: ${number(expected,1)} кг" +
-                        (smoothed?.let { " · отклонение ${number(it-expected,1)} кг" } ?: ""),
-                        color=MaterialTheme.colorScheme.primary)
-                    Text("К ${plan.targetDate}: ${number(plan.targetKilograms,1)} кг",
+                    HorizontalDivider()
+                    Text("Цель: ${number(plan.targetKilograms,1)} кг · " +
+                        plan.targetDate.format(DateTimeFormatter.ofPattern("d MMM yyyy",RussianLocale)),
+                        style=MaterialTheme.typography.titleSmall)
+                    Text("План на сегодня: ${number(plan.expected(today),1)} кг",
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                current?.let {
-                    Text("Последнее измерение: ${it.measuredAt.atZone(zone).format(
-                        DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm",RussianLocale))} · ${it.source.uppercase()}",
-                        style=MaterialTheme.typography.labelSmall,
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                        WeightFact("До цели",
+                            if(latest==null) "—" else signedKg(plan.targetKilograms-latest.kilograms),
+                            Modifier.weight(1f))
+                        WeightFact("Нужно в неделю",
+                            progress.requiredWeeklyKg?.let(::signedKg) ?: "—",
+                            Modifier.weight(1f))
+                    }
+                    Text(
+                        if(progress.observedWeeklyKg!=null)
+                            "Фактический темп за 14 дней: ${signedKg(progress.observedWeeklyKg)} в неделю"
+                        else "Фактический темп: для оценки нужны хотя бы 3 дня измерений за период от 7 дней.",
+                        style=MaterialTheme.typography.bodySmall,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    if(progress.remainingDays==0L)
+                        Text("Плановая дата прошла. Вы можете установить новую цель.",
+                            style=MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -97,6 +130,7 @@ internal fun WeightSection(
                 Text("Записать")
             }
         }
+
         Text("Цель веса",style=MaterialTheme.typography.titleMediumEmphasized)
         Text("Используется только для сравнения с траекторией. Не меняет автоматически дефицит калорий.",
             style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -104,16 +138,57 @@ internal fun WeightSection(
             label={Text("Желаемый вес, кг")},singleLine=true,modifier=Modifier.fillMaxWidth(),
             keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Decimal),
             shape=TextFieldDefaults.roundedShape,colors=TextFieldDefaults.tonalColors())
-        TextField(value=deadlineText,onValueChange={deadlineText=it},
-            label={Text("Желаемая дата (ГГГГ-ММ-ДД)")},singleLine=true,
-            modifier=Modifier.fillMaxWidth(),shape=TextFieldDefaults.roundedShape,
-            colors=TextFieldDefaults.tonalColors())
+        OutlinedButton(onClick={showDatePicker=true},enabled=!busy,
+            modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)) {
+            Text("Дата достижения · " + (targetDate?.format(
+                DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale)) ?: "Выбрать в календаре"))
+        }
+        if(showDatePicker) {
+            val minimum = today.plusDays(1)
+            val maximum = today.plusDays(730)
+            val validSelection = targetDate?.takeIf { it in minimum..maximum }
+            val pickerState = rememberDatePickerState(
+                initialSelectedDateMillis = validSelection?.let {
+                    it.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+                },
+                yearRange = today.year..maximum.year,
+                selectableDates = remember(today) {
+                    object : SelectableDates {
+                        override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                            val date = Instant.ofEpochMilli(utcTimeMillis)
+                                .atZone(ZoneOffset.UTC).toLocalDate()
+                            return date in minimum..maximum
+                        }
+                        override fun isSelectableYear(year: Int): Boolean =
+                            year in today.year..maximum.year
+                    }
+                },
+            )
+            val selected = pickerState.selectedDateMillis?.let {
+                Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+            }?.takeIf { it in minimum..maximum }
+            DatePickerDialog(
+                onDismissRequest={showDatePicker=false},
+                confirmButton={
+                    TextButton(onClick={
+                        if(selected!=null) {
+                            targetDate=selected
+                            showDatePicker=false
+                        }
+                    },enabled=selected!=null) {Text("Выбрать")}
+                },
+                dismissButton={
+                    TextButton(onClick={showDatePicker=false}) {Text("Отмена")}
+                },
+            ) {
+                DatePicker(state=pickerState,showModeToggle=false)
+            }
+        }
         val targetKg=goalKg.replace(',','.').toDoubleOrNull()?.takeIf { it.isFinite() && it in 20.0..500.0 }
-        val targetDate=runCatching { LocalDate.parse(deadlineText.trim()) }.getOrNull()
-            ?.takeIf { it>LocalDate.now() && it<=LocalDate.now().plusDays(730) }
+        val validTargetDate=targetDate?.takeIf { it in today.plusDays(1)..today.plusDays(730) }
         OutlinedButton(onClick={
-            if(targetKg!=null && targetDate!=null) onSetGoal(targetKg,targetDate)
-        },enabled=targetKg!=null && targetDate!=null && current!=null && !busy) {
+            if(targetKg!=null && validTargetDate!=null) onSetGoal(targetKg,validTargetDate)
+        },enabled=targetKg!=null && validTargetDate!=null && latest!=null && !busy) {
             Text("Сохранить цель веса")
         }
         HorizontalDivider()
@@ -151,37 +226,10 @@ internal fun WeightSection(
 }
 
 @Composable
-private fun WeightLineGraph(weights: List<WeightMeasurement>, goal: WeightGoal?) {
-    val points=weights.sortedBy { it.measuredAt }.takeLast(90)
-    val min=minOf(points.minOf { it.kilograms },goal?.targetKilograms ?: Double.POSITIVE_INFINITY,
-        goal?.startKilograms ?: Double.POSITIVE_INFINITY)
-    val max=maxOf(points.maxOf { it.kilograms },goal?.targetKilograms ?: Double.NEGATIVE_INFINITY,
-        goal?.startKilograms ?: Double.NEGATIVE_INFINITY)
-    val range=(max-min).coerceAtLeast(.5)
-    val zone=ZoneId.systemDefault()
-    val start=minOf(points.first().measuredAt.epochSecond,
-        goal?.startDate?.atStartOfDay(zone)?.toEpochSecond() ?: Long.MAX_VALUE)
-    val end=maxOf(points.last().measuredAt.epochSecond,
-        goal?.targetDate?.atStartOfDay(zone)?.toEpochSecond() ?: Long.MIN_VALUE)
-    Canvas(Modifier.fillMaxWidth().height(132.dp)) {
-        val path=Path()
-        points.forEachIndexed { index, p ->
-            val x=if(end==start) size.width*index/(points.size-1).coerceAtLeast(1)
-                  else size.width*((p.measuredAt.epochSecond-start).toFloat()/(end-start))
-            val y=size.height*(.9f-((p.kilograms-min)/range).toFloat()*.8f)
-            if(index==0) path.moveTo(x,y) else path.lineTo(x,y)
-        }
-        drawPath(path,color=androidx.compose.ui.graphics.Color(0xFF43A68A),
-            style=Stroke(width=3.dp.toPx()))
-        goal?.let { plan ->
-            fun x(date: LocalDate):Float=size.width*
-                ((date.atStartOfDay(zone).toEpochSecond()-start).toFloat()/(end-start).coerceAtLeast(1))
-            fun y(kg: Double):Float=size.height*(.9f-((kg-min)/range).toFloat()*.8f)
-            drawLine(androidx.compose.ui.graphics.Color(0xFFB38C47),
-                Offset(x(plan.startDate),y(plan.startKilograms)),
-                Offset(x(plan.targetDate),y(plan.targetKilograms)),
-                strokeWidth=2.dp.toPx(),pathEffect=PathEffect.dashPathEffect(
-                    floatArrayOf(7.dp.toPx(),4.dp.toPx())))
-        }
+private fun WeightFact(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier,verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        Text(label,style=MaterialTheme.typography.labelSmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value,style=MaterialTheme.typography.titleMediumEmphasized)
     }
 }
