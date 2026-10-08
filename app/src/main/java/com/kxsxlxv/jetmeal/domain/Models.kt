@@ -132,3 +132,25 @@ data class WeekState(
     val adjustmentLimitRatio: Double = 0.10,
     val missingCompletedDays: List<LocalDate> = emptyList(),
 )
+
+/** Measurements are immutable values with stable external identity for deduplicated sync. */
+data class WeightMeasurement(
+    val id: String,
+    val measuredAt: Instant,
+    val kilograms: Double,
+    val bodyFatPercent: Double?,
+    val source: String,
+)
+
+data class TargetVersion(val date: LocalDate, val targets: Targets)
+
+/** Estimate the underlying trend rather than reacting to hydration fluctuations. */
+object WeightTrend {
+    fun smoothedLast7Days(entries: List<WeightMeasurement>, zone: java.time.ZoneId): Double? {
+        val latestDay = entries.maxOfOrNull { it.measuredAt.atZone(zone).toLocalDate() } ?: return null
+        val daily = entries.groupBy { it.measuredAt.atZone(zone).toLocalDate() }
+            .mapValues { (_, measurements) -> measurements.map { it.kilograms }.average() }
+        val values = (0L..6L).mapNotNull { daily[latestDay.minusDays(it)] }
+        return values.takeIf { it.isNotEmpty() }?.average()
+    }
+}
