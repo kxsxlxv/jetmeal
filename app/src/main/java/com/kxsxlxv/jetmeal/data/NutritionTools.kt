@@ -124,6 +124,11 @@ class NutritionTools(
         })
     }
 
+    suspend fun confirmZeroDay(date: LocalDate, confirmed: Boolean): ToolResult<Boolean> {
+        repository.confirmZeroDay(date, confirmed)
+        return ToolResult(true, null, confirmed)
+    }
+
     suspend fun getTargets() = ToolResult(true, null, repository.targets())
     suspend fun getWeek(date: LocalDate): ToolResult<WeekState?> {
         val targets = repository.targets() ?: return ToolResult(true, null, null, listOf("Set nutrition targets in Settings."))
@@ -132,7 +137,8 @@ class NutritionTools(
         val actual = repository.entries(start, start.plusDays(7), zone)
             .groupBy { it.consumedAt.atZone(zone).toLocalDate() }
             .mapValues { (_, rows) -> rows.sumOf { it.nutrition.calories } }
-        return ToolResult(true, null, WeekBudget.calculate(date, targets, actual))
+        val zeroDays = repository.confirmedZeroDays(start, start.plusDays(7))
+        return ToolResult(true, null, WeekBudget.calculate(date, targets, actual, zeroDays))
     }
 
     suspend fun getDay(date: LocalDate): ToolResult<DayData> {
