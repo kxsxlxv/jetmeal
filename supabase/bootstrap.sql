@@ -796,7 +796,8 @@ alter table public.zero_calorie_days enable row level security;
 revoke all on table public.zero_calorie_days from public, anon, authenticated;
 grant select on table public.zero_calorie_days to authenticated;
 create policy "zero_calorie_days_select_own" on public.zero_calorie_days
-    for select to authenticated using ((select auth.uid()) = owner_id);
+    for select to authenticated
+    using ((select auth.uid()) = owner_id and not coalesce((select auth.jwt()->>'is_anonymous')::boolean, false));
 
 -- Confirm only past days with NO active diary entry. Remove confirmation any time.
 -- Explicitly scope the SECURITY DEFINER routine to auth.uid(); clients cannot
