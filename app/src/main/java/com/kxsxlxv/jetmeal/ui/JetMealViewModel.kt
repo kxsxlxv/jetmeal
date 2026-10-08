@@ -237,8 +237,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         loadWeights()
     }
 
-    fun connectPicooc(email: String, password: String) = action {
-        val count = requireNotNull(picooc).connect(email,password)
+    fun connectPicooc(email: String, password: String, profileName: String) = action {
+        val count = requireNotNull(picooc).connect(email,password,profileName)
         mutable.update { it.copy(notice = "PICOOC подключён. Загружено измерений: $count.") }
         loadWeights()
     }
