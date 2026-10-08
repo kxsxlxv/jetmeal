@@ -161,7 +161,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val knownTotals = totals + confirmedZero.filterNot { it in totals }.associateWith { 0.0 }
                 val asOf = if (snapshot.scale == TimeScale.Day) snapshot.day else
                     when { weekStart.plusDays(6) < today -> weekStart.plusDays(6); weekStart > today -> weekStart; else -> today }
-                val week = targets?.let { WeekBudget.calculate(asOf, it, totals, confirmedZero) }
+                val week = targets?.let { WeekBudget.calculate(asOf, it, totals, confirmedZero, asOfDayCompleted = asOf < today) }
                 val calendarTargets = if (targets == null) emptyMap() else knownTotals.keys.associateWith {
                     WeekBudget.calculate(it, targets, totals, confirmedZero).effectiveTarget
                 }
