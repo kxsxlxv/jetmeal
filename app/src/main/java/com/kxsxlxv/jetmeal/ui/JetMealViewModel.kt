@@ -27,6 +27,7 @@ data class AppState(
     val confirmedZeroDays: Set<LocalDate> = emptySet(),
     val targetVersions: List<TargetVersion> = emptyList(),
     val weightMeasurements: List<WeightMeasurement> = emptyList(),
+    val weightGoal: WeightGoal? = null,
     val picoocConnected: Boolean = false, val weightLoading: Boolean = false,
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
@@ -223,12 +224,21 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val owner = requireNotNull(repository.client.auth.currentUserOrNull()).id
                 val measurements = repository.weights(
                     LocalDate.now().minusDays(180), LocalDate.now().plusDays(1), ZoneId.systemDefault())
-                mutable.update { it.copy(weightMeasurements = measurements,
+                val goal = repository.weightGoal()
+                mutable.update { it.copy(weightMeasurements = measurements, weightGoal = goal,
                     picoocConnected = picooc?.connected(owner) == true) }
             } catch (error: Exception) {
                 if (error !is CancellationException) mutable.update { it.copy(error = userMessage(error)) }
             } finally { mutable.update { it.copy(weightLoading = false) } }
         }
+    }
+
+    fun setWeightGoal(targetKg: Double,deadline: LocalDate) = action {
+        val latest = mutable.value.weightMeasurements.maxByOrNull { it.measuredAt }
+            ?: throw IllegalStateException("Сначала запишите актуальный вес.")
+        requireNotNull(repository).setWeightGoal(latest.kilograms,targetKg,deadline)
+        mutable.update { it.copy(notice = "Цель веса сохранена.") }
+        loadWeights()
     }
 
     fun addWeight(value: Double) = action {
