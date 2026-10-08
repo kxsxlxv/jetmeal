@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.WeekState
+import com.kxsxlxv.jetmeal.domain.DayLoggingStatus
 import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import java.time.LocalDate
 import java.time.YearMonth
@@ -71,14 +72,15 @@ internal object CalendarAdherence {
                     val fill by animateFloatAsState((day.actual/maxValue).toFloat(),MaterialTheme.motionScheme.defaultSpatialSpec(),label="Съедено за день")
                     val mark=(day.target/maxValue).toFloat()
                     val dayModifier=Modifier.weight(1f).let {if(compactChart) it else it.clickable(role=Role.Button,onClick={onDay(day.date)})}
+                    val known=day.status==DayLoggingStatus.Recorded || day.status==DayLoggingStatus.ConfirmedZero
                     Column(dayModifier.semantics(mergeDescendants=true) {
-                        contentDescription="${day.date.format(DateTimeFormatter.ofPattern("d MMMM",RussianLocale))}, ${number(day.actual)} ккал, норма ${number(day.target)} ккал. Открыть день"
+                        contentDescription="${day.date.format(DateTimeFormatter.ofPattern("d MMMM",RussianLocale))}, ${if(known) "${number(day.actual)} ккал" else if(day.status==DayLoggingStatus.Missing) "нет записей" else "день ещё не завершён"}, норма ${number(day.target)} ккал. Открыть день"
                     },horizontalAlignment=Alignment.CenterHorizontally) {
-                        if(!compactChart) Text(day.actual.roundToInt().toString(),style=MaterialTheme.typography.labelSmall,maxLines=1)
+                        if(!compactChart) Text(if(known) day.actual.roundToInt().toString() else "—",style=MaterialTheme.typography.labelSmall,maxLines=1)
                         Canvas(Modifier.fillMaxWidth().height(190.dp).padding(horizontal=4.dp,vertical=8.dp)) {
                             drawRoundRect(palette.calories.container,cornerRadius=CornerRadius(size.width/2),size=size)
                             val height=(size.height*fill.coerceIn(0f,1f)).coerceAtLeast(if(fill>0) 4.dp.toPx() else 0f)
-                            if(height>0) drawRoundRect(Brush.verticalGradient(listOf(palette.calories.end,palette.calories.start)),topLeft=Offset(0f,size.height-height),size=Size(size.width,height),cornerRadius=CornerRadius(size.width/2))
+                            if(height>0 && known) drawRoundRect(Brush.verticalGradient(listOf(palette.calories.end,palette.calories.start)),topLeft=Offset(0f,size.height-height),size=Size(size.width,height),cornerRadius=CornerRadius(size.width/2))
                             val y=size.height*(1-mark)
                             drawLine(palette.calories.onContainer,Offset(0f,y),Offset(size.width,y),strokeWidth=2.dp.toPx())
                         }
@@ -88,16 +90,25 @@ internal object CalendarAdherence {
                     }
                 }
             }
-            Text("Полосы — съедено, отметки — дневная норма. " + if(compactChart) "Даты и значения — в списке ниже." else "Нажмите на день, чтобы открыть дневник.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=12.dp))
+            Text("Полосы — съедено, отметки — дневная норма, прочерк — нет данных. " + if(compactChart) "Даты и значения — в списке ниже." else "Нажмите на день, чтобы открыть дневник.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=12.dp))
         }
         if(compactChart) item {
             Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
                 week.days.forEachIndexed {index,day->
                     SegmentedListItem(onClick={onDay(day.date)},shapes=ListItemDefaults.segmentedShapes(index,7),
                         modifier=Modifier.fillMaxWidth().heightIn(min=48.dp),
-                        supportingContent={Text("${number(day.actual)} ккал · норма ${number(day.target)} ккал")}) {
+                        supportingContent={Text("${if(day.status==DayLoggingStatus.Missing) "Нет записей" else if(day.status==DayLoggingStatus.Future || day.status==DayLoggingStatus.InProgress) "Ещё не завершён" else "${number(day.actual)} ккал"} · норма ${number(day.target)} ккал")}) {
                         Text(day.date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM",RussianLocale)))
                     }
+                }
+            }
+        }
+        if(week.missingCompletedDays.isNotEmpty()) item {
+            Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
+                Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("Есть незаполненные дни",style=MaterialTheme.typography.titleMediumEmphasized)
+                    Text("${week.missingCompletedDays.size} дней не включены в перераспределение. Это не нулевое питание; итог недели пока неполный.")
+                    TextButton(onClick={onDay(week.missingCompletedDays.first())}) {Text("Открыть первый пропуск")}
                 }
             }
         }
@@ -128,11 +139,11 @@ internal object CalendarAdherence {
     }
 }
 
-@Composable internal fun CalendarContent(month:YearMonth,calories:Map<LocalDate,Double>,targets:Map<LocalDate,Double>,onMonth:(YearMonth)->Unit,onDay:(LocalDate)->Unit,selectedDate:LocalDate?=null) {
+@Composable internal fun CalendarContent(month:YearMonth,calories:Map<LocalDate,Double>,targets:Map<LocalDate,Double>,onMonth:(YearMonth)->Unit,onDay:(LocalDate)->Unit,selectedDate:LocalDate?=null,confirmedZeroDays:Set<LocalDate> = emptySet()) {
     val first=month.atDay(1)
     val offset=first.dayOfWeek.value-1
     val weeks=(offset+month.lengthOfMonth()+6)/7
-    val actual=calories.filterKeys {YearMonth.from(it)==month}
+    val actual=(calories + confirmedZeroDays.filterNot { it in calories }.associateWith { 0.0 }).filterKeys {YearMonth.from(it)==month}
     val fontScale=LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Seven 48dp date targets fit only above this width. At narrow widths or
@@ -150,24 +161,24 @@ internal object CalendarAdherence {
                         val col=if(splitWeeks) half*4+slot else slot
                         val dayNumber=row*7+col-offset+1
                         if(col>=7 || dayNumber !in 1..month.lengthOfMonth()) Spacer(Modifier.weight(1f))
-                        else CalendarDay(first.withDayOfMonth(dayNumber),calories[first.withDayOfMonth(dayNumber)],targets[first.withDayOfMonth(dayNumber)],selectedDate,onDay,Modifier.weight(1f),showWeekday=splitWeeks)
+                        else CalendarDay(first.withDayOfMonth(dayNumber),actual[first.withDayOfMonth(dayNumber)],targets[first.withDayOfMonth(dayNumber)],selectedDate,onDay,Modifier.weight(1f),showWeekday=splitWeeks,confirmedZero=first.withDayOfMonth(dayNumber) in confirmedZeroDays)
                     }
                 }
                 }
                 }
             }
             item { Text("≈ рядом с нормой · ↑ выше · ↓ ниже\nОбводка отмечает сегодня. Нажмите на дату, чтобы открыть день.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(8.dp)) }
-            item {FlowRow(Modifier.fillMaxWidth().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {AnalyticMetric("Дней с записями",actual.size.toString(),"за месяц");AnalyticMetric("Съедено",number(actual.values.sum()),"ккал за месяц")} }
+            item {FlowRow(Modifier.fillMaxWidth().padding(8.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {AnalyticMetric("Дней с данными",actual.size.toString(),"за месяц");AnalyticMetric("Съедено",number(actual.values.sum()),"ккал за месяц")} }
         }
     }
 }
 
-@Composable private fun CalendarDay(date:LocalDate,actual:Double?,target:Double?,selected:LocalDate?,onDay:(LocalDate)->Unit,modifier:Modifier,showWeekday:Boolean=false) {
+@Composable private fun CalendarDay(date:LocalDate,actual:Double?,target:Double?,selected:LocalDate?,onDay:(LocalDate)->Unit,modifier:Modifier,showWeekday:Boolean=false,confirmedZero:Boolean=false) {
     val palette=nutritionColors()
     val ratio=actual?.let {CalendarAdherence.distance(it,target)}
-    val color=when {actual==null->MaterialTheme.colorScheme.surfaceContainerLow; ratio==null || ratio<=CalendarAdherence.CloseRatio->palette.protein.container; ratio<=CalendarAdherence.NearRatio->palette.fat.container; else->palette.carbs.container}
+    val color=when {confirmedZero->MaterialTheme.colorScheme.surfaceContainerHigh;actual==null->MaterialTheme.colorScheme.surfaceContainerLow; ratio==null || ratio<=CalendarAdherence.CloseRatio->palette.protein.container; ratio<=CalendarAdherence.NearRatio->palette.fat.container; else->palette.carbs.container}
     val animated by animateColorAsState(color,MaterialTheme.motionScheme.fastEffectsSpec(),label="Состояние дня")
-    val description="${date.format(DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale))}, ${actual?.let {"${number(it)} ккал, ${CalendarAdherence.status(it,target)}"} ?: "Нет записей"}${if(date==LocalDate.now()) ", сегодня" else ""}. Открыть день"
+    val description="${date.format(DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale))}, ${actual?.let {if(confirmedZero) "0 ккал, подтверждённый нулевой день" else "${number(it)} ккал, ${CalendarAdherence.status(it,target)}"} ?: "Нет записей"}${if(date==LocalDate.now()) ", сегодня" else ""}. Открыть день"
     Surface(onClick={onDay(date)},modifier=modifier.heightIn(min=76.dp).semantics(mergeDescendants=true) {contentDescription=description},
         shape=if(date==selected) MaterialTheme.shapes.large else MaterialTheme.shapes.medium,
         color=animated,border=if(date==LocalDate.now() || date==selected) androidx.compose.foundation.BorderStroke(if(date==selected) 2.dp else 1.dp,MaterialTheme.colorScheme.primary) else null) {
@@ -176,20 +187,20 @@ internal object CalendarAdherence {
             Text(date.dayOfMonth.toString(),style=MaterialTheme.typography.titleMediumEmphasized)
             if(actual!=null) {
                 Text(actual.roundToInt().toString(),style=MaterialTheme.typography.labelSmall,maxLines=1)
-                Text(CalendarAdherence.marker(actual,target),style=MaterialTheme.typography.labelSmall)
+                Text(if(confirmedZero) "✓" else CalendarAdherence.marker(actual,target),style=MaterialTheme.typography.labelSmall)
             } else Text("·",color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-@Composable internal fun QuarterContent(start:LocalDate,calories:Map<LocalDate,Double>,targets:Map<LocalDate,Double>,onDay:(LocalDate)->Unit) {
+@Composable internal fun QuarterContent(start:LocalDate,calories:Map<LocalDate,Double>,targets:Map<LocalDate,Double>,onDay:(LocalDate)->Unit,confirmedZeroDays:Set<LocalDate> = emptySet()) {
     val quarter=TimelinePeriods.start(TimeScale.Quarter,start)
-    val visible=calories.filterKeys {it>=quarter && it<quarter.plusMonths(3)}
+    val visible=(calories + confirmedZeroDays.filterNot { it in calories }.associateWith { 0.0 }).filterKeys {it>=quarter && it<quarter.plusMonths(3)}
     val palette=nutritionColors()
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(18.dp)) {
         item {
             Text("Питание в перспективе",style=MaterialTheme.typography.headlineSmallEmphasized)
-            Text("${visible.size} дней с записями · ${number(visible.values.sum())} ккал",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp))
+            Text("${visible.size} дней с данными · ${number(visible.values.sum())} ккал",color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp))
         }
         items(3) { index ->
             val month=YearMonth.from(quarter.plusMonths(index.toLong()))
@@ -207,7 +218,7 @@ internal object CalendarAdherence {
                     }
                     val offset=month.atDay(1).dayOfWeek.value-1
                     val rows=(offset+month.lengthOfMonth()+6)/7
-                    Column(Modifier.semantics(mergeDescendants=true) {contentDescription="Карта ${month.format(DateTimeFormatter.ofPattern("LLLL",RussianLocale))}: ${data.size} дней с записями. Для перехода используйте кнопку Выбрать день"},verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                    Column(Modifier.semantics(mergeDescendants=true) {contentDescription="Карта ${month.format(DateTimeFormatter.ofPattern("LLLL",RussianLocale))}: ${data.size} дней с данными. Для перехода используйте кнопку Выбрать день"},verticalArrangement=Arrangement.spacedBy(3.dp)) {
                         repeat(rows) {row -> Row(horizontalArrangement=Arrangement.spacedBy(3.dp)) {
                             repeat(7) {col ->
                                 val n=row*7+col-offset+1
@@ -217,7 +228,7 @@ internal object CalendarAdherence {
                                     val actual=data[day]
                                     val target=targets[day]
                                     val distance=actual?.let {CalendarAdherence.distance(it,target)}
-                                    val tone=when {actual==null->MaterialTheme.colorScheme.surfaceContainerHigh;distance==null||distance<=CalendarAdherence.CloseRatio->palette.protein.end;distance<=CalendarAdherence.NearRatio->palette.fat.end;else->palette.carbs.end}
+                                    val tone=when {day in confirmedZeroDays->MaterialTheme.colorScheme.surfaceContainerHigh;actual==null->MaterialTheme.colorScheme.surfaceContainerHigh;distance==null||distance<=CalendarAdherence.CloseRatio->palette.protein.end;distance<=CalendarAdherence.NearRatio->palette.fat.end;else->palette.carbs.end}
                                     Box(Modifier.weight(1f).height(18.dp).background(tone,RoundedCornerShape(5.dp)))
                                 }
                             }
