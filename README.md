@@ -141,9 +141,17 @@ Run Android lint:
   all subsequent updates are preserved by a database trigger.
 - Weight is tracked independently from calorie expenditure. The Settings screen offers
   manual weigh-ins, a trend summary, a recent measurements graph and a target-weight
-  deadline. A dashed trajectory is drawn from the latest weight at goal creation
-  to the target date; the app compares the 7-day observed trend with the planned weight. The same owner
-  sees measurements across reinstalls because records live in Supabase with RLS.
+  deadline. A dashed trajectory is drawn from the weight at goal creation
+  to the target date. The weight chart has two modes: **Measurements** with equal
+  visual spacing between distinct weighing dates (plus a seven-day plan preview),
+  and **Goal** with the complete dated plan. Equal visual spacing never affects
+  calculations: the plan and observed weekly pace use actual calendar dates.
+  The visible fact-minus-plan delta uses the latest recorded weight and the
+  goal allowance **on that measurement's date**, never the separate 7-day
+  smoothed average. For an observation before the plan began, no delta is claimed.
+  The weight deadline uses the native Material 3 DatePickerDialog with future-date
+  constraints and UTC-to-LocalDate conversion. The same owner sees measurements
+  across reinstalls because records live in Supabase with RLS.
 - **PICOOC** is an optional direct cloud connection (not Google Fit or Fitbit).
   The importer follows the unofficial PICOOC protocol documented by
   [SmartScaleConnect](https://github.com/AlexxIT/SmartScaleConnect). Authenticate
