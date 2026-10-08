@@ -149,7 +149,7 @@ Normal food mutations are auto-write and undoable. Destructive catalogue merge/h
 
 ## Nutrition targets
 
-JetMeal does **not** calculate a weight-loss plan, TDEE, target weight timeline or recommended deficit. Those calculations happen outside the app.
+JetMeal does **not** calculate a weight-loss plan, TDEE, target weight timeline or recommended deficit. It does, however, store weight measurements and show a descriptive smoothed trend without automatically modifying calorie goals. Those calculations happen outside the app.
 
 JetMeal stores already-decided values:
 
@@ -159,7 +159,7 @@ JetMeal stores already-decided values:
 - daily carbohydrate target;
 - weekly redistribution limit ratio.
 
-The user can edit these values in Settings. An AI client may also propose/update them through `update_targets`, but target changes require explicit confirmation.
+The user can edit these values in Settings. An AI client may also propose/update them through `update_targets`, but target changes require explicit confirmation. Each successful change is versioned by effective local date so historical days preserve their prior calorie/macro targets. For an interrupted or unknown pre-migration history, the saved values at migration are the legacy baseline.
 
 ## Weekly calorie budget
 
@@ -348,7 +348,7 @@ Manual UI autocomplete should favor frequent foods before typing and useful rank
 - Play Store / App Store distribution;
 - mass-market onboarding polish;
 - in-app calculation of TDEE, weight-loss goal or calorie deficit;
-- Health Connect / Apple Health;
+- Health Connect / Apple Health (PICOOC direct-cloud sync and manual weight entry are separately implemented);
 - recipes and pantry inventory;
 - global food database;
 - micronutrients;
