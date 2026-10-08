@@ -61,9 +61,23 @@ select lives_ok($$select jetmeal_update_log(jsonb_build_object('entry_id',(selec
 select is((select calories_kcal_snapshot from diary_entries where deleted_at is null),181.250::numeric,'Catalogue edits never rewrite historical basis');
 select is((select is_estimated_snapshot from diary_entries where deleted_at is null),true,'Catalogue edits never rewrite estimation snapshot');
 
+-- Explicit zero-day confirmation: only past, entry-free days. A later food log clears it.
+select lives_ok($select jetmeal_confirm_zero_day('2026-10-04',true)$,'A can confirm a past day with no food');
+select is((select count(*)::integer from zero_calorie_days where local_date='2026-10-04'),1,'Confirmed day is visible to its owner');
+select throws_ok($select jetmeal_confirm_zero_day('2026-10-05',true)$,'23514','Day already has diary entries','Cannot confirm an existing meal day as empty');
+select throws_ok($select jetmeal_confirm_zero_day(current_date,true)$,'22023','Only past days can be confirmed empty','Cannot confirm current day as finished');
+savepoint zero_day_write_test;
+select lives_ok($select jetmeal_log_food('{"snapshot_name":"Later logged meal","quantity":1,"quantity_unit":"piece","calories":100,"protein_g":10,"fat_g":2,"carbs_g":5,"consumed_at":"2026-10-04T12:00:00Z"}')$,'Log food on a previously confirmed zero day');
+select is((select count(*)::integer from zero_calorie_days where local_date='2026-10-04'),0,'Adding food clears stale zero-day marker');
+rollback to savepoint zero_day_write_test;
+select lives_ok($select jetmeal_confirm_zero_day('2026-10-04',false)$,'Owner can revoke zero-day confirmation');
+select is((select count(*)::integer from zero_calorie_days),0,'Revoked confirmation is not treated as zero');
+select lives_ok($select jetmeal_confirm_zero_day('2026-10-03',true)$,'A can confirm another empty past day');
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
 select is((select count(*)::integer from foods),0,'B cannot read A foods');
 select is((select count(*)::integer from diary_entries),0,'B cannot read A diary');
+select is((select count(*)::integer from zero_calorie_days),0,'B cannot read A zero-day markers');
+select throws_ok($insert into zero_calorie_days(owner_id,local_date) values(auth.uid(),'2026-10-01')$,'42501',null,'Client cannot insert zero days without validation');
 select is((select count(*)::integer from nutrition_targets),0,'B cannot read A targets');
 select is((select count(*)::integer from audit_events),0,'B cannot read A audit');
 select throws_ok($$select jetmeal_update_log(jsonb_build_object('entry_id',(select value->'data'->>'id' from test_state where key='entry'),'quantity',10))$$,'22023',null,'B cannot update A entry');
