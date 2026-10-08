@@ -154,3 +154,19 @@ object WeightTrend {
         return values.takeIf { it.isNotEmpty() }?.average()
     }
 }
+
+data class WeightGoal(
+    val startDate: LocalDate,
+    val targetDate: LocalDate,
+    val startKilograms: Double,
+    val targetKilograms: Double,
+) {
+    init { require(targetDate > startDate && startKilograms in 20.0..500.0
+        && targetKilograms in 20.0..500.0) }
+    fun expected(date: LocalDate): Double {
+        val total = java.time.temporal.ChronoUnit.DAYS.between(startDate,targetDate).toDouble()
+        val elapsed = java.time.temporal.ChronoUnit.DAYS.between(startDate,date).toDouble()
+        val portion = (elapsed/total).coerceIn(0.0,1.0)
+        return startKilograms+(targetKilograms-startKilograms)*portion
+    }
+}
