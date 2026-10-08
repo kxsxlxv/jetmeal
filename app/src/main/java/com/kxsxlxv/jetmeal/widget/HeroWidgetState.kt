@@ -29,6 +29,7 @@ internal object HeroWidgetSnapshot {
         targets: Targets,
         zone: ZoneId,
         updatedAtMillis: Long = System.currentTimeMillis(),
+        confirmedZeroDays: Set<LocalDate> = emptySet(),
     ): HeroWidgetState.Ready {
         val weekStart = date.minusDays(date.dayOfWeek.value - 1L)
         val relevant = entries.filter {
@@ -45,7 +46,7 @@ internal object HeroWidgetSnapshot {
         return HeroWidgetState.Ready(
             date = date,
             total = today,
-            calorieTarget = WeekBudget.calculate(date, targets, actualByDate).effectiveTarget,
+            calorieTarget = WeekBudget.calculate(date, targets, actualByDate, confirmedZeroDays).effectiveTarget,
             targets = targets,
             updatedAtMillis = updatedAtMillis,
         )
