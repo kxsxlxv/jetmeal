@@ -121,9 +121,68 @@ private fun DayTargetsPrompt(onTargets: () -> Unit) {
     }
 }
 
+private data class HealthProgressFrame(
+    val calories: Float,
+    val protein: Float,
+    val fat: Float,
+    val carbs: Float,
+) {
+    companion object {
+        val Zero = HealthProgressFrame(0f, 0f, 0f, 0f)
+    }
+}
+
+private fun HealthProgressFrame.interpolate(
+    target: HealthProgressFrame,
+    fraction: Float,
+): HealthProgressFrame {
+    val t = fraction.coerceIn(0f, 1f)
+    fun lerp(start: Float, end: Float): Float = start + (end - start) * t
+    return HealthProgressFrame(
+        calories = lerp(calories, target.calories),
+        protein = lerp(protein, target.protein),
+        fat = lerp(fat, target.fat),
+        carbs = lerp(carbs, target.carbs),
+    )
+}
+
+@Composable
+private fun animatedHealthProgressFrame(
+    animationKey: Any,
+    target: HealthProgressFrame,
+): HealthProgressFrame {
+    val clock = remember(animationKey) { Animatable(0f) }
+    var start by remember(animationKey) { mutableStateOf(HealthProgressFrame.Zero) }
+    var end by remember(animationKey) { mutableStateOf(target) }
+
+    LaunchedEffect(animationKey, target) {
+        val current = start.interpolate(end, clock.value)
+        start = current
+        end = target
+        clock.snapTo(0f)
+        clock.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(
+                durationMillis = 700,
+                easing = LinearEasing,
+            ),
+        )
+    }
+
+    return start.interpolate(end, clock.value)
+}
+
 @Composable
 private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targets, effective: Double) {
     val palette = nutritionColors()
+    val targetProgress = HealthProgressFrame(
+        calories = ringFraction(total.calories, effective).coerceIn(0f, 2f),
+        protein = ringFraction(total.protein, targets.protein).coerceIn(0f, 1f),
+        fat = ringFraction(total.fat, targets.fat).coerceIn(0f, 1f),
+        carbs = ringFraction(total.carbs, targets.carbs).coerceIn(0f, 1f),
+    )
+    val displayed = animatedHealthProgressFrame(animationKey, targetProgress)
+
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val gap = 6.dp
         val dialSize = ((maxWidth - gap) / 2.08f).coerceAtMost(168.dp)
@@ -144,8 +203,8 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                 CalorieHealthDial(
                     actual = total.calories,
                     target = effective,
+                    displayedFraction = displayed.calories,
                     colors = palette.calories,
-                    animationKey = animationKey,
                     modifier = Modifier.size(dialSize),
                 )
             }
@@ -157,27 +216,27 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
             ) {
                 MacroHealthCard(
                     label = "Белки",
-                    animationKey = animationKey,
                     actual = total.protein,
                     target = targets.protein,
+                    progress = displayed.protein,
                     colors = palette.protein,
                     symbol = JetMealSymbol.Protein,
                     modifier = Modifier.weight(1f),
                 )
                 MacroHealthCard(
                     label = "Жиры",
-                    animationKey = animationKey,
                     actual = total.fat,
                     target = targets.fat,
+                    progress = displayed.fat,
                     colors = palette.fat,
                     symbol = JetMealSymbol.Fat,
                     modifier = Modifier.weight(1f),
                 )
                 MacroHealthCard(
                     label = "Углеводы",
-                    animationKey = animationKey,
                     actual = total.carbs,
                     target = targets.carbs,
+                    progress = displayed.carbs,
                     colors = palette.carbs,
                     symbol = JetMealSymbol.Carbs,
                     modifier = Modifier.weight(1f),
@@ -188,37 +247,13 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
 }
 
 @Composable
-private fun animatedHealthProgress(
-    animationKey: Any,
-    target: Float,
-): Float {
-    val boundedTarget = target.coerceAtLeast(0f)
-    val progress = remember(animationKey) { Animatable(0f) }
-    LaunchedEffect(animationKey, boundedTarget) {
-        progress.animateTo(
-            targetValue = boundedTarget,
-            animationSpec = tween(
-                durationMillis = 700,
-                easing = LinearEasing,
-            ),
-        )
-    }
-    return progress.value
-}
-
-@Composable
 private fun CalorieHealthDial(
     actual: Double,
     target: Double,
+    displayedFraction: Float,
     colors: RingColors,
-    animationKey: Any,
     modifier: Modifier = Modifier,
 ) {
-    val fraction = ringFraction(actual, target)
-    val displayedFraction = animatedHealthProgress(
-        animationKey = animationKey,
-        target = fraction.coerceIn(0f, 2f),
-    )
     val lapProgress = splitRingProgress(displayedFraction)
     val firstLap = lapProgress.firstLap
     val overflowLap = lapProgress.overflowLap
@@ -228,7 +263,7 @@ private fun CalorieHealthDial(
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val errorColor = MaterialTheme.colorScheme.error
     val badgeTextColor = Color(0xFF102018)
-    val badgeOverlayColor = Color.White.copy(alpha = .14f)
+    val badgeOverlayColor = Color.Black.copy(alpha = .10f)
     val warningColor = Color(0xFFFFC34D)
     val deltaText = signed(actual - target)
     val bottomPaint = remember(labelColor, density.density, density.fontScale) {
@@ -304,13 +339,18 @@ private fun CalorieHealthDial(
                         size = diameter,
                         style = Stroke(stroke, cap = StrokeCap.Butt),
                     )
-                    // Permanent start cap. At 100% the moving cap overlaps it with the same
-                    // opaque gradient, so there is no geometry transition or visible jump.
-                    drawCircle(
-                        brush = baseBrush,
-                        radius = stroke / 2f,
-                        center = Offset(center.x + radius, center.y),
-                    )
+                    // Avoid double-thick overlap near 12 o'clock. Once the moving cap
+                    // geometrically reaches the start seam, it alone covers the Butt start.
+                    // During overflow the completed first lap never keeps an extra start cap.
+                    val capOverlapFraction =
+                        (stroke / radius / (2f * Math.PI.toFloat())).coerceIn(0f, .25f)
+                    if (overflowLap <= 0f && firstLap < 1f - capOverlapFraction) {
+                        drawCircle(
+                            brush = baseBrush,
+                            radius = stroke / 2f,
+                            center = Offset(center.x + radius, center.y),
+                        )
+                    }
                 }
 
                 if (overflowLap > 0f) {
@@ -439,17 +479,13 @@ private fun CalorieHealthDial(
 @Composable
 private fun MacroHealthCard(
     label: String,
-    animationKey: Any,
     actual: Double,
     target: Double,
+    progress: Float,
     colors: RingColors,
     symbol: JetMealSymbol,
     modifier: Modifier = Modifier,
 ) {
-    val progress = animatedHealthProgress(
-        animationKey = animationKey,
-        target = ringFraction(actual, target).coerceIn(0f, 1f),
-    )
     val onSurface = MaterialTheme.colorScheme.onSurface
 
     Surface(
