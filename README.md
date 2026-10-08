@@ -140,7 +140,9 @@ Run Android lint:
   reconstructed. The migration seeds the currently saved target as the legacy baseline;
   all subsequent updates are preserved by a database trigger.
 - Weight is tracked independently from calorie expenditure. The Settings screen offers
-  manual weigh-ins, a trend summary and a recent measurements graph. The same owner
+  manual weigh-ins, a trend summary, a recent measurements graph and a target-weight
+  deadline. A dashed trajectory is drawn from the latest weight at goal creation
+  to the target date; the app compares the 7-day observed trend with the planned weight. The same owner
   sees measurements across reinstalls because records live in Supabase with RLS.
 - **PICOOC** is an optional direct cloud connection (not Google Fit or Fitbit).
   The importer follows the unofficial PICOOC protocol documented by
