@@ -30,7 +30,7 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
     picoocConnected: Boolean = false,
     weightLoading: Boolean = false,
     onAddWeight: (Double) -> Unit = {},
-    onConnectPicooc: (String,String) -> Unit = { _,_ -> },
+    onConnectPicooc: (String,String,String) -> Unit = { _,_,_ -> },
     onSyncPicooc: () -> Unit = {},
     onDisconnectPicooc: () -> Unit = {},
 ) {
