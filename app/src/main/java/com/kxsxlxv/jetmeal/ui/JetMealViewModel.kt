@@ -8,6 +8,9 @@ import com.kxsxlxv.jetmeal.domain.*
 import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.annotations.SupabaseExperimental
+import io.github.jan.supabase.auth.event.AuthEvent
+import io.github.jan.supabase.auth.status.RefreshFailureCause
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -15,7 +18,7 @@ import java.time.*
 
 enum class Destination { Today, Week, Calendar, Settings }
 data class AppState(
-    val authLoading: Boolean = true, val email: String? = null,
+    val authLoading: Boolean = true, val email: String? = null, val authRecovering: Boolean = false,
     val busy: Boolean = false, val refreshing: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
     val destination: Destination = Destination.Today, val month: YearMonth = YearMonth.now(),
     val scale: TimeScale = TimeScale.Day,
@@ -24,6 +27,7 @@ data class AppState(
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
 
+@OptIn(SupabaseExperimental::class)
 class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle, private val widgetCoordinator: HeroWidgetCoordinator? = null) : ViewModel() {
     private val mutable = MutableStateFlow(AppState(authLoading = repository != null,
         destination = saved.get<String>("destination")?.let { runCatching { Destination.valueOf(it) }.getOrNull() } ?: Destination.Today,
@@ -40,26 +44,62 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private var refreshInFlight = false
     private var refreshGeneration = 0
     private var searchGeneration = 0
+    private var sessionRefreshError: String? = null
+    private var authenticatedOwnerId: String? = null
 
     init {
         if (repository != null) viewModelScope.launch {
             repository.client.auth.sessionStatus.collect { status ->
                 when (status) {
                     is SessionStatus.Authenticated -> {
-                        mutable.update { it.copy(authLoading = false, email = repository.client.auth.currentUserOrNull()?.email) }
-                        widgetCoordinator?.requestSync()
-                        refresh()
+                        val previous = mutable.value
+                        val email = status.session.user?.email
+                        val ownerId = status.session.user?.id
+                        val reload = previous.authLoading || previous.authRecovering || authenticatedOwnerId != ownerId || status.isNew
+                        authenticatedOwnerId = ownerId
+                        repository.authFailures.clear()
+                        repository.diagnostics?.authState(ConnectionAuthState.Authenticated)
+                        sessionRefreshError = null
+                        mutable.update { it.copy(authLoading = false, authRecovering = false, email = email,
+                            error = if (previous.authRecovering) null else it.error) }
+                        // A rotated JWT is not a changed diary snapshot. Reloading here used
+                        // to cancel foreground refreshes and restart all progress animations.
+                        if (reload) {
+                            widgetCoordinator?.requestSync()
+                            refresh()
+                        }
                     }
                     is SessionStatus.NotAuthenticated -> {
+                        authenticatedOwnerId = null
                         refreshGeneration++; searchGeneration++
                         refreshJob?.cancel(); searchJob?.cancel()
                         repository.invalidateSearch()
                         refreshInFlight = false
-                        mutable.value = AppState(authLoading = false, error = mutable.value.error)
+                        val ended = repository.authFailures.latest?.let(UserErrors::sessionEndedMessage)
+                        repository.diagnostics?.authState(ConnectionAuthState.NotAuthenticated)
+                        mutable.value = AppState(authLoading = false, error = ended ?: mutable.value.error)
                     }
-                    is SessionStatus.RefreshFailure -> mutable.update { it.copy(authLoading = false,
-                        error = "Не удалось обновить сессию. Проверьте соединение или войдите снова.") }
+                    is SessionStatus.RefreshFailure -> {
+                        repository.diagnostics?.authState(ConnectionAuthState.Recovering)
+                        mutable.update { it.copy(authLoading = false, authRecovering = true,
+                            error = sessionRefreshError ?: repository.authFailures.latest?.let(UserErrors::sessionRecoveryMessage)
+                                ?: UserErrors.SESSION_RECOVERING) }
+                    }
                     else -> Unit
+                }
+            }
+        }
+        if (repository != null) viewModelScope.launch {
+            repository.client.auth.events.collect { event ->
+                if (event is AuthEvent.RefreshFailure &&
+                    repository.client.auth.sessionStatus.value is SessionStatus.RefreshFailure) {
+                    val error = when (val cause = event.cause) {
+                        is RefreshFailureCause.NetworkError -> cause.exception
+                        is RefreshFailureCause.InternalServerError -> cause.exception
+                    }
+                    repository.diagnostics?.failure(ConnectionOperation.Auth, error)
+                    sessionRefreshError = UserErrors.sessionRecoveryMessage(repository.authFailures.resolve(error))
+                    mutable.update { if (it.authRecovering) it.copy(error = sessionRefreshError) else it }
                 }
             }
         }
@@ -68,7 +108,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun signIn(email: String, password: String) = action(ErrorOperation.SignIn) {
         requireNotNull(repository).signIn(email, password)
     }
-    fun signOut() = action {
+    fun signOut() = action(allowDuringRecovery = true) {
+        repository?.authFailures?.clear()
+        repository?.diagnostics?.authState(ConnectionAuthState.SignOutRequested)
         refreshGeneration++; searchGeneration++
         refreshJob?.cancel(); searchJob?.cancel()
         refreshInFlight = false
@@ -122,11 +164,13 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     targets = targets, week = week, monthCalories = totals,
                     monthTargets = calendarTargets) }
                 widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone)
-                search("")
+                // The catalogue belongs to the Add/search flow. Loading and ranking it
+                // here blocked the main thread while a newly opened day's Hero animated.
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 // Engines may surface canceled I/O as an IOException rather than CancellationException.
                 ensureActive()
+                repository.diagnostics?.failure(ConnectionOperation.Diary, error)
                 if (generation == refreshGeneration) mutable.update { it.copy(error = userMessage(error)) }
             }
             finally {
@@ -181,6 +225,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 ensureActive()
+                repository?.diagnostics?.failure(ConnectionOperation.Catalogue, error)
                 if (generation == searchGeneration) mutable.update { it.copy(error = userMessage(error)) }
             }
             finally {
@@ -219,7 +264,11 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         mutable.update { it.copy(notice = "Цели сохранены.") }; refresh()
     }
     fun dismissError() = mutable.update { it.copy(error = null, notice = null) }
-    private fun action(operation: ErrorOperation = ErrorOperation.Data, block: suspend () -> Unit) = viewModelScope.launch {
+    private fun action(operation: ErrorOperation = ErrorOperation.Data, allowDuringRecovery: Boolean = false, block: suspend () -> Unit) = viewModelScope.launch {
+        if (!allowDuringRecovery && operation == ErrorOperation.Data && mutable.value.authRecovering) {
+            mutable.update { it.copy(error = sessionRefreshError ?: UserErrors.SESSION_RECOVERING) }
+            return@launch
+        }
         if (!writes.tryLock()) return@launch
         writeInFlight = true
         mutable.update { it.copy(busy = true, error = null, notice = null) }
@@ -227,9 +276,12 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
             ensureActive()
-            mutable.update { it.copy(error = UserErrors.message(error, operation)) }
+            repository?.diagnostics?.failure(if (operation == ErrorOperation.SignIn) ConnectionOperation.SignIn else ConnectionOperation.Mutation, error)
+            mutable.update { it.copy(error = if (it.authRecovering) sessionRefreshError ?: UserErrors.SESSION_RECOVERING
+                else UserErrors.message(error, operation)) }
         }
         finally { writes.unlock(); writeInFlight = false; mutable.update { it.copy(busy = refreshInFlight) } }
     }
-    private fun userMessage(error: Exception): String = UserErrors.message(error)
+    private fun userMessage(error: Exception): String = if (mutable.value.authRecovering)
+        sessionRefreshError ?: UserErrors.SESSION_RECOVERING else UserErrors.message(error)
 }

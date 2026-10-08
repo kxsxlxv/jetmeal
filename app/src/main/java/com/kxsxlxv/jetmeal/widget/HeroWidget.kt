@@ -192,7 +192,9 @@ private fun JetMealWidgetContent(
                         WidgetContent.Hero -> heroDescription(state)
                         WidgetContent.Ring -> ringDescription(state)
                     },
-                    contentScale = ContentScale.FillBounds,
+                    // Launcher cell bounds can differ from the size advertised to Glance.
+                    // Preserve the circular geometry when the host scales the image.
+                    contentScale = ContentScale.Fit,
                     modifier = GlanceModifier.fillMaxSize(),
                 )
             }

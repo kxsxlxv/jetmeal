@@ -2,9 +2,29 @@ package com.kxsxlxv.jetmeal.ui
 
 import kotlin.math.PI
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class RingBadgeGeometryTest {
+    @Test
+    fun lowProgressTextFitKeepsCapsuleCenterlineInsideTheActualArc() {
+        val radius = 69.5f
+        val progress = .03f
+        val height = 14f
+        val padding = 4f
+        val width = curvedBadgeTextWidthLimit(progress, radius, height, padding)
+        val end = -90f + 360f * progress
+        val geometry = curvedBadgeGeometry(end, radius, height, 11.5f, width, padding, 4.5f)
+        assertEquals(-90f, geometry.badgeStartAngle, .001f)
+        assertEquals(end, geometry.badgeStartAngle + geometry.badgeSweepAngle, .001f)
+        assertTrue(width < 26f)
+    }
+
+    @Test
+    fun completedLapDoesNotConstrainLongDeltaToTheShortOverflowSegment() {
+        assertTrue(curvedBadgeTextWidthLimit(1.01f, 69.5f, 14f, 4f).isInfinite())
+    }
+
     @Test
     fun visibleBadgeFrontReachesParentCapFrontWithInset() {
         val radius = 72f

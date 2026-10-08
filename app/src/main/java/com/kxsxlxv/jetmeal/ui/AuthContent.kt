@@ -49,6 +49,7 @@ internal fun AuthContent(state: AppState, signIn: (String, String) -> Unit) {
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Войти") }
             state.error?.let { EditorError(it) }
             if (state.busy) LoadingIndicator(Modifier.align(Alignment.CenterHorizontally))
+            ConnectionDiagnosticsContent()
         }
     }
 }

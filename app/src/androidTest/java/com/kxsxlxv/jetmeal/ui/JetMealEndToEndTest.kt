@@ -203,7 +203,9 @@ class JetMealEndToEndTest {
         }
         assertEquals(7, readDay(repository, date).size)
         assertEquals("Обед с пастой", readDay(repository, previous).single().name)
-        icon("Обновить дневник"); ready(); clearNotice()
+        dayTop()
+        compose.onNodeWithTag("day-diary").performTouchInput { swipeDown() }
+        ready(); clearNotice()
         dayTop(); capture("Day-populated")
         expandMeal("День")
         dayScroll(hasText("Рис с овощами")); capture("Day-accordion-lunch")
@@ -219,14 +221,14 @@ class JetMealEndToEndTest {
                 meal = MealPeriod.Snack, estimateName = "Десерт и кофе", unit = "serving",
                 estimateNutrition = Nutrition(1200.0, 16.0, 65.0, 139.0), confidence = .75))
         }
-        icon("Обновить дневник")
+        dayTop()
+        compose.onNodeWithTag("day-diary").performTouchInput { swipeDown() }
         compose.waitUntil(60_000) {
             !model.state.value.busy && model.state.value.entries.any { it.name == "Десерт и кофе" }
         }
         ready(); clearNotice(); dayTop()
-        val overage = "+${number(model.state.value.entries.sumOf { it.nutrition.calories } - requireNotNull(model.state.value.week).effectiveTarget)} ккал сверх нормы"
-        await(hasText(overage))
-        compose.onNodeWithText(overage).assertIsDisplayed()
+        val overage = "превышение ${number(model.state.value.entries.sumOf { it.nutrition.calories } - requireNotNull(model.state.value.week).effectiveTarget)} ккал"
+        compose.onNodeWithContentDescription(overage, substring = true).assertIsDisplayed()
         capture("Day-over-target")
 
         // All scales use the same arrows, native pager and reset behavior, backed by real reads.

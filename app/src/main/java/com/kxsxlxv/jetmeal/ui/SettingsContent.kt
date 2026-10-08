@@ -90,6 +90,7 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean, onSave: (Ta
                     Spacer(Modifier.width(8.dp)); Text("Выйти из аккаунта")
                 }
             }
+            ConnectionDiagnosticsContent()
             Spacer(Modifier.height(12.dp))
         }
     }

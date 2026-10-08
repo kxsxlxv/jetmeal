@@ -5,8 +5,30 @@ import org.junit.Test
 import java.io.IOException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
+import com.kxsxlxv.jetmeal.data.ConnectionFailure
+import com.kxsxlxv.jetmeal.data.RetryableSessionRefreshException
 
 class UserErrorsTest {
+    @Test fun accessTokenRefusalDoesNotClaimTheWholeSessionWasTerminated() {
+        val jwt = auth("bad_jwt", 401, ErrorOperation.Data)
+        assertTrue(jwt.contains("токен доступа"))
+        assertFalse(jwt.contains("Сессия завершилась"))
+        val unknown401 = auth("unrecognized", 401, ErrorOperation.Data)
+        assertTrue(unknown401.contains("HTTP 401"))
+        assertFalse(unknown401.contains("Сессия завершилась"))
+    }
+    @Test fun recoveryDoesNotTellThePersonToEnterPasswordAgain() {
+        val dns = UserErrors.sessionRecoveryMessage(UnknownHostException("private-host"))
+        assertTrue(dns.contains("DNS"))
+        assertTrue(dns.contains("Сессия сохранена"))
+        assertFalse(dns.contains("Войдите"))
+        val rate = UserErrors.sessionRecoveryMessage(RetryableSessionRefreshException(429, "over_request_rate_limit", null))
+        assertTrue(rate.contains("HTTP 429"))
+        assertFalse(rate.contains("интернет"))
+        assertNull(UserErrors.sessionEndedMessage(ConnectionFailure.fromResponse(429, "over_request_rate_limit", null)))
+        assertTrue(UserErrors.sessionEndedMessage(ConnectionFailure.fromResponse(400, "refresh_token_already_used", null))!!
+            .contains("refresh_token_already_used"))
+    }
     @Test fun invalidCredentialsDoNotRevealWhichCredentialWasWrong() {
         val message = auth("invalid_credentials", 400)
         assertTrue(message.contains("почта или пароль"))

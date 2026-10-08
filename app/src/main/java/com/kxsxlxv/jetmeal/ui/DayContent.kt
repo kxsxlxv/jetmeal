@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
@@ -121,7 +120,7 @@ private fun DayTargetsPrompt(onTargets: () -> Unit) {
     }
 }
 
-private data class HealthProgressFrame(
+internal data class HealthProgressFrame(
     val calories: Float,
     val protein: Float,
     val fat: Float,
@@ -137,6 +136,8 @@ private fun HealthProgressFrame.interpolate(
     fraction: Float,
 ): HealthProgressFrame {
     val t = fraction.coerceIn(0f, 1f)
+    if (t == 0f) return this
+    if (t == 1f) return target
     fun lerp(start: Float, end: Float): Float = start + (end - start) * t
     return HealthProgressFrame(
         calories = lerp(calories, target.calories),
@@ -147,16 +148,19 @@ private fun HealthProgressFrame.interpolate(
 }
 
 @Composable
-private fun animatedHealthProgressFrame(
+internal fun animatedHealthProgressFrame(
     animationKey: Any,
     target: HealthProgressFrame,
-): HealthProgressFrame {
+): State<HealthProgressFrame> {
     val clock = remember(animationKey) { Animatable(0f) }
     var start by remember(animationKey) { mutableStateOf(HealthProgressFrame.Zero) }
     var end by remember(animationKey) { mutableStateOf(target) }
+    // Observe the clock only in the drawing phase. Reading it here recomposed all
+    // four indicators (including BoxWithConstraints) for every animation frame.
+    val frame = remember(animationKey) { derivedStateOf { start.interpolate(end, clock.value) } }
 
     LaunchedEffect(animationKey, target) {
-        val current = start.interpolate(end, clock.value)
+        val current = frame.value
         start = current
         end = target
         clock.snapTo(0f)
@@ -169,7 +173,7 @@ private fun animatedHealthProgressFrame(
         )
     }
 
-    return start.interpolate(end, clock.value)
+    return frame
 }
 
 @Composable
@@ -203,7 +207,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                 CalorieHealthDial(
                     actual = total.calories,
                     target = effective,
-                    displayedFraction = displayed.calories,
+                    displayedFraction = { displayed.value.calories },
                     colors = palette.calories,
                     modifier = Modifier.size(dialSize),
                 )
@@ -218,7 +222,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Белки",
                     actual = total.protein,
                     target = targets.protein,
-                    progress = displayed.protein,
+                    progress = { displayed.value.protein },
                     colors = palette.protein,
                     symbol = JetMealSymbol.Protein,
                     modifier = Modifier.weight(1f),
@@ -227,7 +231,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Жиры",
                     actual = total.fat,
                     target = targets.fat,
-                    progress = displayed.fat,
+                    progress = { displayed.value.fat },
                     colors = palette.fat,
                     symbol = JetMealSymbol.Fat,
                     modifier = Modifier.weight(1f),
@@ -236,7 +240,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Углеводы",
                     actual = total.carbs,
                     target = targets.carbs,
-                    progress = displayed.carbs,
+                    progress = { displayed.value.carbs },
                     colors = palette.carbs,
                     symbol = JetMealSymbol.Carbs,
                     modifier = Modifier.weight(1f),
@@ -250,20 +254,17 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
 private fun CalorieHealthDial(
     actual: Double,
     target: Double,
-    displayedFraction: Float,
+    displayedFraction: () -> Float,
     colors: RingColors,
     modifier: Modifier = Modifier,
 ) {
-    val lapProgress = splitRingProgress(displayedFraction)
-    val firstLap = lapProgress.firstLap
-    val overflowLap = lapProgress.overflowLap
     val percent = if (target > 0.0) number(actual / target * 100.0) + "%" else "—"
     val density = LocalDensity.current
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val errorColor = MaterialTheme.colorScheme.error
     val badgeTextColor = Color(0xFF102018)
-    val badgeOverlayColor = Color.Black.copy(alpha = .10f)
+    val badgeOverlayColor = Color.Black.copy(alpha = .14f)
     val warningColor = Color(0xFFFFC34D)
     val deltaText = signed(actual - target)
     val bottomPaint = remember(labelColor, density.density, density.fontScale) {
@@ -273,6 +274,7 @@ private fun CalorieHealthDial(
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
     }
+    val ringRenderer = remember { CalorieRingRenderer() }
     val textPath = remember { Path() }
     val textBounds = remember { RectF() }
     val badgeTextPath = remember { Path() }
@@ -296,90 +298,30 @@ private fun CalorieHealthDial(
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.matchParentSize().clearAndSetSemantics {}) {
+            val progress = displayedFraction()
+            val lapProgress = splitRingProgress(progress)
+            val firstLap = lapProgress.firstLap
+            val overflowLap = lapProgress.overflowLap
             val stroke = 23.dp.toPx()
             val radius = size.minDimension / 2f - stroke / 2f - 3.dp.toPx()
             val origin = Offset(center.x - radius, center.y - radius)
             val diameter = Size(radius * 2f, radius * 2f)
 
-            // The track is a closed ring, so it must not introduce a cap seam at 12 o'clock.
-            drawCircle(
-                color = track,
-                radius = radius,
-                center = center,
-                style = Stroke(stroke),
-            )
-
-            rotate(-90f, center) {
-                // Keep one drawing primitive for the whole animation. A 359.999° arc plus
-                // explicit caps is visually closed at 100% without switching to drawCircle
-                // in the final frames.
-                val baseBrush = Brush.sweepGradient(
-                    0f to colors.start,
-                    .50f to colors.end,
-                    1f to colors.start,
-                    center = center,
+            drawIntoCanvas { canvas ->
+                ringRenderer.draw(
+                    canvas = canvas.nativeCanvas,
+                    centerX = center.x,
+                    centerY = center.y,
+                    radius = radius,
+                    stroke = stroke,
+                    progress = progress,
+                    track = track.toArgb(),
+                    startColor = colors.start.toArgb(),
+                    endColor = colors.end.toArgb(),
+                    warningColor = warningColor.toArgb(),
+                    errorColor = errorColor.toArgb(),
                 )
-                val overflowBrush = Brush.sweepGradient(
-                    0f to colors.start,
-                    .04f to warningColor,
-                    .10f to errorColor,
-                    .90f to errorColor,
-                    .96f to warningColor,
-                    1f to colors.start,
-                    center = center,
-                )
-
-                if (firstLap > 0f) {
-                    drawArc(
-                        brush = baseBrush,
-                        startAngle = 0f,
-                        sweepAngle = (360f * firstLap).coerceAtMost(359.999f),
-                        useCenter = false,
-                        topLeft = origin,
-                        size = diameter,
-                        style = Stroke(stroke, cap = StrokeCap.Butt),
-                    )
-                    // Avoid double-thick overlap near 12 o'clock. Once the moving cap
-                    // geometrically reaches the start seam, it alone covers the Butt start.
-                    // During overflow the completed first lap never keeps an extra start cap.
-                    val capOverlapFraction =
-                        (stroke / radius / (2f * Math.PI.toFloat())).coerceIn(0f, .25f)
-                    if (overflowLap <= 0f && firstLap < 1f - capOverlapFraction) {
-                        drawCircle(
-                            brush = baseBrush,
-                            radius = stroke / 2f,
-                            center = Offset(center.x + radius, center.y),
-                        )
-                    }
-                }
-
-                if (overflowLap > 0f) {
-                    drawArc(
-                        brush = overflowBrush,
-                        startAngle = 0f,
-                        sweepAngle = (360f * overflowLap).coerceAtMost(359.999f),
-                        useCenter = false,
-                        topLeft = origin,
-                        size = diameter,
-                        style = Stroke(stroke, cap = StrokeCap.Butt),
-                    )
-                }
-
-                val activeLap = if (overflowLap > 0f) overflowLap else firstLap
-                if (activeLap > .001f) {
-                    val angle = Math.toRadians((360f * activeLap).toDouble())
-                    val activeCenter = Offset(
-                        center.x + kotlin.math.cos(angle).toFloat() * radius,
-                        center.y + kotlin.math.sin(angle).toFloat() * radius,
-                    )
-                    drawCircle(
-                        brush = if (overflowLap > 0f) overflowBrush else baseBrush,
-                        radius = stroke / 2f,
-                        center = activeCenter,
-                    )
-                }
             }
-
             // The delta is a curved sub-segment of the ring itself, not a rotated pill.
             // Its visible front edge remains inside the parent round cap; longer values grow
             // backwards along the arc. Text follows the same curvature and reverses on the
@@ -391,6 +333,12 @@ private fun CalorieHealthDial(
                 val horizontalPadding = 4.dp.toPx()
                 val frontInset = (stroke - badgeHeight) / 2f
                 badgeTextPaint.color = badgeTextColor.toArgb()
+                val originalBadgeSize = badgeTextPaint.textSize
+                val textWidthLimit = curvedBadgeTextWidthLimit(progress, radius, badgeHeight, horizontalPadding)
+                val requestedTextWidth = badgeTextPaint.measureText(deltaText)
+                if (requestedTextWidth > textWidthLimit && requestedTextWidth > 0f) {
+                    badgeTextPaint.textSize *= textWidthLimit / requestedTextWidth
+                }
                 val badgeTextWidth = badgeTextPaint.measureText(deltaText)
                 val geometry = curvedBadgeGeometry(
                     endAngle = endAngle,
@@ -434,6 +382,7 @@ private fun CalorieHealthDial(
                         badgeTextPaint,
                     )
                 }
+                badgeTextPaint.textSize = originalBadgeSize
             }
 
             val textRadius = radius - stroke / 2f - 8.dp.toPx()
@@ -481,7 +430,7 @@ private fun MacroHealthCard(
     label: String,
     actual: Double,
     target: Double,
-    progress: Float,
+    progress: () -> Float,
     colors: RingColors,
     symbol: JetMealSymbol,
     modifier: Modifier = Modifier,
@@ -503,7 +452,7 @@ private fun MacroHealthCard(
                 Modifier
                     .fillMaxSize()
                     .drawBehind {
-                        val reveal = progress.coerceIn(0f, 1f)
+                        val reveal = progress().coerceIn(0f, 1f)
                         if (reveal > 0f) {
                             clipRect(right = size.width * reveal) {
                                 drawRect(

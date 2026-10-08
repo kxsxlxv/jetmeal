@@ -3,6 +3,8 @@ package com.kxsxlxv.jetmeal.widget
 import android.content.Context
 import androidx.glance.appwidget.updateAll
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
+import io.github.jan.supabase.auth.status.SessionStatus
+import java.io.IOException
 import com.kxsxlxv.jetmeal.domain.DiaryEntry
 import com.kxsxlxv.jetmeal.domain.Targets
 import io.github.jan.supabase.auth.auth
@@ -27,9 +29,14 @@ class HeroWidgetCoordinator(
         }
 
         data.client.auth.awaitInitialization()
-        if (data.client.auth.currentUserOrNull() == null) {
+        if (data.client.auth.sessionStatus.value is SessionStatus.NotAuthenticated) {
             showSignedOut()
             return
+        }
+        // RefreshFailure retains the saved session and retries. Never replace a person's
+        // last widget snapshot with "signed out" merely because the network is unavailable.
+        if (data.client.auth.sessionStatus.value !is SessionStatus.Authenticated) {
+            throw IOException("Session refresh is pending")
         }
 
         val zone = ZoneId.systemDefault()

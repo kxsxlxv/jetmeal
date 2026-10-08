@@ -39,6 +39,9 @@ class DesignViewportTest {
         assumeTrue("Viewport verification requires the real persisted local integration account.",
             uri != null && uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost", "10.0.2.2"))
         val repository = requireNotNull((compose.activity.application as JetMealApplication).repository)
+        compose.waitUntil(20_000) { repository.client.auth.sessionStatus.value !is io.github.jan.supabase.auth.status.SessionStatus.Initializing }
+        assumeTrue("Run local E2E first to establish the persisted viewport account.",
+            repository.client.auth.currentSessionOrNull() != null)
         compose.runOnUiThread { model = ViewModelProvider(compose.activity)[JetMealViewModel::class.java] }
         ready()
         val userId = requireNotNull(repository.client.auth.currentUserOrNull()).id

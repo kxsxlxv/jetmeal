@@ -56,7 +56,7 @@ private sealed interface Editor {
         snackbar.currentSnackbarData?.dismiss()
         val undoable = state.notice?.contains("Можно отменить") == true && state.error==null
         val result = snackbar.showSnackbar(message,
-            actionLabel=if(state.error!=null) "Повторить" else if(undoable) "Отменить" else null,
+            actionLabel=if(state.error!=null && !state.authRecovering) "Повторить" else if(undoable) "Отменить" else null,
             withDismissAction=true, duration=if(state.error!=null) SnackbarDuration.Indefinite else SnackbarDuration.Long)
         if(result==SnackbarResult.ActionPerformed) {
             if(undoable) viewModel.undo() else viewModel.refresh()
@@ -66,6 +66,7 @@ private sealed interface Editor {
         when {
             BuildConfig.SUPABASE_URL.isBlank() || BuildConfig.SUPABASE_KEY.isBlank() -> ConfigurationContent()
             state.authLoading -> LoadingContent("Восстанавливаем сессию…")
+            state.authRecovering && state.email == null -> SessionRecoveryContent(state.error ?: UserErrors.SESSION_RECOVERING)
             state.email==null -> AuthContent(state,viewModel::signIn)
             else -> Scaffold(
                 topBar={ if(settings) TopAppBar(

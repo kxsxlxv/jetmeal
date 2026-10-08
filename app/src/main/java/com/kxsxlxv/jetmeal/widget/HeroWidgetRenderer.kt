@@ -9,19 +9,19 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
-import android.graphics.SweepGradient
 import android.graphics.Typeface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.kxsxlxv.jetmeal.R
+import com.kxsxlxv.jetmeal.ui.CalorieRingRenderer
 import com.kxsxlxv.jetmeal.ui.curvedBadgeGeometry
+import com.kxsxlxv.jetmeal.ui.curvedBadgeTextWidthLimit
 import com.kxsxlxv.jetmeal.ui.number
 import com.kxsxlxv.jetmeal.ui.signed
 import com.kxsxlxv.jetmeal.ui.theme.DarkNutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.LightNutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.MealDarkColors
 import com.kxsxlxv.jetmeal.ui.theme.MealLightColors
-import com.kxsxlxv.jetmeal.ui.theme.NutritionColors
 import com.kxsxlxv.jetmeal.ui.theme.RingColors
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -226,82 +226,19 @@ internal object HeroWidgetRenderer {
         }
         canvas.drawCircle(centerX, centerY, innerRadius, innerPaint)
 
-        val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = stroke
-            color = track.toArgb()
-        }
-        canvas.drawCircle(centerX, centerY, radius, trackPaint)
-
-        val baseGradient = SweepGradient(
-            centerX,
-            centerY,
-            intArrayOf(colors.start.toArgb(), colors.end.toArgb(), colors.start.toArgb()),
-            floatArrayOf(0f, .5f, 1f),
+        CalorieRingRenderer().draw(
+            canvas = canvas,
+            centerX = centerX,
+            centerY = centerY,
+            radius = radius,
+            stroke = stroke,
+            progress = fraction,
+            track = track.toArgb(),
+            startColor = colors.start.toArgb(),
+            endColor = colors.end.toArgb(),
+            warningColor = 0xFFFFC34D.toInt(),
+            errorColor = error.toArgb(),
         )
-        val overflowGradient = SweepGradient(
-            centerX,
-            centerY,
-            intArrayOf(
-                colors.start.toArgb(),
-                0xFFFFC34D.toInt(),
-                error.toArgb(),
-                error.toArgb(),
-                0xFFFFC34D.toInt(),
-                colors.start.toArgb(),
-            ),
-            floatArrayOf(0f, .04f, .10f, .90f, .96f, 1f),
-        )
-        val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = stroke
-            strokeCap = Paint.Cap.BUTT
-            shader = baseGradient
-        }
-        val capPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            shader = baseGradient
-        }
-
-        canvas.save()
-        canvas.rotate(-90f, centerX, centerY)
-        if (firstLap > 0f) {
-            progressPaint.shader = baseGradient
-            canvas.drawArc(
-                ringBounds,
-                0f,
-                (360f * firstLap).coerceAtMost(359.999f),
-                false,
-                progressPaint,
-            )
-            val capOverlapFraction =
-                (stroke / radius / (2f * Math.PI.toFloat())).coerceIn(0f, .25f)
-            if (overflowLap <= 0f && firstLap < 1f - capOverlapFraction) {
-                capPaint.shader = baseGradient
-                canvas.drawCircle(centerX + radius, centerY, stroke / 2f, capPaint)
-            }
-        }
-        if (overflowLap > 0f) {
-            progressPaint.shader = overflowGradient
-            canvas.drawArc(
-                ringBounds,
-                0f,
-                (360f * overflowLap).coerceAtMost(359.999f),
-                false,
-                progressPaint,
-            )
-        }
-
-        val movingCapLap = if (overflowLap > 0f) overflowLap else firstLap
-        if (movingCapLap > .001f) {
-            val angle = Math.toRadians((360f * movingCapLap).toDouble())
-            val activeX = centerX + Math.cos(angle).toFloat() * radius
-            val activeY = centerY + Math.sin(angle).toFloat() * radius
-            capPaint.shader = if (overflowLap > 0f) overflowGradient else baseGradient
-            canvas.drawCircle(activeX, activeY, stroke / 2f, capPaint)
-        }
-        canvas.restore()
-
         val activeLap = if (overflowLap > 0f) overflowLap else firstLap
         if (activeLap > .001f) {
             val endAngle = -90f + 360f * activeLap
@@ -314,6 +251,11 @@ internal object HeroWidgetRenderer {
                 sizePx = sp(9f, pxPerDp, fontScale),
                 weight = 500,
             )
+            val textWidthLimit = curvedBadgeTextWidthLimit(fraction, radius, badgeHeight, horizontalPadding)
+            val requestedTextWidth = badgeTextPaint.measureText(deltaText)
+            if (requestedTextWidth > textWidthLimit && requestedTextWidth > 0f) {
+                badgeTextPaint.textSize *= textWidthLimit / requestedTextWidth
+            }
             val badgeTextWidth = badgeTextPaint.measureText(deltaText)
             val geometry = curvedBadgeGeometry(
                 endAngle = endAngle,
@@ -325,7 +267,7 @@ internal object HeroWidgetRenderer {
                 frontInset = frontInset,
             )
             val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.Black.copy(alpha = .10f).toArgb()
+                color = Color.Black.copy(alpha = .14f).toArgb()
                 style = Paint.Style.STROKE
                 strokeWidth = badgeHeight
                 strokeCap = Paint.Cap.ROUND

@@ -151,9 +151,7 @@ class JetMealUiTest {
                 }
             }
         }
-        compose.onNode(hasText(number(180.0)) and hasText("ккал съедено")).assertIsDisplayed()
-        compose.onNodeWithText("Осталось ${number(1820.0)} ккал").assertIsDisplayed()
-        compose.onNodeWithText("Норма на этот день: ${number(2000.0)} ккал").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Белки: 15 из 100 граммов").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Калории: ${number(180.0)} из ${number(2000.0)} ккал").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Белки: 15 из 100 г").performScrollTo().assertIsDisplayed()
     }
 }

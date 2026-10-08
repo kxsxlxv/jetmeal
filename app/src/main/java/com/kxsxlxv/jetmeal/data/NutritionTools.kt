@@ -2,6 +2,9 @@ package com.kxsxlxv.jetmeal.data
 
 import com.kxsxlxv.jetmeal.domain.*
 import io.github.jan.supabase.auth.auth
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.time.Instant
 import java.time.LocalDate
@@ -30,14 +33,19 @@ class TargetConfirmation internal constructor(internal val targets: Targets, int
 }
 
 /** Shared typed application operations. External transport/user linking remains a separate adapter. */
-class NutritionTools(private val repository: SupabaseRepository) {
+class NutritionTools(
+    private val repository: SupabaseRepository,
+    private val searchDispatcher: CoroutineDispatcher = Dispatchers.Default,
+) {
     suspend fun searchFood(query: String, limit: Int = 20): ToolResult<List<FoodCandidate>> {
         require(limit in 1..100)
         return ToolResult(true, null, ranked(query).take(limit))
     }
-    private suspend fun ranked(query: String): List<FoodCandidate> {
+    // JSON decoding and catalogue ranking are CPU work even though the HTTP calls suspend.
+    // Both manual input and external callers may safely invoke searches from the main thread.
+    private suspend fun ranked(query: String): List<FoodCandidate> = withContext(searchDispatcher) {
         val words = normalize(query).split(' ').filter(String::isNotBlank)
-        return repository.rankedCatalogue().filter { candidate ->
+        repository.rankedCatalogue().filter { candidate ->
             val text = normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
             words.all { text.contains(it) }
         }.map { candidate ->

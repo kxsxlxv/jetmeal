@@ -17,21 +17,28 @@ import java.time.ZoneId
 
 /** All reads use the persisted authenticated session. Mutations are atomic RLS-backed RPCs. */
 class SupabaseRepository(val client: SupabaseClient) {
+    internal var diagnostics: ConnectionDiagnostics? = null
+    internal var authFailures = AuthFailureCapture()
     private val searchMutex = Mutex()
+    private val searchCacheLock = Any()
     private var searchCache: Pair<String, List<FoodCandidate>>? = null
     private var searchEpoch = 0
-    fun invalidateSearch() { searchEpoch++; searchCache = null }
+    fun invalidateSearch() = synchronized(searchCacheLock) { searchEpoch++; searchCache = null }
 
     suspend fun rankedCatalogue(): List<FoodCandidate> = searchMutex.withLock {
         val owner = requireNotNull(client.auth.currentUserOrNull()).id
-        searchCache?.takeIf { it.first == owner }?.let { return@withLock it.second }
-        val epoch = searchEpoch
+        val (cached, epoch) = synchronized(searchCacheLock) {
+            searchCache?.takeIf { it.first == owner } to searchEpoch
+        }
+        cached?.let { return@withLock it.second }
         val history = usage().groupBy { it.optional("food_variant_id") }
         val candidates = catalogue().map { candidate ->
             val rows = history[candidate.id].orEmpty()
             candidate.copy(usageCount = rows.size, lastUsed = rows.maxOfOrNull { Instant.parse(it.string("consumed_at")) })
         }
-        if (epoch == searchEpoch && client.auth.currentUserOrNull()?.id == owner) searchCache = owner to candidates
+        synchronized(searchCacheLock) {
+            if (epoch == searchEpoch && client.auth.currentUserOrNull()?.id == owner) searchCache = owner to candidates
+        }
         candidates
     }
     suspend fun signIn(email: String, password: String) {

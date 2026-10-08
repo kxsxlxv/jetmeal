@@ -3,6 +3,19 @@ package com.kxsxlxv.jetmeal.ui
 import kotlin.math.PI
 import kotlin.math.max
 
+/** Keep the whole smaller capsule between a partial first lap's two parent caps. */
+internal fun curvedBadgeTextWidthLimit(
+    progress: Float,
+    radius: Float,
+    badgeHeight: Float,
+    horizontalPadding: Float,
+): Float = if (progress >= 1f) Float.POSITIVE_INFINITY else {
+    // The badge and ring share their centerline. Restrict its centerline length to
+    // the actual arc, so both badge caps retain the same inset as the radial edges.
+    val arcLength = progress.coerceAtLeast(0f) * 2f * PI.toFloat() * radius
+    (arcLength + badgeHeight - horizontalPadding * 2f).coerceAtLeast(0f)
+}
+
 internal data class CurvedBadgeGeometry(
     val badgeStartAngle: Float,
     val badgeSweepAngle: Float,

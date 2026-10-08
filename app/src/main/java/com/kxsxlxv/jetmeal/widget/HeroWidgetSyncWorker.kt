@@ -13,6 +13,7 @@ import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.kxsxlxv.jetmeal.JetMealApplication
+import com.kxsxlxv.jetmeal.data.ConnectionOperation
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 
@@ -27,7 +28,8 @@ class HeroWidgetSyncWorker(
             Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            app.connectionDiagnostics.failure(ConnectionOperation.Widget, error)
             if (runAttemptCount < 3) Result.retry() else Result.success()
         }
     }
