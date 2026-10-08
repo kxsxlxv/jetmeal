@@ -185,6 +185,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     targets = targets, week = week, monthCalories = totals,
                     monthTargets = calendarTargets, confirmedZeroDays = confirmedZero,
                     targetVersions = history) }
+                if (snapshot.destination == Destination.Settings) loadWeights()
                 widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone, confirmedZero,
                     dailyTargets)
                 // The catalogue belongs to the Add/search flow. Loading and ranking it
