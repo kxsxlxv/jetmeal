@@ -44,6 +44,7 @@ object WeekBudget {
         actual: Map<LocalDate, Double>,
         confirmedZeroDays: Set<LocalDate> = emptySet(),
         asOfDayCompleted: Boolean = false,
+        dailyTargets: Map<LocalDate, Targets> = emptyMap(),
     ): WeekState {
         val start = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val end = start.plusDays(6)
@@ -70,10 +71,15 @@ object WeekBudget {
         val days = (0L..6L).map { offset ->
             val day = start.plusDays(offset)
             val count = 7 - offset.toInt()
-            val target = (base - deviation / count).coerceIn(lowerBound, upperBound)
+            val dayGoals = dailyTargets[day] ?: targets
+            val dayBase = dayGoals.calories
+            val target = (dayBase - deviation / count).coerceIn(
+                dayBase * (1.0 - dayGoals.limitRatio),
+                dayBase * (1.0 + dayGoals.limitRatio),
+            )
             val actualCalories = weekActual.getValue(day)
             if (day < date) {
-                if (actualCalories != null) deviation += actualCalories - base
+                if (actualCalories != null) deviation += actualCalories - dayBase
             }
             if ((day < date || (day == date && asOfDayCompleted)) && actualCalories == null) {
                 missing += day
@@ -95,7 +101,7 @@ object WeekBudget {
             start = start,
             end = end,
             days = effectiveDays,
-            baseBudget = base * 7,
+            baseBudget = (0L..6L).sumOf { (dailyTargets[start.plusDays(it)] ?: targets).calories },
             totalConsumed = weekActual.values.filterNotNull().sum(),
             deviation = deviation,
             remainingDays = remainingDays,
