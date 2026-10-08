@@ -42,7 +42,7 @@ class WeightProgressUiTest {
         compose.onNodeWithText("Измерения").assertIsDisplayed()
         compose.onNodeWithText("До цели").performClick()
         compose.onNodeWithContentDescription("График веса",substring=true).assertIsDisplayed()
-        compose.onNodeWithText("Промежутки",substring=true).assertIsDisplayed()
+        compose.onNodeWithText("История показана",substring=true).assertIsDisplayed()
     }
 
     @Test fun weightGoalDateOpensNativeMaterialCalendar() {
