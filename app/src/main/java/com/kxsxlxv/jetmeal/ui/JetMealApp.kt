@@ -84,6 +84,7 @@ private sealed interface Editor {
                                 MainScreen.Settings -> Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
                                     Box(Modifier.widthIn(max=760.dp)) { SettingsContent(state.targets,state.email.orEmpty(),state.busy,viewModel::saveTargets,viewModel::signOut,
                                         targetVersions=state.targetVersions, weights=state.weightMeasurements,
+                                        weightGoal=state.weightGoal, onSetWeightGoal=viewModel::setWeightGoal,
                                         picoocConnected=state.picoocConnected, weightLoading=state.weightLoading,
                                         onAddWeight=viewModel::addWeight, onConnectPicooc=viewModel::connectPicooc,
                                         onSyncPicooc=viewModel::syncPicooc, onDisconnectPicooc=viewModel::disconnectPicooc) }
