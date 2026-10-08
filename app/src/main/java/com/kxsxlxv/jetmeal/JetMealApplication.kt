@@ -6,6 +6,7 @@ import android.os.LocaleList
 import com.russhwolf.settings.SharedPreferencesSettings
 import com.kxsxlxv.jetmeal.data.ProjectSessionStorage
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
+import com.kxsxlxv.jetmeal.data.PicoocIntegration
 import com.kxsxlxv.jetmeal.data.ConnectionDiagnostics
 import com.kxsxlxv.jetmeal.data.SafeSupabaseLogger
 import com.kxsxlxv.jetmeal.data.protectSessionRefresh
@@ -65,6 +66,8 @@ class JetMealApplication : Application() {
             }
         }
     }
+
+    val picoocIntegration: PicoocIntegration by lazy { PicoocIntegration(this, repository) }
 
     val widgetCoordinator: HeroWidgetCoordinator by lazy {
         HeroWidgetCoordinator(this, repository)

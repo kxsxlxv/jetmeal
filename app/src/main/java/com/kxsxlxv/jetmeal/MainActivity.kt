@@ -24,6 +24,7 @@ class MainActivity : ComponentActivity() {
                     app.repository,
                     extras.createSavedStateHandle(),
                     app.widgetCoordinator,
+                    app.picoocIntegration,
                 ) as T
             }
         })[JetMealViewModel::class.java]

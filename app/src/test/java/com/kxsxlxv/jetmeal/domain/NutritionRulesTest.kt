@@ -134,6 +134,38 @@ class NutritionRulesTest {
         assertEquals(7, afterFinish.missingCompletedDays.size)
     }
 
+    @Test fun targetRevisionsDoNotRewriteEarlierDayAllowances() {
+        val tuesday = monday.plusDays(1)
+        val newTargets = targets.copy(calories = 2300.0)
+        val history = (0L..6L).associate { day ->
+            val date = monday.plusDays(day)
+            date to (if (date < tuesday) targets else newTargets)
+        }
+        val state = WeekBudget.calculate(tuesday, newTargets,
+            mapOf(monday to 2200.0), dailyTargets = history)
+        assertEquals(2000.0, state.days.first().target, .000001)
+        assertEquals(2300.0 - 200.0 / 6, state.effectiveTarget, .000001)
+        assertEquals(200.0, state.deviation, .000001)
+        assertEquals(2000.0 + 2300.0 * 6, state.baseBudget, .000001)
+    }
+
+    @Test fun plannedWeightTrajectoryInterpolatesAndClampsToGoalDates() {
+        val goal = WeightGoal(monday,monday.plusDays(60),90.0,82.0)
+        assertEquals(90.0, goal.expected(monday.minusDays(3)),.000001)
+        assertEquals(86.0, goal.expected(monday.plusDays(30)),.000001)
+        assertEquals(82.0, goal.expected(monday.plusDays(61)),.000001)
+    }
+
+    @Test fun weightTrendUsesDailyMeanAndSevenCalendarDays() {
+        val zone = ZoneId.of("UTC")
+        fun weight(day: Long, kg: Double) = WeightMeasurement(
+            "item$day:$kg", monday.plusDays(day).atStartOfDay(zone).toInstant(), kg, null, "manual")
+        val measurements = listOf(weight(0, 80.0),weight(0, 82.0),
+            weight(1, 80.0),weight(2, 79.0),weight(8, 76.0))
+        assertEquals((79.0 + 76.0)/2.0,
+            WeightTrend.smoothedLast7Days(measurements,zone)!!, .000001)
+    }
+
     @Test fun yearAndMonthBoundariesFollowLocalMondayThroughSunday() {
         val newYear = LocalDate.of(2027, 1, 1)
         val state = WeekBudget.calculate(newYear, targets, emptyMap())

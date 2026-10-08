@@ -138,13 +138,22 @@ class NutritionTools(
             .groupBy { it.consumedAt.atZone(zone).toLocalDate() }
             .mapValues { (_, rows) -> rows.sumOf { it.nutrition.calories } }
         val zeroDays = repository.confirmedZeroDays(start, start.plusDays(7))
-        return ToolResult(true, null, WeekBudget.calculate(date, targets, actual, zeroDays, asOfDayCompleted = date < LocalDate.now(zone)))
+        val history = repository.targetHistory()
+        val perDay = (0L..6L).associate { offset ->
+            val day = start.plusDays(offset)
+            day to (history.lastOrNull { it.date <= day }?.targets ?: targets)
+        }
+        return ToolResult(true, null, WeekBudget.calculate(date, perDay[date] ?: targets,
+            actual, zeroDays, asOfDayCompleted = date < LocalDate.now(zone),
+            dailyTargets = perDay))
     }
 
     suspend fun getDay(date: LocalDate): ToolResult<DayData> {
         val zone = repository.timezone()
+        val history = repository.targetHistory()
+        val dayTargets = history.lastOrNull { it.date <= date }?.targets ?: repository.targets()
         return ToolResult(true, null, DayData(date, repository.entries(date, date.plusDays(1), zone),
-            repository.targets(), getWeek(date).data))
+            dayTargets, getWeek(date).data))
     }
 
     internal fun confirmedByUser(targets: Targets): TargetConfirmation {

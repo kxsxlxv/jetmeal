@@ -17,10 +17,27 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.Targets
+import com.kxsxlxv.jetmeal.domain.TargetVersion
+import com.kxsxlxv.jetmeal.domain.WeightMeasurement
+import com.kxsxlxv.jetmeal.domain.WeightGoal
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 @Composable
-fun SettingsContent(targets: Targets?, email: String, busy: Boolean, onSave: (Targets) -> Unit, onSignOut: () -> Unit) {
+fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
+    onSave: (Targets) -> Unit, onSignOut: () -> Unit,
+    targetVersions: List<TargetVersion> = emptyList(),
+    weights: List<WeightMeasurement> = emptyList(),
+    weightGoal: WeightGoal? = null,
+    picoocConnected: Boolean = false,
+    weightLoading: Boolean = false,
+    onAddWeight: (Double) -> Unit = {},
+    onSetWeightGoal: (Double, LocalDate) -> Unit = { _,_ -> },
+    onConnectPicooc: (String,String,String) -> Unit = { _,_,_ -> },
+    onSyncPicooc: () -> Unit = {},
+    onDisconnectPicooc: () -> Unit = {},
+) {
     var calories by rememberSaveable(targets) { mutableStateOf(targets?.calories?.let(::decimalInput) ?: "") }
     var protein by rememberSaveable(targets) { mutableStateOf(targets?.protein?.let(::decimalInput) ?: "") }
     var fat by rememberSaveable(targets) { mutableStateOf(targets?.fat?.let(::decimalInput) ?: "") }
@@ -79,6 +96,21 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean, onSave: (Ta
             }
             Button(onClick = { review = proposed }, shapes = ButtonDefaults.shapes(), enabled = proposed != null && !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Проверить изменения") }
+            HorizontalDivider()
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text("История целей",style=MaterialTheme.typography.titleLargeEmphasized)
+                Text("При изменении нормы прошлые дни сохраняют цели, действовавшие в те даты.",
+                    style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                targetVersions.filter { it.date.year >= 2000 }.takeLast(6).asReversed().forEach { version ->
+                    Text("${version.date.format(DateTimeFormatter.ofPattern("d MMM yyyy",RussianLocale))}: " +
+                        "${number(version.targets.calories)} ккал · Б ${number(version.targets.protein)} · " +
+                        "Ж ${number(version.targets.fat)} · У ${number(version.targets.carbs)}",
+                        style=MaterialTheme.typography.bodyMedium)
+                }
+            }
+            HorizontalDivider()
+            WeightSection(weights,weightGoal,picoocConnected,weightLoading,busy,onAddWeight,onSetWeightGoal,
+                onConnectPicooc,onSyncPicooc,onDisconnectPicooc)
             HorizontalDivider()
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Аккаунт", style = MaterialTheme.typography.titleLargeEmphasized)

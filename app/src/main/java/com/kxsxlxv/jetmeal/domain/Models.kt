@@ -132,3 +132,41 @@ data class WeekState(
     val adjustmentLimitRatio: Double = 0.10,
     val missingCompletedDays: List<LocalDate> = emptyList(),
 )
+
+/** Measurements are immutable values with stable external identity for deduplicated sync. */
+data class WeightMeasurement(
+    val id: String,
+    val measuredAt: Instant,
+    val kilograms: Double,
+    val bodyFatPercent: Double?,
+    val source: String,
+)
+
+data class TargetVersion(val date: LocalDate, val targets: Targets)
+
+/** Estimate the underlying trend rather than reacting to hydration fluctuations. */
+object WeightTrend {
+    fun smoothedLast7Days(entries: List<WeightMeasurement>, zone: java.time.ZoneId): Double? {
+        val latestDay = entries.maxOfOrNull { it.measuredAt.atZone(zone).toLocalDate() } ?: return null
+        val daily = entries.groupBy { it.measuredAt.atZone(zone).toLocalDate() }
+            .mapValues { (_, measurements) -> measurements.map { it.kilograms }.average() }
+        val values = (0L..6L).mapNotNull { daily[latestDay.minusDays(it)] }
+        return values.takeIf { it.isNotEmpty() }?.average()
+    }
+}
+
+data class WeightGoal(
+    val startDate: LocalDate,
+    val targetDate: LocalDate,
+    val startKilograms: Double,
+    val targetKilograms: Double,
+) {
+    init { require(targetDate > startDate && startKilograms in 20.0..500.0
+        && targetKilograms in 20.0..500.0) }
+    fun expected(date: LocalDate): Double {
+        val total = java.time.temporal.ChronoUnit.DAYS.between(startDate,targetDate).toDouble()
+        val elapsed = java.time.temporal.ChronoUnit.DAYS.between(startDate,date).toDouble()
+        val portion = (elapsed/total).coerceIn(0.0,1.0)
+        return startKilograms+(targetKilograms-startKilograms)*portion
+    }
+}

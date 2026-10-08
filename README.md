@@ -131,6 +131,30 @@ Run Android lint:
 ./gradlew lint
 ```
 
+## Body weight and target history (2026-10-09)
+
+- Every target change creates a local-date version. History and the week chart replay
+  the goals applicable to that date; a week with a changed base target uses the sum
+  of seven daily base targets instead of retrospectively applying the newest goal.
+- Before the first target-history migration, earlier target changes cannot always be
+  reconstructed. The migration seeds the currently saved target as the legacy baseline;
+  all subsequent updates are preserved by a database trigger.
+- Weight is tracked independently from calorie expenditure. The Settings screen offers
+  manual weigh-ins, a trend summary, a recent measurements graph and a target-weight
+  deadline. A dashed trajectory is drawn from the latest weight at goal creation
+  to the target date; the app compares the 7-day observed trend with the planned weight. The same owner
+  sees measurements across reinstalls because records live in Supabase with RLS.
+- **PICOOC** is an optional direct cloud connection (not Google Fit or Fitbit).
+  The importer follows the unofficial PICOOC protocol documented by
+  [SmartScaleConnect](https://github.com/AlexxIT/SmartScaleConnect). Authenticate
+  inside Jetmeal using your PICOOC account. Credentials are encrypted by Android
+  Keystore on the phone and are never stored in Supabase. Once the PICOOC app has
+  uploaded scale measurements to its cloud, Jetmeal can import them. An hourly
+  constrained WorkManager job is best effort, not a real-time guarantee. The
+  protocol is third-party and could stop working if PICOOC changes it.
+- No PICOOC account credentials are included in CI; successful live PICOOC account
+  authentication must be verified by the user through the app.
+
 ## Current product decisions
 
 - Food calculation from weight-loss goals is outside JetMeal. The app stores already-decided calorie and macro targets.

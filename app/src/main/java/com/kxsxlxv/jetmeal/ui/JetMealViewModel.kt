@@ -25,11 +25,16 @@ data class AppState(
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
     val monthCalories: Map<LocalDate, Double> = emptyMap(), val monthTargets: Map<LocalDate, Double> = emptyMap(),
     val confirmedZeroDays: Set<LocalDate> = emptySet(),
+    val targetVersions: List<TargetVersion> = emptyList(),
+    val weightMeasurements: List<WeightMeasurement> = emptyList(),
+    val weightGoal: WeightGoal? = null,
+    val picoocConnected: Boolean = false, val weightLoading: Boolean = false,
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
 
 @OptIn(SupabaseExperimental::class)
-class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle, private val widgetCoordinator: HeroWidgetCoordinator? = null) : ViewModel() {
+class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle, private val widgetCoordinator: HeroWidgetCoordinator? = null,
+    private val picooc: PicoocIntegration? = null) : ViewModel() {
     private val mutable = MutableStateFlow(AppState(authLoading = repository != null,
         destination = saved.get<String>("destination")?.let { runCatching { Destination.valueOf(it) }.getOrNull() } ?: Destination.Today,
         scale = saved.get<String>("scale")?.let { runCatching { TimeScale.valueOf(it) }.getOrNull() } ?: TimeScale.Day,
@@ -116,6 +121,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refreshJob?.cancel(); searchJob?.cancel()
         refreshInFlight = false
         mutable.update { it.copy(searching = false) }
+        picooc?.disconnect()
         requireNotNull(repository).client.auth.signOut()
         widgetCoordinator?.showSignedOut()
         mutable.value = AppState(authLoading = false)
@@ -143,6 +149,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 today = newToday
                 val snapshot = mutable.value
                 val targets = repository.targets()
+                val history = repository.targetHistory()
                 ensureActive()
                 if (generation != refreshGeneration) return@launch
                 val weekStart = snapshot.day.minusDays((snapshot.day.dayOfWeek.value - 1).toLong())
@@ -159,16 +166,28 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val totals = all.groupBy { it.consumedAt.atZone(zone).toLocalDate() }
                     .mapValues { (_, entries) -> entries.sumOf { it.nutrition.calories } }
                 val knownTotals = totals + confirmedZero.filterNot { it in totals }.associateWith { 0.0 }
+                fun targetFor(date: LocalDate): Targets? =
+                    history.lastOrNull { it.date <= date }?.targets ?: targets
+                val dates = generateSequence(start) { it.plusDays(1) }
+                    .takeWhile { it < end }.toList()
+                val dailyTargets = dates.mapNotNull { date -> targetFor(date)?.let { date to it } }.toMap()
                 val asOf = if (snapshot.scale == TimeScale.Day) snapshot.day else
                     when { weekStart.plusDays(6) < today -> weekStart.plusDays(6); weekStart > today -> weekStart; else -> today }
-                val week = targets?.let { WeekBudget.calculate(asOf, it, totals, confirmedZero, asOfDayCompleted = asOf < today) }
+                val week = targetFor(asOf)?.let {
+                    WeekBudget.calculate(asOf, it, totals, confirmedZero,
+                        asOfDayCompleted = asOf < today, dailyTargets = dailyTargets)
+                }
                 val calendarTargets = if (targets == null) emptyMap() else knownTotals.keys.associateWith {
-                    WeekBudget.calculate(it, targets, totals, confirmedZero).effectiveTarget
+                    WeekBudget.calculate(it, targetFor(it) ?: targets, totals, confirmedZero,
+                        dailyTargets = dailyTargets).effectiveTarget
                 }
                 mutable.update { it.copy(entries = all.filter { row -> row.consumedAt.atZone(zone).toLocalDate() == snapshot.day },
                     targets = targets, week = week, monthCalories = totals,
-                    monthTargets = calendarTargets, confirmedZeroDays = confirmedZero) }
-                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone, confirmedZero)
+                    monthTargets = calendarTargets, confirmedZeroDays = confirmedZero,
+                    targetVersions = history) }
+                if (snapshot.destination == Destination.Settings) loadWeights()
+                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone, confirmedZero,
+                    dailyTargets)
                 // The catalogue belongs to the Add/search flow. Loading and ranking it
                 // here blocked the main thread while a newly opened day's Hero animated.
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -191,7 +210,60 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         if (destination == Destination.Settings) openSettings()
         else setTimeScale(when(destination) { Destination.Week -> TimeScale.Week; Destination.Calendar -> TimeScale.Month; else -> TimeScale.Day })
     }
-    fun openSettings() { mutable.update { it.copy(destination = Destination.Settings) }; saveNavigation() }
+    fun openSettings() {
+        mutable.update { it.copy(destination = Destination.Settings) }
+        saveNavigation()
+        refresh()
+        loadWeights()
+    }
+
+    fun loadWeights() {
+        if (repository?.client?.auth?.currentUserOrNull() == null) return
+        viewModelScope.launch {
+            mutable.update { it.copy(weightLoading = true) }
+            try {
+                val owner = requireNotNull(repository.client.auth.currentUserOrNull()).id
+                val measurements = repository.weights(
+                    LocalDate.now().minusDays(180), LocalDate.now().plusDays(1), ZoneId.systemDefault())
+                val goal = repository.weightGoal()
+                mutable.update { it.copy(weightMeasurements = measurements, weightGoal = goal,
+                    picoocConnected = picooc?.connected(owner) == true) }
+            } catch (error: Exception) {
+                if (error !is CancellationException) mutable.update { it.copy(error = userMessage(error)) }
+            } finally { mutable.update { it.copy(weightLoading = false) } }
+        }
+    }
+
+    fun setWeightGoal(targetKg: Double,deadline: LocalDate) = action {
+        val latest = mutable.value.weightMeasurements.maxByOrNull { it.measuredAt }
+            ?: throw IllegalStateException("Сначала запишите актуальный вес.")
+        requireNotNull(repository).setWeightGoal(latest.kilograms,targetKg,deadline)
+        mutable.update { it.copy(notice = "Цель веса сохранена.") }
+        loadWeights()
+    }
+
+    fun addWeight(value: Double) = action {
+        requireNotNull(repository).logWeight(value, Instant.now())
+        mutable.update { it.copy(notice = "Вес записан.") }
+        loadWeights()
+    }
+
+    fun connectPicooc(email: String, password: String, profileName: String) = action {
+        val count = requireNotNull(picooc).connect(email,password,profileName)
+        mutable.update { it.copy(notice = "PICOOC подключён. Загружено измерений: $count.") }
+        loadWeights()
+    }
+
+    fun syncPicooc() = action {
+        val count = requireNotNull(picooc).sync()
+        mutable.update { it.copy(notice = "PICOOC: проверено измерений $count.") }
+        loadWeights()
+    }
+
+    fun disconnectPicooc() {
+        picooc?.disconnect()
+        mutable.update { it.copy(picoocConnected = false, notice = "PICOOC отключён.") }
+    }
     fun closeSettings() { mutable.update { it.copy(destination = destinationFor(it.scale)) }; saveNavigation() }
     fun setTimeScale(scale: TimeScale) {
         mutable.update { it.copy(scale = scale, destination = destinationFor(scale), week = null) }

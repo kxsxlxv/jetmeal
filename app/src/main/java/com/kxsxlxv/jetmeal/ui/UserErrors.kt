@@ -2,6 +2,7 @@ package com.kxsxlxv.jetmeal.ui
 
 import com.kxsxlxv.jetmeal.data.ConnectionFailure
 import com.kxsxlxv.jetmeal.data.ConnectionFailureKind
+import com.kxsxlxv.jetmeal.data.PicoocSyncException
 import com.kxsxlxv.jetmeal.data.RetryableSessionRefreshException
 import com.kxsxlxv.jetmeal.data.SessionRefreshPolicy
 import io.github.jan.supabase.auth.exception.AuthRestException
@@ -18,6 +19,9 @@ internal enum class ErrorOperation { Data, SignIn }
 internal object UserErrors {
     fun message(error: Throwable, operation: ErrorOperation = ErrorOperation.Data): String {
         val causes = generateSequence(error) { it.cause }.take(12).toList()
+        causes.filterIsInstance<PicoocSyncException>().firstOrNull()?.let {
+            return it.publicMessage.take(260)
+        }
         causes.filterIsInstance<RetryableSessionRefreshException>().firstOrNull()?.let {
             return sessionRecoveryMessage(it)
         }

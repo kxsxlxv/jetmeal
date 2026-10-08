@@ -50,7 +50,13 @@ class HeroWidgetCoordinator(
             val weekStart = today.minusDays(today.dayOfWeek.value - 1L)
             val entries = data.entries(weekStart, today.plusDays(1), zone)
             val zeroDays = data.confirmedZeroDays(weekStart, today.plusDays(1))
-            store.write(HeroWidgetSnapshot.calculate(today, entries, targets, zone, confirmedZeroDays = zeroDays))
+            val history = data.targetHistory()
+            val perDay = (0L..6L).associate { offset ->
+                val day = weekStart.plusDays(offset)
+                day to (history.lastOrNull { it.date <= day }?.targets ?: targets)
+            }
+            store.write(HeroWidgetSnapshot.calculate(today, entries, perDay[today] ?: targets, zone,
+                confirmedZeroDays = zeroDays, dailyTargets = perDay))
         }
         updateWidgets()
     }
@@ -62,6 +68,7 @@ class HeroWidgetCoordinator(
         targets: Targets?,
         zone: ZoneId,
         confirmedZeroDays: Set<LocalDate> = emptySet(),
+        dailyTargets: Map<LocalDate, Targets> = emptyMap(),
     ) {
         val today = LocalDate.now(zone)
         val weekStart = today.minusDays(today.dayOfWeek.value - 1L)
@@ -69,7 +76,8 @@ class HeroWidgetCoordinator(
 
         store.write(
             if (targets == null) HeroWidgetState.MissingTargets
-            else HeroWidgetSnapshot.calculate(today, entries, targets, zone, confirmedZeroDays = confirmedZeroDays)
+            else HeroWidgetSnapshot.calculate(today, entries, dailyTargets[today] ?: targets, zone,
+                confirmedZeroDays = confirmedZeroDays, dailyTargets = dailyTargets)
         )
         updateWidgets()
     }

@@ -73,6 +73,19 @@ rollback to savepoint zero_day_write_test;
 select lives_ok($select jetmeal_confirm_zero_day('2026-10-04',false)$,'Owner can revoke zero-day confirmation');
 select is((select count(*)::integer from zero_calorie_days),0,'Revoked confirmation is not treated as zero');
 select lives_ok($select jetmeal_confirm_zero_day('2026-10-03',true)$,'A can confirm another empty past day');
+-- Weight and effective-dated targets remain user-owned and snapshot-based.
+select lives_ok($select jetmeal_log_weight(82.4, now(),'manual')$,'Manual weigh-in recorded');
+select lives_ok($select jetmeal_log_weight(82.1, now(),'picooc','scale:a:123',20.5)$,'PICOOC weight recorded');
+select lives_ok($select jetmeal_log_weight(82.0, now(),'picooc','scale:a:123',20.2)$,'Identical imported measurement updates instead of duplicating');
+select is((select count(*)::integer from weight_measurements),2,'Idempotent weight import');
+select is((select weight_kg from weight_measurements where source='picooc'),82.000::numeric,'PICOOC correction updates existing reading');
+select is((select count(*)::integer from nutrition_target_history where owner_id=auth.uid()),1,'Target history was created at first target save');
+select lives_ok($select jetmeal_prepare_targets('{"daily_calories_kcal":2300,"daily_protein_g":170,"daily_fat_g":70,"daily_carbs_g":180,"adjustment_limit_ratio":0.1}')$,'New target proposal prepared');
+insert into test_state values('proposal2','{"daily_calories_kcal":2300,"daily_protein_g":170,"daily_fat_g":70,"daily_carbs_g":180,"adjustment_limit_ratio":0.1}');
+insert into test_state values('confirm2',jetmeal_prepare_targets((select value from test_state where key='proposal2')));
+select lives_ok($select jetmeal_update_targets((select value from test_state where key='proposal2') || jsonb_build_object('confirmation',(select value->'data'->>'confirmation' from test_state where key='confirm2')))$,'Second goal change is versioned');
+select is((select count(*)::integer from nutrition_target_history where owner_id=auth.uid()),1,'Multiple target changes same day keep one effective version');
+select is((select daily_calories_kcal from nutrition_target_history where owner_id=auth.uid() order by effective_date desc limit 1),2300.000::numeric,'Newest target history is effective');
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000002',true);
 select is((select count(*)::integer from foods),0,'B cannot read A foods');
 select is((select count(*)::integer from diary_entries),0,'B cannot read A diary');
@@ -80,6 +93,8 @@ select is((select count(*)::integer from zero_calorie_days),0,'B cannot read A z
 select throws_ok($insert into zero_calorie_days(owner_id,local_date) values(auth.uid(),'2026-10-01')$,'42501',null,'Client cannot insert zero days without validation');
 select is((select count(*)::integer from nutrition_targets),0,'B cannot read A targets');
 select is((select count(*)::integer from audit_events),0,'B cannot read A audit');
+select is((select count(*)::integer from weight_measurements),0,'B cannot read A weights');
+select is((select count(*)::integer from nutrition_target_history),0,'B cannot read A target versions');
 select throws_ok($$select jetmeal_update_log(jsonb_build_object('entry_id',(select value->'data'->>'id' from test_state where key='entry'),'quantity',10))$$,'22023',null,'B cannot update A entry');
 select throws_ok($$select jetmeal_delete_log(jsonb_build_object('entry_id',(select value->'data'->>'id' from test_state where key='entry')))$$,'22023',null,'B cannot delete A entry');
 select throws_ok($$select jetmeal_log_food(jsonb_build_object('food_variant_id',(select value->'data'->'variant'->>'id' from test_state where key='food'),'quantity',1,'consumed_at',now()))$$,'22023',null,'B cannot log A variant');
