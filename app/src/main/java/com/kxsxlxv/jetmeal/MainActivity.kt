@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        // An already resumed activity may receive onNewIntent without onResume.
+        model.refresh()
     }
 
     override fun onResume() { super.onResume(); model.refresh() }
@@ -51,7 +53,6 @@ class MainActivity : ComponentActivity() {
             // A tap on an existing widget must request a fresh snapshot now;
             // onResume refreshes the foreground diary as well.
             (application as JetMealApplication).widgetCoordinator.requestSync()
-            model.refresh()
             intent.removeExtra(EXTRA_OPEN_TODAY)
         }
     }
