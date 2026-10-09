@@ -32,6 +32,7 @@ data class AppState(
     val cachedOffline: Boolean = false,
     val connectionWarning: String? = null,
     val catalogueCount: Int = 0,
+    val catalogueMeasures: Map<String,List<FoodMeasure>> = emptyMap(),
     val catalogueLoading: Boolean = false,
     val catalogueError: String? = null,
     val pendingWrites: Int = 0,
@@ -149,7 +150,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val diary = offline ?: return
         viewModelScope.launch {
             val count = runCatching { diary.catalogueCount() }.getOrNull() ?: return@launch
-            mutable.update { it.copy(catalogueCount = count) }
+            val measures = runCatching {diary.cachedMeasures()}.getOrDefault(emptyMap())
+            mutable.update { it.copy(catalogueCount = count,catalogueMeasures=measures) }
         }
     }
 
@@ -177,7 +179,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
                 diary.rememberFoods(foods)
                 catalogueOwner = ownerId
-                mutable.update { it.copy(catalogueCount = foods.size,catalogueError=null) }
+                mutable.update { it.copy(catalogueCount = foods.size,
+                    catalogueMeasures=foods.associate { it.id to it.measures },catalogueError=null) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 repo.diagnostics?.failure(ConnectionOperation.Catalogue, error)
@@ -564,17 +567,18 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refresh()
     }
 
-    fun log(candidate: FoodCandidate,quantity: Double,meal: MealPeriod,date: LocalDate) =
+    fun log(candidate: FoodCandidate,quantity: Double,meal: MealPeriod,date: LocalDate,
+            chosen: ChosenMeasure? = null) =
         action(allowDuringRecovery=true) {
             val zone=ZoneId.systemDefault()
             val at=if(date==LocalDate.now(zone)) Instant.now() else date.atTime(
                 when(meal) {MealPeriod.Morning->8;MealPeriod.Day->13;
                     MealPeriod.Evening->19;MealPeriod.Snack->15},0).atZone(zone).toInstant()
-            requireNotNull(offline).enqueueLog(candidate,quantity,at,meal)
+            requireNotNull(offline).enqueueLog(candidate,quantity,at,meal,chosen)
             persistQueued()
         }
-    fun edit(entry: DiaryEntry,quantity: Double)=action(allowDuringRecovery=true) {
-        requireNotNull(offline).enqueueEdit(entry,quantity)
+    fun edit(entry: DiaryEntry,quantity: Double,chosen: ChosenMeasure? = null)=action(allowDuringRecovery=true) {
+        requireNotNull(offline).enqueueEdit(entry,quantity,chosen)
         persistQueued()
     }
     fun delete(entry: DiaryEntry)=action(allowDuringRecovery=true) {
