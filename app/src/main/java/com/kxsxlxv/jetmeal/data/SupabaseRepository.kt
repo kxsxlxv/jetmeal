@@ -271,7 +271,7 @@ class SupabaseRepository(val client: SupabaseClient) {
             enteredMeasureKey = row.optional("entered_measure_key"),
             enteredMeasureQuantity = row["entered_measure_quantity"]?.jsonPrimitive?.doubleOrNull,
             enteredMeasureBaseAmount = row["entered_measure_base_amount"]?.jsonPrimitive?.doubleOrNull,
-            enteredMeasureApproximate = row["entered_measure_approximate"]?.jsonPrimitive?.boolean ?: false
+            enteredMeasureApproximate = row["entered_measure_approximate"]?.jsonPrimitive?.booleanOrNull ?: false
         )
 
         private fun nutrition(row: JsonObject) = Nutrition(row.number("calories_kcal"),
