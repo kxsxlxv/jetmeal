@@ -73,7 +73,10 @@ begin
         end if;
     end if;
     response := private.nutrition_operation(p_operation,
-        p_input || jsonb_build_object('action_id',p_request_id::text));
+        p_input || jsonb_build_object('action_id',p_request_id::text) ||
+        case when p_operation='log_food' then
+            jsonb_build_object('meal_group_id',p_request_id::text)
+        else '{}'::jsonb end);
     insert into private.offline_mutation_receipts(owner_id,request_id,request_hash,response)
     values(uid,p_request_id,stamp,response);
     return response;
