@@ -54,6 +54,7 @@ data class PendingDiaryMutation(
     val expectedUpdatedAt: Instant? = null,
     val preview: DiaryEntry? = null,
     val blocked: Boolean = false,
+    val attempted: Boolean = false,
 )
 
 data class OfflineSyncStatus(val remaining: Int, val blocked: Int, val synced: Int = 0)
@@ -221,6 +222,13 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         while (true) {
             val next=vault.readState(user).third.firstOrNull() ?: break
             if (next.blocked) break
+            // Persist "attempted" before sending; the server may commit while the
+            // response is lost. An attempted request may ONLY be resolved by replay.
+            vault.change(user) {snapshot,foods,queue ->
+                Triple(snapshot,foods,queue.map {
+                    if (it.id==next.id) it.copy(attempted=true) else it
+                })
+            }
             try {
                 requireNotNull(repository).syncMutation(next)
                 // Never erase the local write until the server returns a receipt.
@@ -253,7 +261,7 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     suspend fun cancelLast(): Boolean = syncMutex.withLock {
         val user=owner()
         val before=vault.readState(user).third
-        if (before.isEmpty()) false
+        if (before.isEmpty() || before.last().attempted || before.last().blocked) false
         else {
             vault.change(user) { snapshot,foods,queue ->
                 Triple(snapshot,foods,queue.dropLast(1))
@@ -362,12 +370,14 @@ private fun encodePending(v:PendingDiaryMutation)=buildJsonObject {
     v.expectedUpdatedAt?.let{put("expected",it.toString())}
     v.preview?.let{put("preview",encodeEntry(it))}
     put("blocked",v.blocked)
+    put("attempted",v.attempted)
 }
 private fun decodePending(v:JsonObject)=PendingDiaryMutation(
     v.string("id"),v.string("kind"),v.getValue("input").jsonObject,
     v.optional("expected")?.let(Instant::parse),
     v["preview"]?.jsonObject?.let(::decodeEntry),
     v["blocked"]?.jsonPrimitive?.boolean ?: false,
+    v["attempted"]?.jsonPrimitive?.boolean ?: false,
 )
 private fun encodeSnapshot(v:OfflineSnapshot)=buildJsonObject {
     put("start",v.start.toString());put("end",v.end.toString())
