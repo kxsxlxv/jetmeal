@@ -80,7 +80,7 @@ internal fun safeExceptionOrigin(error: Throwable): String? {
         "com.kxsxlxv.jetmeal.", "io.github.jan.supabase.", "io.ktor.",
         "kotlinx.serialization.", "androidx.glance.", "java.security.", "javax.crypto."
     )
-    return generateSequence(error) { it.cause }.take(12)
+    return generateSequence(error) { it.cause }.take(12).toList().asReversed().asSequence()
         .flatMap { it.stackTrace.asSequence() }
         .firstOrNull { frame -> namespaces.any { frame.className.startsWith(it) } }
         ?.let { "${it.className}.${it.methodName}" }
