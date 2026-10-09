@@ -58,6 +58,28 @@ enum class MealPeriod(val wireValue: String) {
     }
 }
 
+/** One food-specific measure resolves to a number of variant base units (g or ml). */
+data class FoodMeasure(
+    val id: String,
+    val variantId: String,
+    val key: String,
+    val label: String,
+    val baseAmount: Double,
+    val approximate: Boolean = false,
+    val isDefault: Boolean = false,
+) {
+    init { require(id.isNotBlank() && variantId.isNotBlank() && label.isNotBlank())
+        require(baseAmount.isFinite() && baseAmount > 0) }
+    fun toBase(quantity: Double): Double {
+        require(quantity.isFinite() && quantity > 0)
+        return kotlin.math.round(quantity * baseAmount * 1000.0)/1000.0
+    }
+}
+
+data class ChosenMeasure(val measure: FoodMeasure, val quantity: Double) {
+    val baseAmount: Double get() = measure.toBase(quantity)
+}
+
 data class DiaryEntry(
     val id: String,
     val name: String,
@@ -75,6 +97,11 @@ data class DiaryEntry(
     val estimated: Boolean = false,
     val updatedAt: Instant? = null,
     val mealGroupId: String? = null,
+    val enteredMeasureLabel: String? = null,
+    val enteredMeasureKey: String? = null,
+    val enteredMeasureQuantity: Double? = null,
+    val enteredMeasureBaseAmount: Double? = null,
+    val enteredMeasureApproximate: Boolean = false,
 ) {
     init {
         require(id.isNotBlank() && name.isNotBlank() && unit.isNotBlank()) { "Entry identity, name and unit are required." }
@@ -100,6 +127,7 @@ data class FoodCandidate(
     val lastUsed: Instant? = null,
     val matchConfidence: Double = 0.0,
     val matchReason: String = "Personal catalogue",
+    val measures: List<FoodMeasure> = emptyList(),
 ) {
     init {
         require(id.isNotBlank() && foodId.isNotBlank() && name.isNotBlank() && unit.isNotBlank()) {

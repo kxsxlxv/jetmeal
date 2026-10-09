@@ -21,9 +21,11 @@ data class FoodDraft(val name: String, val kind: String, val brand: String?, val
     val servingAmount: Double, val servingUnit: String, val nutrition: Nutrition, val estimated: Boolean = false)
 data class LogFood(val variantId: String? = null, val quantity: Double, val consumedAt: Instant,
     val meal: MealPeriod? = null, val estimateName: String? = null, val unit: String? = null,
-    val estimateNutrition: Nutrition? = null, val confidence: Double? = null, val actionId: String? = null)
+    val estimateNutrition: Nutrition? = null, val confidence: Double? = null, val actionId: String? = null,
+    val measureId: String? = null, val measureQuantity: Double? = null)
 data class LogCorrection(val entryId: String, val quantity: Double? = null,
-    val consumedAt: Instant? = null, val meal: MealPeriod? = null)
+    val consumedAt: Instant? = null, val meal: MealPeriod? = null,
+    val measureId: String? = null, val measureQuantity: Double? = null)
 data class CatalogConstraints(val maxCalories: Double? = null, val minProtein: Double? = null,
     val maxFat: Double? = null, val maxCarbs: Double? = null)
 
@@ -75,6 +77,12 @@ class NutritionTools(
         validQuantity(log.quantity)
         require(log.confidence == null || (log.confidence.isFinite() && log.confidence in 0.0..1.0))
         log.actionId?.let { UUID.fromString(it) }
+        if(log.measureId != null) {
+            require(log.variantId!=null)
+            UUID.fromString(log.measureId)
+            require(log.measureQuantity!=null)
+            validQuantity(log.measureQuantity)
+        } else require(log.measureQuantity==null)
         if (log.variantId == null) {
             require(!log.estimateName.isNullOrBlank() && !log.unit.isNullOrBlank())
             validNutrition(requireNotNull(log.estimateNutrition))
@@ -86,16 +94,25 @@ class NutritionTools(
             log.estimateName?.let { put("snapshot_name", it) }; log.unit?.let { put("quantity_unit", it) }
             log.estimateNutrition?.let { putNutrition(it, "calories") }
             log.confidence?.let { put("confidence", it) }; log.actionId?.let { put("action_id", it) }
+            log.measureId?.let { put("measure_id", it) }
+            log.measureQuantity?.let { put("measure_quantity", it) }
         })
     }
 
     suspend fun updateLog(correction: LogCorrection): ToolResult<JsonElement> {
         correction.quantity?.let(::validQuantity)
-        require(correction.quantity != null || correction.consumedAt != null || correction.meal != null)
+        require(correction.quantity != null || correction.consumedAt != null ||
+            correction.meal != null || correction.measureId != null)
+        if(correction.measureId!=null) {
+            UUID.fromString(correction.measureId)
+            validQuantity(requireNotNull(correction.measureQuantity))
+        } else require(correction.measureQuantity==null)
         return repository.mutate("update_log", buildJsonObject {
             put("entry_id", correction.entryId); correction.quantity?.let { put("quantity", it) }
             correction.consumedAt?.let { put("consumed_at", it.toString()) }
             correction.meal?.let { put("meal_type", it.wireValue) }
+            correction.measureId?.let { put("measure_id", it) }
+            correction.measureQuantity?.let { put("measure_quantity", it) }
         })
     }
 

@@ -615,8 +615,14 @@ private fun MealSection(
                         shapes = ListItemDefaults.segmentedShapes(index, entries.size),
                         modifier = Modifier.fillMaxWidth(),
                         colors = ListItemDefaults.segmentedColors(containerColor = colors.surfaceContainer),
-                        overlineContent = { Text("${number(entry.quantity, 1)} ${unitLabel(entry.unit)}" +
-                            if (entry.estimated) " · оценка" else "") },
+                        overlineContent = { Text(
+                            if(entry.enteredMeasureLabel!=null && entry.enteredMeasureQuantity!=null)
+                                "${number(entry.enteredMeasureQuantity,1)} ${entry.enteredMeasureLabel} · " +
+                                    "${if(entry.enteredMeasureApproximate) "≈ " else ""}${number(entry.quantity,1)} ${unitLabel(entry.unit)}" +
+                                    (if(entry.estimated) " · оценка" else "")
+                            else "${number(entry.quantity,1)} ${unitLabel(entry.unit)}" +
+                                (if (entry.estimated) " · оценка" else "")
+                        ) },
                         supportingContent = {
                             Text("Б ${number(entry.nutrition.protein, 1)} · Ж ${number(entry.nutrition.fat, 1)} · У ${number(entry.nutrition.carbs, 1)} г",
                                 style = MaterialTheme.typography.bodySmall)

@@ -61,6 +61,7 @@ data class PendingDiaryMutation(
     val preview: DiaryEntry? = null,
     val blocked: Boolean = false,
     val attempted: Boolean = false,
+    val chosenMeasure: ChosenMeasure? = null,
 )
 
 data class OfflineSyncStatus(val remaining: Int, val blocked: Int, val synced: Int = 0)
@@ -145,6 +146,9 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     suspend fun cachedSnapshot(): OfflineSnapshot?=vault.readState(owner()).first
 
     suspend fun catalogueCount(): Int = vault.readState(owner()).second.size
+    suspend fun cachedMeasures(): Map<String,List<FoodMeasure>> =
+        vault.readState(owner()).second.associate { it.id to it.measures }
+
     suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { _,foods,queue ->
         Triple(snapshot,foods,queue)
     }
@@ -158,25 +162,37 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         }
     suspend fun pending(): List<PendingDiaryMutation> = vault.readState(owner()).third
 
-    suspend fun enqueueLog(candidate: FoodCandidate, amount: Double, at: Instant, meal: MealPeriod): Int {
+    suspend fun enqueueLog(candidate: FoodCandidate, amount: Double, at: Instant, meal: MealPeriod,
+                           chosen: ChosenMeasure? = null): Int {
         require(amount.isFinite() && amount > 0)
+        require(chosen == null || (chosen.measure.variantId==candidate.id &&
+            kotlin.math.abs(chosen.baseAmount-amount)<.002 &&
+            candidate.measures.any { it.id==chosen.measure.id }))
         val id=UUID.randomUUID().toString()
         val input=buildJsonObject {
             put("food_variant_id",candidate.id);put("quantity",amount)
             put("consumed_at",at.toString());put("meal_type",meal.wireValue)
+            chosen?.let { put("measure_id",it.measure.id);put("measure_quantity",it.quantity) }
         }
         val preview=DiaryEntry(id,candidate.name,candidate.brand,amount,candidate.unit,
             candidate.amount,candidate.nutrition,candidate.nutrition*(amount/candidate.amount),
-            at,meal,candidate.id,candidate.foodId,null,candidate.estimated)
+            at,meal,candidate.id,candidate.foodId,null,candidate.estimated,
+            enteredMeasureLabel=chosen?.measure?.label,enteredMeasureKey=chosen?.measure?.key,
+            enteredMeasureQuantity=chosen?.quantity,
+            enteredMeasureBaseAmount=chosen?.measure?.baseAmount,
+            enteredMeasureApproximate=chosen?.measure?.approximate ?: false)
         return add(PendingDiaryMutation(id,"log_food",input,preview=preview))
     }
-    suspend fun enqueueEdit(entry: DiaryEntry, amount: Double): Int {
+    suspend fun enqueueEdit(entry: DiaryEntry, amount: Double, chosen: ChosenMeasure? = null): Int {
         require(amount.isFinite() && amount>0)
+        require(chosen==null || (chosen.measure.variantId==entry.variantId &&
+            kotlin.math.abs(chosen.baseAmount-amount)<.002))
         val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before editing offline." }
         val id=UUID.randomUUID().toString()
         return add(PendingDiaryMutation(id,"update_log",buildJsonObject {
             put("entry_id",entry.id);put("quantity",amount)
-        },expectedUpdatedAt=expected))
+            chosen?.let { put("measure_id",it.measure.id); put("measure_quantity",it.quantity) }
+        },expectedUpdatedAt=expected,chosenMeasure=chosen))
     }
     suspend fun enqueueDelete(entry: DiaryEntry): Int {
         val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before deleting offline." }
@@ -325,7 +341,12 @@ fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): L
             val amount=pendingAction.input["quantity"]?.jsonPrimitive?.doubleOrNull
             if (entry!=null && amount!=null && amount>0)
                 byId[entry.id]=entry.copy(quantity=amount,
-                    nutrition=entry.basisNutrition*(amount/entry.basisAmount))
+                    nutrition=entry.basisNutrition*(amount/entry.basisAmount),
+                    enteredMeasureLabel=pendingAction.chosenMeasure?.measure?.label,
+                    enteredMeasureKey=pendingAction.chosenMeasure?.measure?.key,
+                    enteredMeasureQuantity=pendingAction.chosenMeasure?.quantity,
+                    enteredMeasureBaseAmount=pendingAction.chosenMeasure?.measure?.baseAmount,
+                    enteredMeasureApproximate=pendingAction.chosenMeasure?.measure?.approximate ?: false)
         }
         "delete_log" -> {
             val id=pendingAction.input["entry_id"]?.jsonPrimitive?.contentOrNull
@@ -374,6 +395,11 @@ private fun encodeEntry(v:DiaryEntry)=buildJsonObject {
     put("estimated",v.estimated)
     v.updatedAt?.let{put("updatedAt",it.toString())}
     v.mealGroupId?.let{put("mealGroupId",it)}
+    v.enteredMeasureLabel?.let{put("measureLabel",it)}
+    v.enteredMeasureKey?.let{put("measureKey",it)}
+    v.enteredMeasureQuantity?.let{put("measureQty",it)}
+    v.enteredMeasureBaseAmount?.let{put("measureBase",it)}
+    put("measureApprox",v.enteredMeasureApproximate)
 }
 private fun decodeEntry(v:JsonObject)=DiaryEntry(
     v.string("id"),v.string("name"),v.optional("brand"),v.number("quantity"),
@@ -384,6 +410,11 @@ private fun decodeEntry(v:JsonObject)=DiaryEntry(
     v["estimated"]?.jsonPrimitive?.boolean ?: false,
     v.optional("updatedAt")?.let(Instant::parse),
     v.optional("mealGroupId"),
+    v.optional("measureLabel"),
+    v.optional("measureKey"),
+    v["measureQty"]?.jsonPrimitive?.doubleOrNull,
+    v["measureBase"]?.jsonPrimitive?.doubleOrNull,
+    v["measureApprox"]?.jsonPrimitive?.boolean ?: false,
 )
 private fun encodeFood(v:FoodCandidate)=buildJsonObject {
     put("id",v.id);put("foodId",v.foodId);put("name",v.name)
@@ -391,6 +422,14 @@ private fun encodeFood(v:FoodCandidate)=buildJsonObject {
     put("amount",v.amount);put("unit",v.unit);put("nutrition",encodeNutrition(v.nutrition))
     put("estimated",v.estimated);put("usage",v.usageCount)
     v.lastUsed?.let{put("last",it.toString())}
+    put("measures",JsonArray(v.measures.map { measure ->
+        buildJsonObject {
+            put("id",measure.id);put("variant",measure.variantId)
+            put("key",measure.key);put("label",measure.label)
+            put("base",measure.baseAmount);put("approx",measure.approximate)
+            put("default",measure.isDefault)
+        }
+    }))
 }
 private fun decodeFood(v:JsonObject)=FoodCandidate(
     v.string("id"),v.string("foodId"),v.string("name"),v.optional("brand"),
@@ -399,6 +438,14 @@ private fun decodeFood(v:JsonObject)=FoodCandidate(
     v["estimated"]?.jsonPrimitive?.boolean ?: false,
     v["usage"]?.jsonPrimitive?.intOrNull ?: 0,
     v.optional("last")?.let(Instant::parse),
+    measures=v["measures"]?.jsonArray?.map { item ->
+        val measure=item.jsonObject
+        FoodMeasure(measure.string("id"),measure.string("variant"),
+            measure.string("key"),measure.string("label"),
+            measure.number("base"),
+            measure["approx"]?.jsonPrimitive?.boolean ?: false,
+            measure["default"]?.jsonPrimitive?.boolean ?: false)
+    }.orEmpty(),
 )
 private fun encodePending(v:PendingDiaryMutation)=buildJsonObject {
     put("id",v.id);put("kind",v.kind);put("input",v.input)
@@ -406,6 +453,15 @@ private fun encodePending(v:PendingDiaryMutation)=buildJsonObject {
     v.preview?.let{put("preview",encodeEntry(it))}
     put("blocked",v.blocked)
     put("attempted",v.attempted)
+    v.chosenMeasure?.let { chosen ->
+        put("selectedMeasure",buildJsonObject {
+            put("id",chosen.measure.id);put("variant",chosen.measure.variantId)
+            put("key",chosen.measure.key);put("label",chosen.measure.label)
+            put("base",chosen.measure.baseAmount)
+            put("approx",chosen.measure.approximate)
+            put("quantity",chosen.quantity)
+        })
+    }
 }
 private fun decodePending(v:JsonObject)=PendingDiaryMutation(
     v.string("id"),v.string("kind"),v.getValue("input").jsonObject,
@@ -413,6 +469,11 @@ private fun decodePending(v:JsonObject)=PendingDiaryMutation(
     v["preview"]?.jsonObject?.let(::decodeEntry),
     v["blocked"]?.jsonPrimitive?.boolean ?: false,
     v["attempted"]?.jsonPrimitive?.boolean ?: false,
+    v["selectedMeasure"]?.jsonObject?.let {
+        ChosenMeasure(FoodMeasure(it.string("id"),it.string("variant"),
+            it.string("key"),it.string("label"),it.number("base"),
+            it["approx"]?.jsonPrimitive?.boolean ?: false),it.number("quantity"))
+    },
 )
 private fun encodeSnapshot(v:OfflineSnapshot)=buildJsonObject {
     put("start",v.start.toString());put("end",v.end.toString())

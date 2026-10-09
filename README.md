@@ -234,6 +234,34 @@ preferences. The UI shows the last 12 or last 60; **Copy report** includes all
 currently stored entries. This feature has no special diagnostic permissions
 and does not send logs to third-party services.
 
+## Food-specific serving measures
+
+Jetmeal now offers units that belong to the selected **food variant**, not a global
+user preference. Catalogues retain their authoritative nutritional basis in
+grams or millilitres. The Android amount editor supports that base unit plus
+available measures: piece (шт.), official portion (порция), and, when relevant,
+teaspoon/tablespoon or **exactly two egg sizes** (Среднее/Большое).
+Switching measures preserves the edible amount; saving stores the original
+measure/number alongside the converted amount and immutable nutrient snapshot.
+The app remembers the preferred unit per variant.
+
+Approximate measures are visibly marked (≈); a middle-sized egg is
+approximately **44 g edible**, a large egg about **50 g edible**. A level
+teaspoon of white sugar is approximately 4 g and a tablespoon about 12 g.
+These conversions are *not* applied to other foods: each measure is attached
+to the particular food variant. Historical diary totals never update if a
+catalogue serving changes.
+
+The additive SQL file `supabase/changes/2026-10-09-product-measures.sql`
+creates RLS-scoped `food_measures`, backfills known official restaurant
+portions only when the original source explicitly states
+`serving=1 порция`, and seeds egg/sugar measures for applicable new
+variants. It does not assume a per-100g basis is one burger. It also teaches
+the existing typed `jetmeal_log_food`, `jetmeal_update_log` and offline
+`jetmeal_sync_mutation` operations to resolve `measure_id` +
+`measure_quantity` on the server. Measures and user-entered snapshots live
+in the encrypted offline cache and persistent outbox.
+
 ## Current product decisions
 
 - Food calculation from weight-loss goals is outside JetMeal. The app stores already-decided calorie and macro targets.
