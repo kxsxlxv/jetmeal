@@ -79,7 +79,7 @@ private sealed interface Editor {
             ) { insets ->
                 Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
                     if(settings && state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if(state.cachedOffline || state.pendingWrites>0) {
+                    if(state.cachedOffline || state.pendingWrites>0 || state.connectionWarning!=null) {
                         Surface(color=MaterialTheme.colorScheme.secondaryContainer) {
                             Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),
                                 verticalAlignment=Alignment.CenterVertically,
@@ -89,16 +89,17 @@ private sealed interface Editor {
                                         when {
                                             state.blockedWrites>0 -> "Нужна проверка: ${state.blockedWrites} офлайн-изменений"
                                             state.pendingWrites>0 -> "Ожидают отправки: ${state.pendingWrites}"
-                                            else -> "Офлайн · показана сохранённая копия"
+                                            else -> state.connectionWarning ?: "Показана сохранённая копия"
                                         },
                                         style=MaterialTheme.typography.labelMedium)
                                     if(state.blockedWrites>0) Text(
                                         "Запись могла измениться через ChatGPT. Не перезаписываем её автоматически.",
                                         style=MaterialTheme.typography.labelSmall)
                                 }
-                                if(state.pendingWrites>0) TextButton(onClick=viewModel::syncPending) {
-                                    Text("Повторить")
-                                }
+                                TextButton(onClick={
+                                    if(state.pendingWrites>0) viewModel.syncPending()
+                                    else viewModel.refresh()
+                                }) { Text("Повторить") }
                                 if(state.blockedWrites>0) TextButton(onClick={confirmDiscard=true}) {
                                     Text("Разобрать")
                                 }
@@ -144,7 +145,12 @@ private sealed interface Editor {
                 Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding(),horizontalAlignment=Alignment.CenterHorizontally) {
                     val current=editor
                     if(current is Editor.Add) Text("Добавить · ${current.meal.label()}",style=MaterialTheme.typography.labelLarge,modifier=Modifier.padding(bottom=8.dp))
-                    if(current is Editor.Add && chosenFood==null) FoodSearchContent(state.foods,state.searching,viewModel::search) { chosenFood=it }
+                    if(current is Editor.Add && chosenFood==null) FoodSearchContent(
+                        foods=state.foods,searching=state.searching,onSearch=viewModel::search,
+                        onSelect={chosenFood=it},
+                        cachedCount=state.catalogueCount,catalogueLoading=state.catalogueLoading,
+                        offline=state.cachedOffline,onDownload=viewModel::downloadCatalogue,
+                        catalogueError=state.catalogueError)
                     else {
                         val food=chosenFood
                         val entry=(current as? Editor.Edit)?.entry

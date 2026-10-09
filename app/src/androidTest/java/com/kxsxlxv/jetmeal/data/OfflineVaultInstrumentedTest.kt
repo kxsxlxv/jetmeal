@@ -27,13 +27,23 @@ class OfflineVaultInstrumentedTest {
                 listOf(food),Targets(2000.0,140.0,70.0,180.0),emptyList(),emptySet())
             val request=PendingDiaryMutation(UUID.randomUUID().toString(),"delete_log",
                 buildJsonObject { put("entry_id",food.id) },expectedUpdatedAt=at)
-            OfflineVault(app).change(owner){_,_,_->Triple(snapshot,emptyList(),listOf(request))}
+            val catalogue=(1..250).map { index ->
+                FoodCandidate("variant-$index","food-$index",
+                    "Локальный продукт $index",null,"PICOOC owner",100.0,"g",
+                    Nutrition(120.0,7.0,3.0,12.0),false,usageCount=index)
+            }
+            OfflineVault(app).change(owner){_,_,_->Triple(snapshot,catalogue,listOf(request))}
             assertTrue(file.isFile)
             assertFalse(String(file.readBytes(),Charsets.ISO_8859_1)
                 .contains("Private breakfast oats"))
             val recovered=OfflineVault(app).readState(owner)
             assertEquals(snapshot,recovered.first)
+            assertEquals(250,recovered.second.size)
+            assertEquals(listOf("Локальный продукт 230"),
+                rankFoodCandidates(recovered.second,"продукт 230").map{it.name})
             assertEquals(request,recovered.third.single())
+            assertFalse(String(file.readBytes(),Charsets.ISO_8859_1)
+                .contains("Локальный продукт 230"))
         } finally { file.delete() }
     }
 }

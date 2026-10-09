@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, onSearch: (String) -> Unit,
+    cachedCount: Int = 0, catalogueLoading: Boolean = false, offline: Boolean = false,
+    onDownload: () -> Unit = {}, catalogueError: String? = null,
     onSelect: (FoodCandidate) -> Unit) {
     val query = rememberTextFieldState()
     val searchBar = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
@@ -43,6 +45,24 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
         SearchBarDefaults.InputField(textFieldState = query, searchBarState = searchBar,
             onSearch = { focus.clearFocus() }, placeholder = { Text("Найти еду в каталоге") },
             leadingIcon = { SymbolIcon(JetMealSymbol.Search, null) }, modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(if(cachedCount>0) "Сохранено для офлайна: $cachedCount продуктов"
+                    else "Локальный каталог ещё не загружен",
+                    style=MaterialTheme.typography.labelMedium)
+                Text(if(offline) "Поиск по сохранённому каталогу"
+                    else "Каталог доступен без сети после загрузки",
+                    style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if(catalogueLoading) LoadingIndicator(Modifier.size(32.dp))
+            else TextButton(onClick=onDownload) { Text("Обновить") }
+        }
+        catalogueError?.let { message ->
+            Text(message,style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.error)
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(if (query.text.isBlank()) "Часто добавляете" else "Результаты поиска",
                 style = MaterialTheme.typography.titleMediumEmphasized, modifier = Modifier.weight(1f))
@@ -52,9 +72,11 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
             contentPadding = PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (!searching && foods.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (query.text.isBlank()) "В каталоге пока пусто" else "Ничего не найдено",
+                    Text(if (cachedCount==0 && offline) "Каталог недоступен без предварительной загрузки"
+                        else if (query.text.isBlank()) "В каталоге пока пусто" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleMediumEmphasized)
-                    Text(if (query.text.isBlank()) "Добавьте продукт через подключённые инструменты питания."
+                    Text(if(cachedCount==0 && offline) "Подключитесь к интернету и нажмите «Обновить», чтобы сохранить весь каталог."
+                        else if (query.text.isBlank()) "Добавьте продукт через подключённые инструменты питания."
                         else "Попробуйте другое название, бренд или источник.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -84,7 +106,8 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     val scaled = quantity?.let { runCatching { QuantityScaling.scale(basisAmount, nutrition, it) }.getOrNull() }
     LaunchedEffect(busy, pending, error, successNotice) {
         if (pending && !busy && error != null) pending = false
-        else if (pending && !busy && successNotice?.contains("Можно отменить") == true && error == null) {
+        else if (pending && !busy && (successNotice?.contains("Можно отменить") == true ||
+            successNotice?.startsWith("Сохранено на телефоне:") == true) && error == null) {
             pending = false
             onSuccess()
         }

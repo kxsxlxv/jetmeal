@@ -51,6 +51,26 @@ class EditorContentTest {
         compose.runOnIdle { assertTrue(closed) }
     }
 
+    @Test fun offlineAcknowledgementClosesEditorAfterDurableLocalWrite() {
+        val busy=mutableStateOf(false)
+        val notice=mutableStateOf<String?>(null)
+        var closed=false
+        compose.setContent {
+            JetmealTheme {
+                AmountContent("Гречневая каша","g",100.0,100.0,
+                    Nutrition(112.0,4.0,1.0,23.0),false,busy.value,null,
+                    { busy.value=true },null,{ closed=true },null,notice.value)
+            }
+        }
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.runOnIdle {
+            busy.value=false
+            notice.value="Сохранено на телефоне: 1 действий ожидают синхронизации."
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("Editor should close after local durable commit",closed) }
+    }
+
     @Test fun targetEditsRequireSeparateReviewAndConfirmation() {
         var saved: Targets? = null
         compose.setContent {

@@ -3,6 +3,12 @@ package com.kxsxlxv.jetmeal.data
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Network
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import io.github.jan.supabase.exceptions.HttpRequestException
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -137,19 +143,19 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         return OfflineSyncStatus(queue.size,queue.count { it.blocked })
     }
     suspend fun cachedSnapshot(): OfflineSnapshot?=vault.readState(owner()).first
+
+    suspend fun catalogueCount(): Int = vault.readState(owner()).second.size
     suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { _,foods,queue ->
         Triple(snapshot,foods,queue)
     }
     suspend fun rememberFoods(foods: List<FoodCandidate>) = vault.change(owner()) { snapshot,_,queue ->
         Triple(snapshot,foods,queue)
     }
-    suspend fun cachedFoods(query: String): List<FoodCandidate> {
-        val pieces=query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        return vault.readState(owner()).second.filter { candidate ->
-            val text="${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}".lowercase()
-            pieces.all(text::contains)
-        }.take(40)
-    }
+    /** Full personal catalogue is cached during normal authenticated startup. */
+    suspend fun cachedFoods(query: String): List<FoodCandidate> =
+        withContext(Dispatchers.Default) {
+            rankFoodCandidates(vault.readState(owner()).second,query)
+        }
     suspend fun pending(): List<PendingDiaryMutation> = vault.readState(owner()).third
 
     suspend fun enqueueLog(candidate: FoodCandidate, amount: Double, at: Instant, meal: MealPeriod): Int {
@@ -215,6 +221,23 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
+    /** Observe validated transport transitions even if the activity never goes through onResume. */
+    fun networkChanges(): Flow<Boolean> = callbackFlow {
+        val manager=context.getSystemService(ConnectivityManager::class.java)
+        val callback=object : ConnectivityManager.NetworkCallback() {
+            // Android delivers capabilities *after* onAvailable; querying the
+            // manager synchronously inside callbacks can return stale results.
+            override fun onLost(network: Network) { trySend(false) }
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                trySend(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+            }
+        }
+        manager.registerDefaultNetworkCallback(callback)
+        trySend(onlineNow())
+        awaitClose { manager.unregisterNetworkCallback(callback) }
+    }.distinctUntilChanged()
+
     suspend fun sync(): OfflineSyncStatus = syncMutex.withLock {
         if(!onlineNow()) return@withLock status()
         val user=owner()
@@ -251,6 +274,17 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         val q=vault.readState(user).third
         OfflineSyncStatus(q.size,q.count { it.blocked },count)
     }
+    /** User-initiated replay can safely retry a previously misclassified error.
+     * The same UUID and compare-and-swap revision still prevent duplicates or
+     * overwriting remote changes if it was a genuine conflict. */
+    suspend fun retryBlocked() = syncMutex.withLock {
+        val user=owner()
+        vault.change(user) { snapshot, foods, queue ->
+            Triple(snapshot, foods, queue.map { if (it.blocked) it.copy(blocked=false) else it })
+        }
+        schedule()
+    }
+
     suspend fun discardBlocked(): Int = syncMutex.withLock {
         val user=owner()
         vault.change(user) { snapshot,foods,queue ->
@@ -271,6 +305,7 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     }
     private fun isTransient(error: Exception): Boolean =
         error is IOException || error is HttpRequestTimeoutException ||
+            error is HttpRequestException ||
             error is RestException && (error.statusCode>=500 ||
                 error.statusCode==408 || error.statusCode==429)
 }
