@@ -28,9 +28,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, onSearch: (String) -> Unit,
-    onSelect: (FoodCandidate) -> Unit, cachedCount: Int = 0,
-    catalogueLoading: Boolean = false, offline: Boolean = false,
-    onDownload: () -> Unit = {}, catalogueError: String? = null) {
+    cachedCount: Int = 0, catalogueLoading: Boolean = false, offline: Boolean = false,
+    onDownload: () -> Unit = {}, catalogueError: String? = null,
+    onSelect: (FoodCandidate) -> Unit) {
     val query = rememberTextFieldState()
     val searchBar = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
     val search by rememberUpdatedState(onSearch)
