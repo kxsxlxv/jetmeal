@@ -299,8 +299,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // Upload queued actions after successfully loading live data. A
                 // transient replay error cannot turn a healthy read into "offline".
                 if (offline != null) viewModelScope.launch {
-                    val result = offline.sync()
-                    if (result.synced > 0) refresh()
+                    try {
+                        if (offline.status().remaining > 0) {
+                            val result = offline.sync()
+                            if (result.synced > 0) refresh()
+                        }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        repository.diagnostics?.failure(ConnectionOperation.Mutation,error)
+                    }
                 }
             } catch(cancelled:CancellationException) { throw cancelled }
             catch(error:Exception) {
