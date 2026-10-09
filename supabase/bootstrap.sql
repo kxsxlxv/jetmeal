@@ -1090,11 +1090,11 @@ revoke all on function private.touch_diary_updated_at() from public, anon, authe
 create trigger diary_touch_updated_at before update on public.diary_entries
     for each row execute function private.touch_diary_updated_at();
 
-create or replace function public.jetmeal_sync_mutation(
+create or replace function private.apply_offline_mutation(
     p_request_id uuid,
     p_operation text,
     p_input jsonb,
-    p_expected_updated_at timestamptz default null
+    p_expected_updated_at timestamptz
 ) returns jsonb language plpgsql security definer set search_path = ''
 as $$
 declare
@@ -1148,6 +1148,22 @@ begin
     return response;
 end;
 $$;
+revoke all on function private.apply_offline_mutation(uuid,text,jsonb,timestamptz)
+    from public, anon, authenticated;
+grant execute on function private.apply_offline_mutation(uuid,text,jsonb,timestamptz)
+    to authenticated;
+
+-- The exposed public endpoint is SECURITY INVOKER; privileged receipt storage
+-- is reachable only through the authenticated, owner-bound private function.
+create or replace function public.jetmeal_sync_mutation(
+    p_request_id uuid,
+    p_operation text,
+    p_input jsonb,
+    p_expected_updated_at timestamptz default null
+) returns jsonb language sql security invoker set search_path = ''
+as $
+    select private.apply_offline_mutation(p_request_id,p_operation,p_input,p_expected_updated_at)
+$;
 revoke all on function public.jetmeal_sync_mutation(uuid,text,jsonb,timestamptz)
     from public, anon;
 grant execute on function public.jetmeal_sync_mutation(uuid,text,jsonb,timestamptz)
