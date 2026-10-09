@@ -44,7 +44,7 @@ class NutritionTools(
     // JSON decoding and catalogue ranking are CPU work even though the HTTP calls suspend.
     // Both manual input and external callers may safely invoke searches from the main thread.
     private suspend fun ranked(query: String): List<FoodCandidate> = withContext(searchDispatcher) {
-        rankFoodCandidates(repository.rankedCatalogue(),query)
+        rankFoodCandidates(repository.rankedCatalogue(),query,limit=Int.MAX_VALUE)
     }
 
     suspend fun searchCatalog(query: String, constraints: CatalogConstraints): ToolResult<List<FoodCandidate>> {
@@ -179,7 +179,7 @@ class NutritionTools(
 
 /** Identical relevance and ordering for online and offline search. Pure and unit-testable. */
 internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, limit: Int = 20): List<FoodCandidate> {
-    require(limit in 1..100)
+    require(limit > 0)
     fun normalize(value: String) = value.trim().lowercase(Locale.ROOT).replace('ё','е')
         .replace(Regex("\\s+")," ")
     val normalized = normalize(query)
