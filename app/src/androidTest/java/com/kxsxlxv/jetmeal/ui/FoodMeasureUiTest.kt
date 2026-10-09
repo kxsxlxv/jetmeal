@@ -1,7 +1,6 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.material3.Surface
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
