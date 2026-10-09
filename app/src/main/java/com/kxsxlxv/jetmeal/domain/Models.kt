@@ -73,6 +73,8 @@ data class DiaryEntry(
     val foodId: String?,
     val confidence: Double?,
     val estimated: Boolean = false,
+    val updatedAt: Instant? = null,
+    val mealGroupId: String? = null,
 ) {
     init {
         require(id.isNotBlank() && name.isNotBlank() && unit.isNotBlank()) { "Entry identity, name and unit are required." }
