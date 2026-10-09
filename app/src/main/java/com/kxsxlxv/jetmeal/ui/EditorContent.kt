@@ -176,11 +176,16 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             "tsp","tbsp" -> 0.5
             else -> 10.0
         }
+        val minimum=when(chosen?.key) {
+            "piece","serving","egg_medium","egg_large","package","slice" -> 1.0
+            "tsp","tbsp" -> 0.5
+            else -> 0.1
+        }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),
             verticalAlignment=Alignment.CenterVertically) {
             OutlinedIconButton(
-                onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(step/2))},
-                enabled=!busy && entered!=null && entered>step/2,
+                onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(minimum))},
+                enabled=!busy && entered!=null && entered>minimum,
                 modifier=Modifier.size(48.dp)) { Text("−") }
             TextField(text, { text = it },
                 label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
