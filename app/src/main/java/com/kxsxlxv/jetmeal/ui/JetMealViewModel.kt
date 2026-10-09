@@ -240,6 +240,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val generation=++refreshGeneration
         refreshJob?.cancel()
         refreshJob=viewModelScope.launch {
+            var stage = ConnectionStage.Profile
             refreshInFlight=true
             val navigation=mutable.value
             mutable.update { it.copy(busy=true,refreshing=showPullIndicator,error=null) }
@@ -250,6 +251,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // independent and must never prevent the diary from refreshing.
                 repository.invalidateSearch()
                 repository.syncTimezone(zone)
+                stage = ConnectionStage.Targets
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 val newToday=LocalDate.now(zone)
@@ -264,13 +266,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val start=minOf(weekStart,visibleStart.minusDays(visibleStart.dayOfWeek.value-1L))
                 val end=maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(nav.scale,nav.day))
                 val targets=repository.targets()
+                stage = ConnectionStage.TargetHistory
                 val history=repository.targetHistory()
+                stage = ConnectionStage.Entries
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 val entries=repository.entries(start,end,zone)
+                stage = ConnectionStage.ZeroDays
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 val zero=repository.confirmedZeroDays(start,end)
+                stage = ConnectionStage.Cache
                 val snap=OfflineSnapshot(start,end,entries,targets,history,zero)
                 // A Keystore/file-system failure must not mislabel a perfectly
                 // successful Supabase download as a remote outage.
@@ -279,8 +285,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     // No local cache was saved, but live data can still be shown.
-                    repository.diagnostics?.failure(ConnectionOperation.Diary,error)
+                    repository.diagnostics?.failure(ConnectionOperation.Diary,error,ConnectionStage.Cache)
                 }
+                stage = ConnectionStage.Presentation
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 displaySnapshot(snap,nav,false)
@@ -296,7 +303,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         widgetCoordinator.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) {
-                        repository.diagnostics?.failure(ConnectionOperation.Widget,error)
+                        repository.diagnostics?.failure(ConnectionOperation.Widget,error,ConnectionStage.WidgetUpdate)
                     }
                 }
                 // Upload queued actions after successfully loading live data. A
@@ -315,15 +322,20 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             } catch(cancelled:CancellationException) { throw cancelled }
             catch(error:Exception) {
                 ensureActive()
-                repository.diagnostics?.failure(ConnectionOperation.Diary,error)
+                repository.diagnostics?.failure(ConnectionOperation.Diary,error,stage)
                 val issue = ConnectionFailure.from(error)
                 val retryable = issue.kind in setOf(
                     ConnectionFailureKind.Dns,ConnectionFailureKind.Tls,
                     ConnectionFailureKind.Timeout,ConnectionFailureKind.Transport,
                     ConnectionFailureKind.Service,ConnectionFailureKind.RateLimit)
                 val connected=offline?.onlineNow() == true
-                val warning=if(connected) "Сеть есть, но Supabase не отвечает. Показаны сохранённые данные."
-                    else "Нет подключения к интернету. Показаны сохранённые данные."
+                val warning = if (!retryable) {
+                    "Не удалось обработать загруженные данные. Показана последняя сохранённая версия."
+                } else if (connected) {
+                    "Не удалось завершить запрос к Supabase. Показаны сохранённые данные."
+                } else {
+                    "Нет подключения к интернету. Показаны сохранённые данные."
+                }
                 val cached=runCatching { offline?.cachedSnapshot() }.getOrNull()
                 val requested=mutable.value
                 val cachedValid=cached?.let { validCacheFor(it,requested) } ?: false
@@ -333,7 +345,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 } else {
                     if(generation==refreshGeneration)
                         mutable.update {it.copy(connectionWarning=warning,
-                            error="Не удалось обновить период с Supabase. Повторите попытку.")}
+                            error=if (retryable) "Не удалось обновить период с Supabase. Повторите попытку."
+                                else "Ошибка обработки данных. Откройте диагностику подключения и сообщите детали.")}
                 }
                 if(retryable && generation==refreshGeneration) scheduleConnectionRetry()
             } finally {
