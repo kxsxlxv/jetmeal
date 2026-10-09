@@ -30,6 +30,9 @@ data class AppState(
     val weightGoal: WeightGoal? = null,
     val budgetTargets: Map<LocalDate,Targets> = emptyMap(),
     val cachedOffline: Boolean = false,
+    val connectionWarning: String? = null,
+    val catalogueCount: Int = 0,
+    val catalogueLoading: Boolean = false,
     val pendingWrites: Int = 0,
     val blockedWrites: Int = 0,
     val picoocConnected: Boolean = false, val weightLoading: Boolean = false,
@@ -50,6 +53,10 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private val writes = Mutex()
     private var refreshJob: Job? = null
     private var searchJob: Job? = null
+    private var retryJob: Job? = null
+    private var catalogueJob: Job? = null
+    private var catalogueOwner: String? = null
+    private var retryAttempt = 0
     private var today = LocalDate.now()
     private var writeInFlight = false
     private var refreshInFlight = false
@@ -67,6 +74,10 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         val email = status.session.user?.email
                         val ownerId = status.session.user?.id
                         val reload = previous.authLoading || previous.authRecovering || authenticatedOwnerId != ownerId || status.isNew
+                        if (authenticatedOwnerId != ownerId) {
+                            catalogueJob?.cancel()
+                            catalogueOwner = null
+                        }
                         authenticatedOwnerId = ownerId
                         repository.authFailures.clear()
                         repository.diagnostics?.authState(ConnectionAuthState.Authenticated)
@@ -78,10 +89,13 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         if (reload) {
                             widgetCoordinator?.requestSync()
                             refresh()
+                            restoreCatalogueCount()
                         }
                     }
                     is SessionStatus.NotAuthenticated -> {
                         authenticatedOwnerId = null
+                        retryJob?.cancel(); catalogueJob?.cancel()
+                        catalogueOwner = null
                         refreshGeneration++; searchGeneration++
                         refreshJob?.cancel(); searchJob?.cancel()
                         repository.invalidateSearch()
@@ -116,12 +130,80 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         }
     }
 
+    init {
+        if (offline != null) viewModelScope.launch {
+            offline.networkChanges().collect { available ->
+                val loggedIn = repository?.client?.auth?.currentUserOrNull() != null
+                if (!loggedIn) return@collect
+                if (available && mutable.value.cachedOffline) {
+                    retryJob?.cancel()
+                    retryAttempt = 0
+                    refresh()
+                }
+            }
+        }
+    }
+
+    private fun restoreCatalogueCount() {
+        val diary = offline ?: return
+        viewModelScope.launch {
+            val count = runCatching { diary.catalogueCount() }.getOrNull() ?: return@launch
+            mutable.update { it.copy(catalogueCount = count) }
+        }
+    }
+
+    /** Warm *all* personal food variants without delaying the Hero or timeline. */
+    private fun warmCatalogue(force: Boolean = false) {
+        val repo = repository ?: return
+        val diary = offline ?: return
+        val ownerId = repo.client.auth.currentUserOrNull()?.id ?: return
+        if (catalogueJob?.isActive == true) return
+        if (!force && catalogueOwner == ownerId) return
+        catalogueJob = viewModelScope.launch(Dispatchers.Default) {
+            mutable.update { it.copy(catalogueLoading = true) }
+            try {
+                val count = diary.catalogueCount()
+                if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
+                mutable.update { it.copy(catalogueCount = count) }
+                if (!diary.onlineNow()) return@launch
+                val foods = repo.rankedCatalogue()
+                ensureActive()
+                if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
+                diary.rememberFoods(foods)
+                catalogueOwner = ownerId
+                mutable.update { it.copy(catalogueCount = foods.size) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                repo.diagnostics?.failure(ConnectionOperation.Catalogue, error)
+            } finally {
+                if (repo.client.auth.currentUserOrNull()?.id == ownerId)
+                    mutable.update { it.copy(catalogueLoading = false) }
+            }
+        }
+    }
+
+    fun downloadCatalogue() = warmCatalogue(force = true)
+
+    private fun scheduleConnectionRetry() {
+        val diary = offline ?: return
+        if (!diary.onlineNow()) return
+        if (retryJob?.isActive == true) return
+        val seconds = minOf(60L, 3L * (1L shl retryAttempt.coerceAtMost(5)))
+        retryAttempt++
+        retryJob = viewModelScope.launch {
+            delay(seconds * 1_000L)
+            if (diary.onlineNow() && mutable.value.cachedOffline &&
+                repository?.client?.auth?.currentUserOrNull() != null) refresh()
+        }
+    }
+
     fun signIn(email: String, password: String) = action(ErrorOperation.SignIn) {
         requireNotNull(repository).signIn(email, password)
     }
     fun signOut() = action(allowDuringRecovery = true) {
         repository?.authFailures?.clear()
         repository?.diagnostics?.authState(ConnectionAuthState.SignOutRequested)
+        retryJob?.cancel(); catalogueJob?.cancel()
         refreshGeneration++; searchGeneration++
         refreshJob?.cancel(); searchJob?.cancel()
         refreshInFlight = false
@@ -151,8 +233,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             mutable.update { it.copy(busy=true,refreshing=showPullIndicator,error=null) }
             try {
                 val zone=ZoneId.systemDefault()
-                if(offline!=null && !offline.onlineNow()) throw java.io.IOException("Network unavailable")
-                offline?.sync()
+                // Treat the Supabase request, not Android's network icon, as
+                // the source of truth for server availability. Outbox replay is
+                // independent and must never prevent the diary from refreshing.
                 repository.invalidateSearch()
                 repository.syncTimezone(zone)
                 ensureActive()
@@ -181,25 +264,42 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 displaySnapshot(snap,nav,false)
+                retryAttempt=0
+                retryJob?.cancel()
+                warmCatalogue()
                 if(nav.destination==Destination.Settings) loadWeights()
                 val perDay=weekTargets(snap)
                 widgetCoordinator?.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
+                // Upload queued actions after successfully loading live data. A
+                // transient replay error cannot turn a healthy read into "offline".
+                if (offline != null) viewModelScope.launch {
+                    val result = offline.sync()
+                    if (result.synced > 0) refresh()
+                }
             } catch(cancelled:CancellationException) { throw cancelled }
             catch(error:Exception) {
                 ensureActive()
+                repository.diagnostics?.failure(ConnectionOperation.Diary,error)
+                val issue = ConnectionFailure.from(error)
+                val retryable = issue.kind in setOf(
+                    ConnectionFailureKind.Dns,ConnectionFailureKind.Tls,
+                    ConnectionFailureKind.Timeout,ConnectionFailureKind.Transport,
+                    ConnectionFailureKind.Service,ConnectionFailureKind.RateLimit)
+                val connected=offline?.onlineNow() == true
+                val warning=if(connected) "Сеть есть, но Supabase не отвечает. Показаны сохранённые данные."
+                    else "Нет подключения к интернету. Показаны сохранённые данные."
                 val cached=runCatching { offline?.cachedSnapshot() }.getOrNull()
                 val requested=mutable.value
                 val cachedValid=cached?.let { validCacheFor(it,requested) } ?: false
                 if(cachedValid && cached!=null) {
                     displaySnapshot(cached,requested,true)
-                    // A stale read is never silently presented as a live Supabase response.
+                    mutable.update { it.copy(connectionWarning=warning) }
                 } else {
-                    repository.diagnostics?.failure(ConnectionOperation.Diary,error)
                     if(generation==refreshGeneration)
-                        mutable.update {it.copy(error=
-                            "Нет соединения или сохранённых данных для этого периода. " +
-                            "Подключитесь к интернету и обновите дневник.")}
+                        mutable.update {it.copy(connectionWarning=warning,
+                            error="Не удалось обновить период с Supabase. Повторите попытку.")}
                 }
+                if(retryable && generation==refreshGeneration) scheduleConnectionRetry()
             } finally {
                 if(generation==refreshGeneration) {
                     refreshInFlight=false
@@ -256,7 +356,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             entries=all.filter {row->row.consumedAt.atZone(zone).toLocalDate()==nav.day},
             targets=snap.targets,week=week,monthCalories=totals,monthTargets=monthTargets,
             confirmedZeroDays=zero,targetVersions=snap.history,budgetTargets=dailyTargets,
-            cachedOffline=cached,pendingWrites=pendingStatus?.remaining ?: 0,
+            cachedOffline=cached,connectionWarning=if(cached) it.connectionWarning else null,
+            pendingWrites=pendingStatus?.remaining ?: 0,
             blockedWrites=pendingStatus?.blocked ?: 0,
         )}
     }
@@ -375,16 +476,19 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             mutable.update { it.copy(searching = true) }
             try {
                 if (query.isNotBlank()) delay(180)
-                val results = try {
-                    if(offline!=null && !offline.onlineNow()) throw java.io.IOException("Offline")
-                    requireNotNull(tools).searchFood(query).data.also {
-                        if(offline!=null) offline.rememberFoods(requireNotNull(repository).rankedCatalogue())
+                val diary=offline
+                val results=if (diary != null && diary.catalogueCount() > 0) {
+                    diary.cachedFoods(query)
+                } else if(diary != null && !diary.onlineNow()) {
+                    mutable.update { it.copy(catalogueCount=0) }
+                    emptyList()
+                } else {
+                    val foods=withContext(Dispatchers.Default) {
+                        requireNotNull(repository).rankedCatalogue()
                     }
-                } catch(failure:Exception) {
-                    if(failure is CancellationException) throw failure
-                    val cached = offline?.cachedFoods(query).orEmpty()
-                    if(cached.isEmpty()) throw failure
-                    cached
+                    diary?.rememberFoods(foods)
+                    if(diary!=null) mutable.update { it.copy(catalogueCount=foods.size) }
+                    rankFoodCandidates(foods,query)
                 }
                 ensureActive()
                 if (generation != searchGeneration) return@launch
