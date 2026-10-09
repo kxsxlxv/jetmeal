@@ -61,6 +61,7 @@ data class PendingDiaryMutation(
     val preview: DiaryEntry? = null,
     val blocked: Boolean = false,
     val attempted: Boolean = false,
+    val chosenMeasure: ChosenMeasure? = null,
 )
 
 data class OfflineSyncStatus(val remaining: Int, val blocked: Int, val synced: Int = 0)
@@ -191,7 +192,7 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         return add(PendingDiaryMutation(id,"update_log",buildJsonObject {
             put("entry_id",entry.id);put("quantity",amount)
             chosen?.let { put("measure_id",it.measure.id); put("measure_quantity",it.quantity) }
-        },expectedUpdatedAt=expected))
+        },expectedUpdatedAt=expected,chosenMeasure=chosen))
     }
     suspend fun enqueueDelete(entry: DiaryEntry): Int {
         val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before deleting offline." }
@@ -341,9 +342,11 @@ fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): L
             if (entry!=null && amount!=null && amount>0)
                 byId[entry.id]=entry.copy(quantity=amount,
                     nutrition=entry.basisNutrition*(amount/entry.basisAmount),
-                    enteredMeasureLabel=null,enteredMeasureKey=null,
-                    enteredMeasureQuantity=null,enteredMeasureBaseAmount=null,
-                    enteredMeasureApproximate=false)
+                    enteredMeasureLabel=pendingAction.chosenMeasure?.measure?.label,
+                    enteredMeasureKey=pendingAction.chosenMeasure?.measure?.key,
+                    enteredMeasureQuantity=pendingAction.chosenMeasure?.quantity,
+                    enteredMeasureBaseAmount=pendingAction.chosenMeasure?.measure?.baseAmount,
+                    enteredMeasureApproximate=pendingAction.chosenMeasure?.measure?.approximate ?: false)
         }
         "delete_log" -> {
             val id=pendingAction.input["entry_id"]?.jsonPrimitive?.contentOrNull
@@ -450,6 +453,15 @@ private fun encodePending(v:PendingDiaryMutation)=buildJsonObject {
     v.preview?.let{put("preview",encodeEntry(it))}
     put("blocked",v.blocked)
     put("attempted",v.attempted)
+    v.chosenMeasure?.let { chosen ->
+        put("selectedMeasure",buildJsonObject {
+            put("id",chosen.measure.id);put("variant",chosen.measure.variantId)
+            put("key",chosen.measure.key);put("label",chosen.measure.label)
+            put("base",chosen.measure.baseAmount)
+            put("approx",chosen.measure.approximate)
+            put("quantity",chosen.quantity)
+        })
+    }
 }
 private fun decodePending(v:JsonObject)=PendingDiaryMutation(
     v.string("id"),v.string("kind"),v.getValue("input").jsonObject,
@@ -457,6 +469,11 @@ private fun decodePending(v:JsonObject)=PendingDiaryMutation(
     v["preview"]?.jsonObject?.let(::decodeEntry),
     v["blocked"]?.jsonPrimitive?.boolean ?: false,
     v["attempted"]?.jsonPrimitive?.boolean ?: false,
+    v["selectedMeasure"]?.jsonObject?.let {
+        ChosenMeasure(FoodMeasure(it.string("id"),it.string("variant"),
+            it.string("key"),it.string("label"),it.number("base"),
+            it["approx"]?.jsonPrimitive?.boolean ?: false),it.number("quantity"))
+    },
 )
 private fun encodeSnapshot(v:OfflineSnapshot)=buildJsonObject {
     put("start",v.start.toString());put("end",v.end.toString())
