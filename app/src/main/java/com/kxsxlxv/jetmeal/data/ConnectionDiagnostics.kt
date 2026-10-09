@@ -12,6 +12,7 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.logging.SupabaseLoggingProcessor
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -81,10 +82,23 @@ internal fun safeExceptionOrigin(error: Throwable): String? {
     )
     return generateSequence(error) { it.cause }.take(12)
         .flatMap { it.stackTrace.asSequence() }
-        .firstOrNull { frame -> namespaces.any(frame.className::startsWith) }
+        .firstOrNull { frame -> namespaces.any { frame.className.startsWith(it) } }
         ?.let { "${it.className}.${it.methodName}" }
         ?.takeIf { Regex("[A-Za-z0-9_.$]{1,180}").matches(it) }
 }
+
+/** Wrap failures with a fixed stage name; preserve original cause for normal error classification. */
+internal class ConnectionStageException(val stage: ConnectionStage, cause: Throwable) :
+    IllegalStateException("Connection stage failed", cause)
+
+internal suspend fun <T> atConnectionStage(stage: ConnectionStage, block: suspend () -> T): T =
+    try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        throw ConnectionStageException(stage, error)
+    }
 
 /**
  * KtorSupabaseHttpClient 3.8.0 replaces transport exceptions with HttpRequestException
@@ -130,12 +144,14 @@ internal class ConnectionDiagnostics(context: Context) {
     fun failure(operation: ConnectionOperation, error: Throwable, stage: ConnectionStage? = null) {
         val failure = if (operation == ConnectionOperation.Auth) authFailures.resolve(error) else ConnectionFailure.from(error)
         if (operation == ConnectionOperation.Auth) authFailures.capture(failure)
-        val root = generateSequence(error) { it.cause }.take(12).last()
+        val chain = generateSequence(error) { it.cause }.take(12).toList()
+        val root = chain.last()
+        val observedStage = stage ?: chain.filterIsInstance<ConnectionStageException>().firstOrNull()?.stage
         record("operation=$operation kind=${failure.kind} http=${failure.status ?: "none"}" +
             " code=${failure.code ?: "none"} request=${failure.requestId ?: "none"}" +
             " exception=${error.javaClass.simpleName.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) } ?: "unknown"}" +
             " root=${root.javaClass.simpleName.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) } ?: "unknown"}" +
-            (stage?.let { " stage=$it" } ?: "") +
+            (observedStage?.let { " stage=$it" } ?: "") +
             (safeExceptionOrigin(error)?.let { " origin=$it" } ?: ""))
     }
 
