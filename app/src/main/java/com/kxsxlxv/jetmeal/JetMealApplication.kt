@@ -10,6 +10,7 @@ import com.kxsxlxv.jetmeal.data.PicoocIntegration
 import com.kxsxlxv.jetmeal.data.OfflineDiary
 import com.kxsxlxv.jetmeal.data.ConnectionDiagnostics
 import com.kxsxlxv.jetmeal.data.SafeSupabaseLogger
+import com.kxsxlxv.jetmeal.data.SafeNetworkListenerFactory
 import com.kxsxlxv.jetmeal.data.protectSessionRefresh
 import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
 import com.kxsxlxv.jetmeal.widget.HeroWidgetScheduler
@@ -39,7 +40,11 @@ class JetMealApplication : Application() {
         else {
             require(!BuildConfig.SUPABASE_KEY.startsWith("sb_secret_")) { "Only a publishable client key is allowed." }
             SupabaseRepository(createSupabaseClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_KEY) {
-                httpEngine = OkHttp.create()
+                httpEngine = OkHttp.create {
+                    config {
+                        eventListenerFactory(SafeNetworkListenerFactory(connectionDiagnostics))
+                    }
+                }
                 defaultLoggingFactory = { SafeSupabaseLogger(connectionDiagnostics) }
                 protectSessionRefresh(connectionDiagnostics::captureAuthFailure)
                 // Bound Auth/refresh and other HTTP calls; Postgrest has its own override below.
