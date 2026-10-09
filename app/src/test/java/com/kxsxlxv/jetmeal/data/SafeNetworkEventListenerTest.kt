@@ -30,6 +30,7 @@ class SafeNetworkEventListenerTest {
 
     @Test fun onlyAllowlistedRoutesAppearEvenWhenPathIncludesSensitiveTokens() {
         assertEquals(NetworkRoute.Auth,routeForPath("/auth/v1/token"))
+        assertEquals(NetworkRoute.Profile,routeForPath("/rest/v1/profiles"))
         assertEquals(NetworkRoute.Catalogue,routeForPath("/rest/v1/food_variants"))
         assertEquals(NetworkRoute.Diary,routeForPath("/rest/v1/diary_entries"))
         assertEquals(NetworkRoute.Mutation,routeForPath("/rest/v1/rpc/jetmeal_log_food"))

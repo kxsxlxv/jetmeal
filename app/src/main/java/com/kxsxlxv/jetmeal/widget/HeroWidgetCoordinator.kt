@@ -3,6 +3,8 @@ package com.kxsxlxv.jetmeal.widget
 import android.content.Context
 import androidx.glance.appwidget.updateAll
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
+import com.kxsxlxv.jetmeal.data.ConnectionStage
+import com.kxsxlxv.jetmeal.data.atConnectionStage
 import io.github.jan.supabase.auth.status.SessionStatus
 import java.io.IOException
 import com.kxsxlxv.jetmeal.domain.DiaryEntry
@@ -28,7 +30,7 @@ class HeroWidgetCoordinator(
             return
         }
 
-        data.client.auth.awaitInitialization()
+        atConnectionStage(ConnectionStage.Session) { data.client.auth.awaitInitialization() }
         if (data.client.auth.sessionStatus.value is SessionStatus.NotAuthenticated) {
             showSignedOut()
             return
@@ -40,25 +42,33 @@ class HeroWidgetCoordinator(
         }
 
         val zone = ZoneId.systemDefault()
-        data.syncTimezone(zone)
+        atConnectionStage(ConnectionStage.Profile) { data.syncTimezone(zone) }
         val today = LocalDate.now(zone)
-        val targets = data.targets()
+        val targets = atConnectionStage(ConnectionStage.Targets) { data.targets() }
 
         if (targets == null) {
-            store.write(HeroWidgetState.MissingTargets)
+            atConnectionStage(ConnectionStage.WidgetUpdate) {
+                store.write(HeroWidgetState.MissingTargets)
+            }
         } else {
             val weekStart = today.minusDays(today.dayOfWeek.value - 1L)
-            val entries = data.entries(weekStart, today.plusDays(1), zone)
-            val zeroDays = data.confirmedZeroDays(weekStart, today.plusDays(1))
-            val history = data.targetHistory()
+            val entries = atConnectionStage(ConnectionStage.Entries) {
+                data.entries(weekStart, today.plusDays(1), zone)
+            }
+            val zeroDays = atConnectionStage(ConnectionStage.ZeroDays) {
+                data.confirmedZeroDays(weekStart, today.plusDays(1))
+            }
+            val history = atConnectionStage(ConnectionStage.TargetHistory) { data.targetHistory() }
             val perDay = (0L..6L).associate { offset ->
                 val day = weekStart.plusDays(offset)
                 day to (history.lastOrNull { it.date <= day }?.targets ?: targets)
             }
-            store.write(HeroWidgetSnapshot.calculate(today, entries, perDay[today] ?: targets, zone,
-                confirmedZeroDays = zeroDays, dailyTargets = perDay))
+            atConnectionStage(ConnectionStage.Presentation) {
+                store.write(HeroWidgetSnapshot.calculate(today, entries, perDay[today] ?: targets, zone,
+                    confirmedZeroDays = zeroDays, dailyTargets = perDay))
+            }
         }
-        updateWidgets()
+        atConnectionStage(ConnectionStage.WidgetUpdate) { updateWidgets() }
     }
 
     suspend fun updateFromLoaded(
@@ -74,12 +84,14 @@ class HeroWidgetCoordinator(
         val weekStart = today.minusDays(today.dayOfWeek.value - 1L)
         if (start > weekStart || endExclusive <= today) return
 
-        store.write(
-            if (targets == null) HeroWidgetState.MissingTargets
-            else HeroWidgetSnapshot.calculate(today, entries, dailyTargets[today] ?: targets, zone,
-                confirmedZeroDays = confirmedZeroDays, dailyTargets = dailyTargets)
-        )
-        updateWidgets()
+        atConnectionStage(ConnectionStage.Presentation) {
+            store.write(
+                if (targets == null) HeroWidgetState.MissingTargets
+                else HeroWidgetSnapshot.calculate(today, entries, dailyTargets[today] ?: targets, zone,
+                    confirmedZeroDays = confirmedZeroDays, dailyTargets = dailyTargets)
+            )
+        }
+        atConnectionStage(ConnectionStage.WidgetUpdate) { updateWidgets() }
     }
 
     suspend fun showSignedOut() {

@@ -12,6 +12,7 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.logging.SupabaseLoggingProcessor
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -19,6 +20,7 @@ import java.time.Instant
 import javax.net.ssl.SSLException
 
 internal enum class ConnectionOperation { Auth, SignIn, Diary, Catalogue, Mutation, Widget }
+internal enum class ConnectionStage { Session, Profile, Targets, TargetHistory, Entries, ZeroDays, Cache, Presentation, WidgetUpdate }
 internal enum class ConnectionAuthState { Authenticated, NotAuthenticated, Recovering, SignOutRequested }
 internal enum class ConnectionFailureKind { Dns, Tls, Timeout, Transport, RateLimit, Service, AuthRejected, Permission, Unknown }
 
@@ -70,6 +72,35 @@ internal data class ConnectionFailure(
 }
 
 /**
+ * Source location from allowlisted library/application code symbols only.
+ * Exception messages, stack file paths, line numbers and URLs are never persisted.
+ */
+internal fun safeExceptionOrigin(error: Throwable): String? {
+    val namespaces = listOf(
+        "com.kxsxlxv.jetmeal.", "io.github.jan.supabase.", "io.ktor.",
+        "kotlinx.serialization.", "androidx.glance.", "java.security.", "javax.crypto."
+    )
+    return generateSequence(error) { it.cause }.take(12).toList().asReversed().asSequence()
+        .flatMap { it.stackTrace.asSequence() }
+        .firstOrNull { frame -> namespaces.any { frame.className.startsWith(it) } }
+        ?.let { "${it.className}.${it.methodName}" }
+        ?.takeIf { Regex("[A-Za-z0-9_.$]{1,180}").matches(it) }
+}
+
+/** Wrap failures with a fixed stage name; preserve original cause for normal error classification. */
+internal class ConnectionStageException(val stage: ConnectionStage, cause: Throwable) :
+    IllegalStateException("Connection stage failed", cause)
+
+internal suspend fun <T> atConnectionStage(stage: ConnectionStage, block: suspend () -> T): T =
+    try {
+        block()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        throw ConnectionStageException(stage, error)
+    }
+
+/**
  * KtorSupabaseHttpClient 3.8.0 replaces transport exceptions with HttpRequestException
  * without retaining their cause. Capture safe metadata at Ktor's boundary first, and
  * never replace that record with its less informative SDK wrapper.
@@ -110,12 +141,18 @@ internal class ConnectionDiagnostics(context: Context) {
     // A healthy widget request must not hide continuing diary failures.
     private val failedRoutes = mutableSetOf<NetworkRoute>()
 
-    fun failure(operation: ConnectionOperation, error: Throwable) {
+    fun failure(operation: ConnectionOperation, error: Throwable, stage: ConnectionStage? = null) {
         val failure = if (operation == ConnectionOperation.Auth) authFailures.resolve(error) else ConnectionFailure.from(error)
         if (operation == ConnectionOperation.Auth) authFailures.capture(failure)
+        val chain = generateSequence(error) { it.cause }.take(12).toList()
+        val root = chain.last()
+        val observedStage = stage ?: chain.filterIsInstance<ConnectionStageException>().firstOrNull()?.stage
         record("operation=$operation kind=${failure.kind} http=${failure.status ?: "none"}" +
             " code=${failure.code ?: "none"} request=${failure.requestId ?: "none"}" +
-            " exception=${error.javaClass.simpleName.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) } ?: "unknown"}")
+            " exception=${error.javaClass.simpleName.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) } ?: "unknown"}" +
+            " root=${root.javaClass.simpleName.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) } ?: "unknown"}" +
+            (observedStage?.let { " stage=$it" } ?: "") +
+            (safeExceptionOrigin(error)?.let { " origin=$it" } ?: ""))
     }
 
     fun captureAuthFailure(failure: ConnectionFailure) {

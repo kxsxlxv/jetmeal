@@ -26,7 +26,7 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * URLs, query parameters, headers (other than validated sb-request-id), bodies,
  * cookies, credentials or tokens, even in debug builds.
  */
-internal enum class NetworkRoute { Auth, Diary, Catalogue, Mutation, Other }
+internal enum class NetworkRoute { Auth, Profile, Diary, Catalogue, Mutation, Other }
 internal enum class NetworkPhase { Queued, Dns, Tcp, Tls, Request, Waiting, Response }
 internal enum class NetworkCause {
     UnknownHost, ConnectionRefused, NoRoute, TlsHandshake, TlsCertificate,
@@ -35,6 +35,7 @@ internal enum class NetworkCause {
 
 internal fun routeForPath(path: String): NetworkRoute = when {
     path.startsWith("/auth/v1/") -> NetworkRoute.Auth
+    path == "/rest/v1/profiles" -> NetworkRoute.Profile
     path == "/rest/v1/diary_entries" || path == "/rest/v1/zero_calorie_days" ||
         path == "/rest/v1/nutrition_targets" || path == "/rest/v1/nutrition_target_history" ->
         NetworkRoute.Diary
