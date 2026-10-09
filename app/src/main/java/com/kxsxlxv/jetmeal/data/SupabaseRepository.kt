@@ -217,6 +217,21 @@ class SupabaseRepository(val client: SupabaseClient) {
         return result
     }
 
+    suspend fun syncMutation(request: PendingDiaryMutation): ToolResult<JsonElement> {
+        val response=Json.parseToJsonElement(client.postgrest.rpc("jetmeal_sync_mutation",
+            buildJsonObject {
+                put("p_request_id",request.id)
+                put("p_operation",request.kind)
+                put("p_input",request.input)
+                request.expectedUpdatedAt?.let{put("p_expected_updated_at",it.toString())}
+            }).data).jsonObject
+        check(response["ok"]?.jsonPrimitive?.boolean == true) { "Mutation was not applied." }
+        invalidateSearch()
+        return ToolResult(true,response.optional("action_id"),response["data"] ?: JsonNull,
+            response["warnings"]?.jsonArray?.map{it.jsonPrimitive.content} ?: emptyList(),
+            response["undoable"]?.jsonPrimitive?.boolean ?: false)
+    }
+
     internal suspend fun mutate(operation: String, input: JsonObject): ToolResult<JsonElement> {
         val response = Json.parseToJsonElement(client.postgrest.rpc("jetmeal_$operation",
             buildJsonObject { put("p_input", input) }).data).jsonObject
@@ -241,7 +256,9 @@ class SupabaseRepository(val client: SupabaseClient) {
             meal = MealPeriod.entries.single { it.wireValue == row.string("meal_type") },
             variantId = row.optional("food_variant_id"), foodId = row.optional("food_id"),
             confidence = row["confidence"]?.jsonPrimitive?.doubleOrNull,
-            estimated = row["is_estimated_snapshot"]?.jsonPrimitive?.boolean ?: false
+            estimated = row["is_estimated_snapshot"]?.jsonPrimitive?.boolean ?: false,
+            updatedAt = row.optional("updated_at")?.let(Instant::parse),
+            mealGroupId = row.optional("meal_group_id")
         )
 
         private fun nutrition(row: JsonObject) = Nutrition(row.number("calories_kcal"),
