@@ -19,7 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -155,6 +158,12 @@ internal fun FoodVariantsContent(variants: List<FoodCandidate>,
     }
 }
 
+internal fun measureSymbol(measure: FoodMeasure): JetMealSymbol = when(measure.key) {
+    "egg_medium", "egg_large" -> JetMealSymbol.Protein
+    "tsp", "tbsp" -> JetMealSymbol.Spoon
+    else -> JetMealSymbol.Serving
+}
+
 @Composable
 internal fun AmountContent(name: String, unit: String, amount: Double, basisAmount: Double, nutrition: Nutrition,
     estimated: Boolean, busy: Boolean, error: String?, onSave: (Double) -> Unit, onDelete: (() -> Unit)?,
@@ -206,21 +215,48 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             }
         }
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
-        Text("Основа расчёта: ${number(basisAmount, 1)} ${unitLabel(unit)}",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if(measures.isNotEmpty()) {
-            Text("Как измерить?",style=MaterialTheme.typography.titleMediumEmphasized)
+            // Expressive connected toggle-button group: pictograms, not a second heading
+            // or redundant weight/portion labels. Spoken descriptions remain accessible.
+            val count = measures.size + 1
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected=chosen==null,onClick={
-                    text=decimalInput(quantity ?: amount);chosenId=null
-                },label={Text(unitLabel(unit))},enabled=!busy)
-                measures.forEach { measure ->
-                    FilterChip(selected=chosen?.id==measure.id,onClick={
-                        val current=quantity ?: amount
-                        chosenId=measure.id
-                        text=decimalInput(current/measure.baseAmount)
-                    },label={Text(measure.label)},enabled=!busy)
+                horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+                verticalAlignment = Alignment.CenterVertically) {
+                ToggleButton(checked=chosen==null,
+                    onCheckedChange={
+                        text=decimalInput(quantity ?: amount)
+                        chosenId=null
+                    },
+                    shapes=ButtonGroupDefaults.connectedLeadingButtonShapes(),
+                    enabled=!busy,
+                    modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                        .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" }) {
+                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(22.dp))
+                }
+                measures.forEachIndexed { index, measure ->
+                    val symbol = measureSymbol(measure)
+                    val repeated = measures.count { measureSymbol(it) == symbol } > 1
+                    ToggleButton(checked=chosen?.id==measure.id,
+                        onCheckedChange={
+                            val current=quantity ?: amount
+                            chosenId=measure.id
+                            text=decimalInput(current/measure.baseAmount)
+                        },
+                        shapes=if(index==count-2) ButtonGroupDefaults.connectedTrailingButtonShapes()
+                            else ButtonGroupDefaults.connectedMiddleButtonShapes(),
+                        enabled=!busy,
+                        modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                            .semantics { role=Role.RadioButton; contentDescription=measure.label }) {
+                        SymbolIcon(symbol,null,Modifier.size(22.dp))
+                        if(repeated) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(when(measure.key) {
+                                "egg_medium" -> "M"
+                                "egg_large" -> "L"
+                                else -> measure.label
+                            },style=MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
         }
@@ -241,18 +277,19 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             OutlinedIconButton(
                 onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(minimum))},
                 enabled=!busy && entered!=null && entered>minimum,
-                modifier=Modifier.size(48.dp)) { Text("−") }
+                modifier=Modifier.size(56.dp)) { Text("−") }
             TextField(text, { text = it },
                 label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
                 shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
                 enabled = !busy, isError = scaled == null,
-                supportingText = { if (scaled == null) Text("Количество больше нуля") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f))
+                modifier = Modifier.weight(1f).heightIn(min=56.dp))
             OutlinedIconButton(
                 onClick={text=decimalInput((entered ?: 0.0)+step)},
-                enabled=!busy,modifier=Modifier.size(48.dp)) { Text("+") }
+                enabled=!busy,modifier=Modifier.size(56.dp)) { Text("+") }
         }
+        if(scaled==null) Text("Введите количество больше нуля",
+            style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
         if(chosen!=null && quantity!=null) {
             Text("${if(chosen.approximate) "≈ " else ""}${number(quantity,1)} ${unitLabel(unit)} " +
                 "(${number(entered ?: 0.0,1)} ${chosen.label})",
