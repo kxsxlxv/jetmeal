@@ -145,6 +145,9 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     suspend fun cachedSnapshot(): OfflineSnapshot?=vault.readState(owner()).first
 
     suspend fun catalogueCount(): Int = vault.readState(owner()).second.size
+    suspend fun cachedMeasures(): Map<String,List<FoodMeasure>> =
+        vault.readState(owner()).second.associate { it.id to it.measures }
+
     suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { _,foods,queue ->
         Triple(snapshot,foods,queue)
     }
