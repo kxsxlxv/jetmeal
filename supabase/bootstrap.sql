@@ -1074,6 +1074,7 @@ create table if not exists private.offline_mutation_receipts (
     created_at timestamptz not null default now(),
     primary key(owner_id, request_id)
 );
+alter table private.offline_mutation_receipts enable row level security;
 revoke all on private.offline_mutation_receipts from public, anon, authenticated;
 
 -- Modification conflicts are checked against a genuine revision timestamp.
