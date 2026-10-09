@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
                     extras.createSavedStateHandle(),
                     app.widgetCoordinator,
                     app.picoocIntegration,
+                    app.offlineDiary,
                 ) as T
             }
         })[JetMealViewModel::class.java]
