@@ -1,6 +1,8 @@
 package com.kxsxlxv.jetmeal.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -205,7 +207,15 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
             PeriodicWorkRequestBuilder<OfflineSyncWorker>(2,TimeUnit.HOURS)
                 .setConstraints(constraints).build())
     }
+    fun onlineNow(): Boolean {
+        val manager=context.getSystemService(ConnectivityManager::class.java)
+        val capabilities=manager.getNetworkCapabilities(manager.activeNetwork)
+        return capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     suspend fun sync(): OfflineSyncStatus = syncMutex.withLock {
+        if(!onlineNow()) return@withLock status()
         val user=owner()
         var count=0
         while (true) {
@@ -259,8 +269,13 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
 
 fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): List<DiaryEntry> {
     val byId=LinkedHashMap(base.associateBy { it.id })
-    for (pendingAction in pending) when(pendingAction.kind) {
-        "log_food" -> pendingAction.preview?.let { byId[it.id]=it }
+    for (pendingAction in pending) {
+        if (pendingAction.blocked) continue
+        when(pendingAction.kind) {
+        "log_food" -> pendingAction.preview?.let {
+            if(byId.values.none { row -> row.mealGroupId == pendingAction.id })
+                byId[it.id]=it
+        }
         "update_log" -> {
             val id=pendingAction.input["entry_id"]?.jsonPrimitive?.contentOrNull
             val entry=byId[id]
@@ -272,6 +287,7 @@ fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): L
         "delete_log" -> {
             val id=pendingAction.input["entry_id"]?.jsonPrimitive?.contentOrNull
             byId.remove(id)
+        }
         }
     }
     return byId.values.sortedBy { it.consumedAt }
@@ -314,6 +330,7 @@ private fun encodeEntry(v:DiaryEntry)=buildJsonObject {
     v.foodId?.let{put("food",it)};v.confidence?.let{put("confidence",it)}
     put("estimated",v.estimated)
     v.updatedAt?.let{put("updatedAt",it.toString())}
+    v.mealGroupId?.let{put("mealGroupId",it)}
 }
 private fun decodeEntry(v:JsonObject)=DiaryEntry(
     v.string("id"),v.string("name"),v.optional("brand"),v.number("quantity"),
@@ -323,6 +340,7 @@ private fun decodeEntry(v:JsonObject)=DiaryEntry(
     v["confidence"]?.jsonPrimitive?.doubleOrNull,
     v["estimated"]?.jsonPrimitive?.boolean ?: false,
     v.optional("updatedAt")?.let(Instant::parse),
+    v.optional("mealGroupId"),
 )
 private fun encodeFood(v:FoodCandidate)=buildJsonObject {
     put("id",v.id);put("foodId",v.foodId);put("name",v.name)
