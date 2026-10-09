@@ -171,6 +171,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         "Нет подключения: каталог загрузится, когда появится интернет.") }
                     return@launch
                 }
+                if (force) repo.invalidateSearch()
                 val foods = repo.rankedCatalogue()
                 ensureActive()
                 if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
@@ -268,7 +269,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 if(generation!=refreshGeneration) return@launch
                 val zero=repository.confirmedZeroDays(start,end)
                 val snap=OfflineSnapshot(start,end,entries,targets,history,zero)
-                offline?.remember(snap)
+                // A Keystore/file-system failure must not mislabel a perfectly
+                // successful Supabase download as a remote outage.
+                try {
+                    offline?.remember(snap)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    // No local cache was saved, but live data can still be shown.
+                    repository.diagnostics?.failure(ConnectionOperation.Diary,error)
+                }
                 ensureActive()
                 if(generation!=refreshGeneration) return@launch
                 displaySnapshot(snap,nav,false)
@@ -277,7 +286,16 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 warmCatalogue()
                 if(nav.destination==Destination.Settings) loadWeights()
                 val perDay=weekTargets(snap)
-                widgetCoordinator?.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
+                // Widget rendering is a separate concern: it cannot turn a
+                // successful diary refresh back into "offline".
+                if(widgetCoordinator!=null) viewModelScope.launch {
+                    try {
+                        widgetCoordinator.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        repository.diagnostics?.failure(ConnectionOperation.Widget,error)
+                    }
+                }
                 // Upload queued actions after successfully loading live data. A
                 // transient replay error cannot turn a healthy read into "offline".
                 if (offline != null) viewModelScope.launch {
@@ -335,7 +353,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
 
     private suspend fun displaySnapshot(snap:OfflineSnapshot,nav:AppState,cached:Boolean) {
         val zone=ZoneId.systemDefault()
-        val all=offline?.overlay(snap.entries) ?: snap.entries
+        val all=try { offline?.overlay(snap.entries) ?: snap.entries }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { snap.entries }
         val zero=snap.zeroDays.filterNotTo(mutableSetOf()) {date ->
             all.any {it.consumedAt.atZone(zone).toLocalDate()==date}
         }
@@ -359,7 +379,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             WeekBudget.calculate(it,targetFor(it) ?: snap.targets,totals,zero,
                 dailyTargets=dailyTargets).effectiveTarget
         }
-        val pendingStatus=offline?.status()
+        val pendingStatus=try { offline?.status() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
         mutable.update {it.copy(
             entries=all.filter {row->row.consumedAt.atZone(zone).toLocalDate()==nav.day},
             targets=snap.targets,week=week,monthCalories=totals,monthTargets=monthTargets,
