@@ -438,8 +438,16 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         persistQueued()
     }
     fun undo()=action(allowDuringRecovery=true) {
-        if(offline?.cancelLast()==true) {
-            mutable.update {it.copy(notice="Ожидавшее отправки действие отменено.")}
+        val outstanding=offline?.status()?.remaining ?: 0
+        if(outstanding>0) {
+            if(offline?.cancelLast()==true) {
+                mutable.update {it.copy(notice="Неотправленное действие отменено.")}
+            } else {
+                mutable.update {it.copy(error=
+                    "Действие уже могло поступить на сервер. Сначала синхронизируйте очередь, " +
+                    "чтобы отмена не привела к потере записи.")}
+                return@action
+            }
         } else {
             requireNotNull(tools).undoLastAction()
             mutable.update{it.copy(notice="Действие отменено.")}
