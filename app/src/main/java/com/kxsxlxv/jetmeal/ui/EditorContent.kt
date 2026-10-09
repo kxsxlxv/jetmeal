@@ -171,11 +171,28 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         }
         if (estimated) Text("Примерная пищевая ценность", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.tertiary)
-        TextField(text, { text = it }, label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
-            shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
-            enabled = !busy, isError = scaled == null,
-            supportingText = { if (scaled == null) Text("Введите количество больше нуля") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+        val step=when(chosen?.key) {
+            "piece","serving","egg_medium","egg_large","package","slice" -> 1.0
+            "tsp","tbsp" -> 0.5
+            else -> 10.0
+        }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),
+            verticalAlignment=Alignment.CenterVertically) {
+            OutlinedIconButton(
+                onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(step/2))},
+                enabled=!busy && entered!=null && entered>step/2,
+                modifier=Modifier.size(48.dp)) { Text("−") }
+            TextField(text, { text = it },
+                label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
+                shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
+                enabled = !busy, isError = scaled == null,
+                supportingText = { if (scaled == null) Text("Количество больше нуля") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.weight(1f))
+            OutlinedIconButton(
+                onClick={text=decimalInput((entered ?: 0.0)+step)},
+                enabled=!busy,modifier=Modifier.size(48.dp)) { Text("+") }
+        }
         if(chosen!=null && quantity!=null) {
             Text("${if(chosen.approximate) "≈ " else ""}${number(quantity,1)} ${unitLabel(unit)} " +
                 "(${number(entered ?: 0.0,1)} ${chosen.label})",
