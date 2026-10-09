@@ -365,6 +365,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun syncPending() {
         viewModelScope.launch {
             try {
+                // An older APK treated Supabase HttpRequestException as permanent.
+                // Explicit retry is safe because server requests are idempotent.
+                if ((offline?.status()?.blocked ?: 0) > 0) offline?.retryBlocked()
                 val result=offline?.sync()
                 if(result!=null && result.blocked>0)
                     mutable.update{it.copy(error="Есть конфликтующие офлайн-изменения. Проверьте очередь перед удалением.")}
