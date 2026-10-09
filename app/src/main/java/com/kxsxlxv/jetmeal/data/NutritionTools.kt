@@ -44,23 +44,7 @@ class NutritionTools(
     // JSON decoding and catalogue ranking are CPU work even though the HTTP calls suspend.
     // Both manual input and external callers may safely invoke searches from the main thread.
     private suspend fun ranked(query: String): List<FoodCandidate> = withContext(searchDispatcher) {
-        val words = normalize(query).split(' ').filter(String::isNotBlank)
-        repository.rankedCatalogue().filter { candidate ->
-            val text = normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
-            words.all { text.contains(it) }
-        }.map { candidate ->
-            val name = normalize(candidate.name)
-            val confidence = when { query.isBlank() -> 0.5; name == normalize(query) -> 0.99; name.startsWith(normalize(query)) -> 0.9; else -> 0.75 }
-            candidate.copy(matchConfidence = confidence, matchReason = when {
-                query.isBlank() -> "Frequently used personal food"
-                confidence >= 0.99 -> "Exact normalized name"
-                confidence >= 0.9 -> "Name prefix"
-                else -> "Name, brand or source match"
-            })
-        }.sortedWith(compareByDescending<FoodCandidate> { candidate ->
-            val name = normalize(candidate.name)
-            when { query.isBlank() -> 0; name == normalize(query) -> 3; name.startsWith(normalize(query)) -> 2; else -> 1 }
-        }.thenByDescending { it.usageCount }.thenByDescending { it.lastUsed }.thenBy { it.name })
+        rankFoodCandidates(repository.rankedCatalogue(),query)
     }
 
     suspend fun searchCatalog(query: String, constraints: CatalogConstraints): ToolResult<List<FoodCandidate>> {
@@ -190,4 +174,41 @@ class NutritionTools(
     private fun JsonObjectBuilder.putNutrition(n: Nutrition, caloriesKey: String = "calories_kcal") {
         put(caloriesKey, n.calories); put("protein_g", n.protein); put("fat_g", n.fat); put("carbs_g", n.carbs)
     }
+}
+
+
+/** Identical relevance and ordering for online and offline search. Pure and unit-testable. */
+internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, limit: Int = 20): List<FoodCandidate> {
+    require(limit in 1..100)
+    fun normalize(value: String) = value.trim().lowercase(Locale.ROOT).replace('ё','е')
+        .replace(Regex("\\s+")," ")
+    val normalized = normalize(query)
+    val words=normalized.split(' ').filter(String::isNotBlank)
+    return candidates.asSequence().filter { candidate ->
+        val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
+        words.all(text::contains)
+    }.map { candidate ->
+        val name=normalize(candidate.name)
+        val score=when {
+            normalized.isEmpty() -> .5
+            name==normalized -> .99
+            name.startsWith(normalized) -> .9
+            else -> .75
+        }
+        candidate.copy(matchConfidence=score,matchReason=when {
+            normalized.isEmpty() -> "Frequently used personal food"
+            score>=.99 -> "Exact normalized name"
+            score>=.9 -> "Name prefix"
+            else -> "Name, brand or source match"
+        })
+    }.sortedWith(compareByDescending<FoodCandidate> { candidate ->
+        val name=normalize(candidate.name)
+        when {
+            normalized.isEmpty() -> 0
+            name==normalized -> 3
+            name.startsWith(normalized) -> 2
+            else -> 1
+        }
+    }.thenByDescending{it.usageCount}.thenByDescending{it.lastUsed}.thenBy{it.name})
+        .take(limit).toList()
 }
