@@ -274,6 +274,17 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         val q=vault.readState(user).third
         OfflineSyncStatus(q.size,q.count { it.blocked },count)
     }
+    /** User-initiated replay can safely retry a previously misclassified error.
+     * The same UUID and compare-and-swap revision still prevent duplicates or
+     * overwriting remote changes if it was a genuine conflict. */
+    suspend fun retryBlocked() = syncMutex.withLock {
+        val user=owner()
+        vault.change(user) { snapshot, foods, queue ->
+            Triple(snapshot, foods, queue.map { if (it.blocked) it.copy(blocked=false) else it })
+        }
+        schedule()
+    }
+
     suspend fun discardBlocked(): Int = syncMutex.withLock {
         val user=owner()
         vault.change(user) { snapshot,foods,queue ->
