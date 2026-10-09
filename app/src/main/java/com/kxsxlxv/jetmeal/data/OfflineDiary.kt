@@ -225,10 +225,12 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     fun networkChanges(): Flow<Boolean> = callbackFlow {
         val manager=context.getSystemService(ConnectivityManager::class.java)
         val callback=object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) { trySend(onlineNow()) }
-            override fun onLost(network: Network) { trySend(onlineNow()) }
+            // Android delivers capabilities *after* onAvailable; querying the
+            // manager synchronously inside callbacks can return stale results.
+            override fun onLost(network: Network) { trySend(false) }
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                trySend(onlineNow())
+                trySend(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
             }
         }
         manager.registerDefaultNetworkCallback(callback)
