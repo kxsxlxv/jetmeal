@@ -201,7 +201,7 @@ internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, 
         .replace(Regex("\\s+")," ")
     val normalized = normalize(query)
     val words=normalized.split(' ').filter(String::isNotBlank)
-    return candidates.asSequence().filter { candidate ->
+    val ranked = candidates.asSequence().filter { candidate ->
         val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
         words.all(text::contains)
     }.map { candidate ->
@@ -226,6 +226,9 @@ internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, 
             name.startsWith(normalized) -> 2
             else -> 1
         }
-    }.thenByDescending{it.usageCount}.thenByDescending{it.lastUsed}.thenBy{it.name})
-        .take(limit).toList()
+    }.thenByDescending{it.usageCount}.thenByDescending{it.lastUsed}.thenBy{it.name}).toList()
+    // Limit distinct products rather than variants so all sizes of a selected food
+    // remain available when users open it, including in the offline catalogue.
+    val visibleIds = ranked.asSequence().map { it.foodId }.distinct().take(limit).toSet()
+    return ranked.filter { it.foodId in visibleIds }
 }

@@ -43,6 +43,7 @@ private sealed interface Editor {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var chosenFood by remember { mutableStateOf<FoodCandidate?>(null) }
+    var foodVariants by remember { mutableStateOf<List<FoodCandidate>?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     val backStack = rememberNavBackStack(MainScreen.Timeline)
     val settings = state.destination == Destination.Settings
@@ -118,8 +119,8 @@ private sealed interface Editor {
                                         onSyncPicooc=viewModel::syncPicooc, onDisconnectPicooc=viewModel::disconnectPicooc) }
                                 }
                                 MainScreen.Timeline -> NutritionTimeline(state,viewModel,
-                                    onAdd={ viewModel.dismissError(); editor=Editor.Add(it); chosenFood=null; viewModel.search("") },
-                                    onEdit={ viewModel.dismissError(); editor=Editor.Edit(it) })
+                                    onAdd={ viewModel.dismissError(); editor=Editor.Add(it); chosenFood=null; foodVariants=null; viewModel.search("") },
+                                    onEdit={ viewModel.dismissError(); editor=Editor.Edit(it); chosenFood=null; foodVariants=null })
                             } }
                         })
                 }
@@ -138,19 +139,25 @@ private sealed interface Editor {
         )
         if(state.email!=null && editor!=null) {
             val writeBusy by rememberUpdatedState(state.busy)
-            ModalBottomSheet(onDismissRequest={ if(!state.busy) { editor=null; chosenFood=null } },
+            ModalBottomSheet(onDismissRequest={ if(!state.busy) { editor=null; chosenFood=null; foodVariants=null } },
                 sheetState=rememberBottomSheetState(initialValue=SheetValue.Hidden,
                     enabledValues=setOf(SheetValue.Hidden,SheetValue.Expanded),confirmValueChange={it!=SheetValue.Hidden || !writeBusy}),
                 sheetGesturesEnabled=!state.busy) {
                 Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding(),horizontalAlignment=Alignment.CenterHorizontally) {
                     val current=editor
                     if(current is Editor.Add) Text("Добавить · ${current.meal.label()}",style=MaterialTheme.typography.labelLarge,modifier=Modifier.padding(bottom=8.dp))
-                    if(current is Editor.Add && chosenFood==null) FoodSearchContent(
+                    if(current is Editor.Add && chosenFood==null && foodVariants==null) FoodSearchContent(
                         foods=state.foods,searching=state.searching,onSearch=viewModel::search,
-                        onSelect={chosenFood=it},
+                        onSelect={ variants ->
+                            if (variants.size==1) chosenFood=variants.single()
+                            else foodVariants=variants
+                        },
                         cachedCount=state.catalogueCount,catalogueLoading=state.catalogueLoading,
                         offline=state.cachedOffline,onDownload=viewModel::downloadCatalogue,
                         catalogueError=state.catalogueError)
+                    else if(current is Editor.Add && chosenFood==null && foodVariants!=null)
+                        FoodVariantsContent(variants=foodVariants.orEmpty(),
+                            onSelect={ chosenFood=it }, onBack={ foodVariants=null })
                     else {
                         val food=chosenFood
                         val entry=(current as? Editor.Edit)?.entry
@@ -160,7 +167,7 @@ private sealed interface Editor {
                             nutrition=food?.nutrition ?: entry!!.basisNutrition,estimated=food?.estimated ?: entry?.estimated ?: false,
                             busy=state.busy,error=state.error,successNotice=state.notice,
                             onSave={ quantity -> if(entry!=null) viewModel.edit(entry,quantity) else if(food!=null && current is Editor.Add) viewModel.log(food,quantity,current.meal,state.day) },
-                            onDelete=entry?.let { { viewModel.delete(it) } },onSuccess={editor=null;chosenFood=null},
+                            onDelete=entry?.let { { viewModel.delete(it) } },onSuccess={editor=null;chosenFood=null;foodVariants=null},
                             onBack=if(food!=null) ({ chosenFood=null }) else null,
                             measures=food?.measures ?: entry?.variantId?.let {state.catalogueMeasures[it]}.orEmpty(),
                             measurePreferenceKey=food?.id ?: entry?.variantId,

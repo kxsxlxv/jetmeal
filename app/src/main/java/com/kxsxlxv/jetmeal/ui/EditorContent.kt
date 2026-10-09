@@ -19,7 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -30,36 +33,57 @@ import com.kxsxlxv.jetmeal.domain.Nutrition
 import com.kxsxlxv.jetmeal.domain.QuantityScaling
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+/** The catalogue is variant-based, but search offers one item per actual product. */
+internal fun groupFoodSearchResults(foods: List<FoodCandidate>): List<List<FoodCandidate>> =
+    foods.groupBy { it.foodId }.values.map { variants ->
+        variants.sortedByDescending { it.measures.isNotEmpty() }
+    }
+
+internal fun compactFoodBrand(food: FoodCandidate): String? =
+    food.brand?.trim()?.takeIf { it.isNotBlank() && !food.name.contains(it, ignoreCase = true) }
+
+internal fun primaryFoodMeasure(food: FoodCandidate): FoodMeasure? =
+    food.measures.firstOrNull { it.isDefault } ?: food.measures.firstOrNull()
+
+internal fun variantTitle(food: FoodCandidate): String {
+    val measure = primaryFoodMeasure(food)
+    return if(measure != null) "1 ${measure.label}"
+    else "${number(food.amount, 1)} ${unitLabel(food.unit)}"
+}
+
+internal fun variantCountLabel(count: Int): String {
+    val suffix = if(count % 100 in 11..14) "вариантов" else when(count % 10) {
+        1 -> "вариант"
+        in 2..4 -> "варианта"
+        else -> "вариантов"
+    }
+    return "$count $suffix"
+}
+
 @Composable
 internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, onSearch: (String) -> Unit,
     cachedCount: Int = 0, catalogueLoading: Boolean = false, offline: Boolean = false,
     onDownload: () -> Unit = {}, catalogueError: String? = null,
-    onSelect: (FoodCandidate) -> Unit) {
+    onSelect: (List<FoodCandidate>) -> Unit) {
     val query = rememberTextFieldState()
     val searchBar = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
     val search by rememberUpdatedState(onSearch)
     val focus = LocalFocusManager.current
+    val groups = remember(foods) { groupFoodSearchResults(foods) }
     LaunchedEffect(query) {
         snapshotFlow { query.text.toString() }.distinctUntilChanged().collect { search(it) }
     }
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp).imePadding()
         .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // The official search input remains inline in the existing sheet; a second fullscreen
-        // search overlay would compete with the sheet's quantity-confirmation navigation.
         SearchBarDefaults.InputField(textFieldState = query, searchBarState = searchBar,
             onSearch = { focus.clearFocus() }, placeholder = { Text("Найти еду в каталоге") },
             leadingIcon = { SymbolIcon(JetMealSymbol.Search, null) }, modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(if(cachedCount>0) "Сохранено для офлайна: $cachedCount продуктов"
-                    else "Локальный каталог ещё не загружен",
-                    style=MaterialTheme.typography.labelMedium)
-                Text(if(offline) "Поиск по сохранённому каталогу"
-                    else "Каталог доступен без сети после загрузки",
-                    style=MaterialTheme.typography.labelSmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(if(cachedCount>0) "$cachedCount продуктов · офлайн"
+                else if(offline) "Нет офлайн-каталога" else "Каталог ещё не загружен",
+                modifier=Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(catalogueLoading) LoadingIndicator(Modifier.size(32.dp))
             else TextButton(onClick=onDownload) { Text("Обновить") }
         }
@@ -74,30 +98,78 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
         }
         LazyColumn(Modifier.heightIn(min = 120.dp, max = 420.dp),
             contentPadding = PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (!searching && foods.isEmpty()) item {
+            if (!searching && groups.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (cachedCount==0 && offline) "Каталог недоступен без предварительной загрузки"
                         else if (query.text.isBlank()) "В каталоге пока пусто" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleMediumEmphasized)
                     Text(if(cachedCount==0 && offline) "Подключитесь к интернету и нажмите «Обновить», чтобы сохранить весь каталог."
                         else if (query.text.isBlank()) "Добавьте продукт через подключённые инструменты питания."
-                        else "Попробуйте другое название, бренд или источник.",
+                        else "Попробуйте другое название или бренд.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            itemsIndexed(foods, key = { _, food -> food.id }) { index, food ->
-                SegmentedListItem(onClick = { focus.clearFocus(); onSelect(food) },
-                    shapes = ListItemDefaults.segmentedShapes(index, foods.size),
-                    supportingContent = { Text(listOfNotNull(food.brand, food.source,
-                        "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · ")) },
-                    overlineContent = if (food.estimated) {{ Text("Примерная пищевая ценность") }} else null,
-                    trailingContent = { Text("${number(food.nutrition.calories)}\nккал",
-                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }) {
+            itemsIndexed(groups, key = { _, variants -> variants.first().foodId }) { index, variants ->
+                val food = variants.first()
+                SegmentedListItem(onClick = { focus.clearFocus(); onSelect(variants) },
+                    shapes = ListItemDefaults.segmentedShapes(index, groups.size),
+                    supportingContent = {
+                        Text(listOfNotNull(compactFoodBrand(food),
+                            if (variants.size > 1) variantCountLabel(variants.size)
+                            else "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · "))
+                    },
+                    trailingContent = {
+                        if(variants.size > 1) SymbolIcon(JetMealSymbol.Next, null, Modifier.size(24.dp))
+                        else Text("${number(food.nutrition.calories)}\nккал",
+                            style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }) {
                     Text(food.name, style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
     }
+}
+
+/** Different nutrition/size variants belong inside a product, not in search results. */
+@Composable
+internal fun FoodVariantsContent(variants: List<FoodCandidate>,
+    onSelect: (FoodCandidate) -> Unit, onBack: () -> Unit) {
+    if (variants.isEmpty()) return
+    Column(Modifier.fillMaxWidth().widthIn(max = 640.dp)
+        .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        TextButton(onClick = onBack) {
+            SymbolIcon(JetMealSymbol.Back, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("К поиску")
+        }
+        Text(variants.first().name, style = MaterialTheme.typography.headlineSmallEmphasized)
+        LazyColumn(Modifier.heightIn(min = 120.dp, max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)) {
+            itemsIndexed(variants, key = { _, variant -> variant.id }) { index, variant ->
+                val measure = primaryFoodMeasure(variant)
+                SegmentedListItem(onClick = { onSelect(variant) },
+                    shapes = ListItemDefaults.segmentedShapes(index, variants.size),
+                    supportingContent = if (measure != null) {{
+                        Text("${number(measure.baseAmount, 1)} ${unitLabel(variant.unit)}")
+                    }} else null,
+                    trailingContent = {
+                        Text("${number(variant.nutrition.calories)}\nккал",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary)
+                    }) {
+                    Text(variantTitle(variant), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+    }
+}
+
+internal fun measureSymbol(measure: FoodMeasure): JetMealSymbol = when(measure.key) {
+    "egg_medium", "egg_large" -> JetMealSymbol.Protein
+    "tsp", "tbsp" -> JetMealSymbol.Spoon
+    else -> JetMealSymbol.Serving
 }
 
 @Composable
@@ -151,21 +223,48 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             }
         }
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
-        Text("Основа расчёта: ${number(basisAmount, 1)} ${unitLabel(unit)}",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if(measures.isNotEmpty()) {
-            Text("Как измерить?",style=MaterialTheme.typography.titleMediumEmphasized)
+            // Expressive connected toggle-button group: pictograms, not a second heading
+            // or redundant weight/portion labels. Spoken descriptions remain accessible.
+            val count = measures.size + 1
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected=chosen==null,onClick={
-                    text=decimalInput(quantity ?: amount);chosenId=null
-                },label={Text(unitLabel(unit))},enabled=!busy)
-                measures.forEach { measure ->
-                    FilterChip(selected=chosen?.id==measure.id,onClick={
-                        val current=quantity ?: amount
-                        chosenId=measure.id
-                        text=decimalInput(current/measure.baseAmount)
-                    },label={Text(measure.label)},enabled=!busy)
+                horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+                verticalAlignment = Alignment.CenterVertically) {
+                ToggleButton(checked=chosen==null,
+                    onCheckedChange={
+                        text=decimalInput(quantity ?: amount)
+                        chosenId=null
+                    },
+                    shapes=ButtonGroupDefaults.connectedLeadingButtonShapes(),
+                    enabled=!busy,
+                    modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                        .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" }) {
+                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(22.dp))
+                }
+                measures.forEachIndexed { index, measure ->
+                    val symbol = measureSymbol(measure)
+                    val repeated = measures.count { measureSymbol(it) == symbol } > 1
+                    ToggleButton(checked=chosen?.id==measure.id,
+                        onCheckedChange={
+                            val current=quantity ?: amount
+                            chosenId=measure.id
+                            text=decimalInput(current/measure.baseAmount)
+                        },
+                        shapes=if(index==count-2) ButtonGroupDefaults.connectedTrailingButtonShapes()
+                            else ButtonGroupDefaults.connectedMiddleButtonShapes(),
+                        enabled=!busy,
+                        modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                            .semantics { role=Role.RadioButton; contentDescription=measure.label }) {
+                        SymbolIcon(symbol,null,Modifier.size(22.dp))
+                        if(repeated) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(when(measure.key) {
+                                "egg_medium" -> "M"
+                                "egg_large" -> "L"
+                                else -> measure.label
+                            },style=MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
         }
@@ -186,18 +285,19 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             OutlinedIconButton(
                 onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(minimum))},
                 enabled=!busy && entered!=null && entered>minimum,
-                modifier=Modifier.size(48.dp)) { Text("−") }
+                modifier=Modifier.size(56.dp)) { Text("−") }
             TextField(text, { text = it },
                 label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
                 shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
                 enabled = !busy, isError = scaled == null,
-                supportingText = { if (scaled == null) Text("Количество больше нуля") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f))
+                modifier = Modifier.weight(1f).heightIn(min=56.dp))
             OutlinedIconButton(
                 onClick={text=decimalInput((entered ?: 0.0)+step)},
-                enabled=!busy,modifier=Modifier.size(48.dp)) { Text("+") }
+                enabled=!busy,modifier=Modifier.size(56.dp)) { Text("+") }
         }
+        if(scaled==null) Text("Введите количество больше нуля",
+            style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
         if(chosen!=null && quantity!=null) {
             Text("${if(chosen.approximate) "≈ " else ""}${number(quantity,1)} ${unitLabel(unit)} " +
                 "(${number(entered ?: 0.0,1)} ${chosen.label})",

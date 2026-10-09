@@ -32,6 +32,14 @@ class OfflineFoodSearchTest {
         assertTrue(rankFoodCandidates(catalogue,"несуществующий").isEmpty())
     }
 
+    @Test fun searchLimitCountsProductsAndRetainsAllTheirVariants() {
+        val regular=food("Чизбургер",id="base").copy(foodId="burger",amount=100.0)
+        val piece=food("Чизбургер",id="piece").copy(foodId="burger",amount=109.0)
+        val other=food("Каша",id="porridge")
+        assertEquals(setOf("base","piece"),
+            rankFoodCandidates(listOf(regular,piece,other),"чизбургер",1).map {it.id}.toSet())
+    }
+
     @Test fun completeCachedCatalogueSearchesBeyondFirstPage() {
         val catalogue=(1..600).map{food("Еда $it",id="$it")}
         assertEquals(600,rankFoodCandidates(catalogue,"еда",Int.MAX_VALUE).size)
