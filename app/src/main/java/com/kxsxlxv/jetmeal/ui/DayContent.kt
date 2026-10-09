@@ -9,8 +9,6 @@ import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -176,6 +174,9 @@ internal fun animatedHealthProgressFrame(
     animationKey: Any,
     target: HealthProgressFrame,
 ): State<HealthProgressFrame> {
+    // Use the existing single shared clock: no independent springs per ring/bar.
+    // Expressive effects motion is designed for bounded animated values.
+    val fillMotion = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
     val clock = remember(animationKey) { Animatable(0f) }
     var start by remember(animationKey) { mutableStateOf(HealthProgressFrame.Zero) }
     var end by remember(animationKey) { mutableStateOf(target) }
@@ -190,10 +191,7 @@ internal fun animatedHealthProgressFrame(
         clock.snapTo(0f)
         clock.animateTo(
             targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = 700,
-                easing = LinearEasing,
-            ),
+            animationSpec = fillMotion,
         )
     }
 
