@@ -4,6 +4,8 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -22,6 +25,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.domain.FoodCandidate
+import com.kxsxlxv.jetmeal.domain.FoodMeasure
+import com.kxsxlxv.jetmeal.domain.ChosenMeasure
 import com.kxsxlxv.jetmeal.domain.Nutrition
 import com.kxsxlxv.jetmeal.domain.QuantityScaling
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -99,11 +104,37 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
 @Composable
 internal fun AmountContent(name: String, unit: String, amount: Double, basisAmount: Double, nutrition: Nutrition,
     estimated: Boolean, busy: Boolean, error: String?, onSave: (Double) -> Unit, onDelete: (() -> Unit)?,
-    onSuccess: () -> Unit, onBack: (() -> Unit)?, successNotice: String? = null) {
-    var text by rememberSaveable(name, amount) { mutableStateOf(decimalInput(amount)) }
+    onSuccess: () -> Unit, onBack: (() -> Unit)?, successNotice: String? = null,
+    measures: List<FoodMeasure> = emptyList(), measurePreferenceKey: String? = null,
+    enteredMeasureKey: String? = null, enteredMeasureQuantity: Double? = null,
+    enteredMeasureBaseAmount: Double? = null,
+    onMeasuredSave: ((Double,ChosenMeasure)->Unit)? = null) {
+    val context=LocalContext.current
+    val prefs=remember {context.getSharedPreferences("jetmeal_measures",android.content.Context.MODE_PRIVATE)}
+    val saved=remember(measurePreferenceKey) {
+        measurePreferenceKey?.let {prefs.getString(it,null)}
+    }
+    val first=remember(measures,measurePreferenceKey,enteredMeasureKey) {
+        measures.firstOrNull { it.key==enteredMeasureKey &&
+            (enteredMeasureBaseAmount==null || kotlin.math.abs(it.baseAmount-enteredMeasureBaseAmount)<.002) }
+            ?: measures.firstOrNull { it.key==saved }
+            ?: measures.firstOrNull { it.isDefault }
+    }
+    var chosenId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
+        mutableStateOf(first?.id)
+    }
+    val chosen=measures.firstOrNull {it.id==chosenId}
+    val initial=if(chosen!=null) {
+        if(chosen.key==enteredMeasureKey && enteredMeasureQuantity!=null) enteredMeasureQuantity
+        else amount/chosen.baseAmount
+    } else amount
+    var text by rememberSaveable(name, amount, measurePreferenceKey) { mutableStateOf(decimalInput(initial)) }
     var pending by remember { mutableStateOf(false) }
-    val quantity = text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
-    val scaled = quantity?.let { runCatching { QuantityScaling.scale(basisAmount, nutrition, it) }.getOrNull() }
+    val entered = text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
+    val measured = if(entered!=null && chosen!=null) runCatching {ChosenMeasure(chosen,entered)}.getOrNull() else null
+    val quantity=if(measured!=null) measured.baseAmount else entered
+    val scaled = quantity?.takeIf {it>0 && it<=1000000}?.let {
+        runCatching { QuantityScaling.scale(basisAmount, nutrition, it) }.getOrNull() }
     LaunchedEffect(busy, pending, error, successNotice) {
         if (pending && !busy && error != null) pending = false
         else if (pending && !busy && (successNotice?.contains("Можно отменить") == true ||
@@ -123,13 +154,35 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
         Text("Основа расчёта: ${number(basisAmount, 1)} ${unitLabel(unit)}",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if(measures.isNotEmpty()) {
+            Text("Как измерить?",style=MaterialTheme.typography.titleMediumEmphasized)
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected=chosen==null,onClick={
+                    text=decimalInput(quantity ?: amount);chosenId=null
+                },label={Text(unitLabel(unit))},enabled=!busy)
+                measures.forEach { measure ->
+                    FilterChip(selected=chosen?.id==measure.id,onClick={
+                        val current=quantity ?: amount
+                        chosenId=measure.id
+                        text=decimalInput(current/measure.baseAmount)
+                    },label={Text(measure.label)},enabled=!busy)
+                }
+            }
+        }
         if (estimated) Text("Примерная пищевая ценность", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.tertiary)
-        TextField(text, { text = it }, label = { Text("Количество (${unitLabel(unit)})") }, singleLine = true,
+        TextField(text, { text = it }, label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
             shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
             enabled = !busy, isError = scaled == null,
             supportingText = { if (scaled == null) Text("Введите количество больше нуля") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+        if(chosen!=null && quantity!=null) {
+            Text("${if(chosen.approximate) "≈ " else ""}${number(quantity,1)} ${unitLabel(unit)} " +
+                "(${number(entered ?: 0.0,1)} ${chosen.label})",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         scaled?.let {
             Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.primaryContainer) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -141,7 +194,20 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             }
         }
         error?.let { EditorError(it) }
-        Button(onClick = { quantity?.let { pending = true; onSave(it) } }, shapes = ButtonDefaults.shapes(),
+        Button(onClick = {
+            quantity?.let {
+                pending = true
+                if(measured!=null && onMeasuredSave!=null) {
+                    measurePreferenceKey?.let { key ->
+                        prefs.edit().putString(key,measured.measure.key).apply()
+                    }
+                    onMeasuredSave(it,measured)
+                } else {
+                    measurePreferenceKey?.let { key -> prefs.edit().remove(key).apply() }
+                    onSave(it)
+                }
+            }
+        }, shapes = ButtonDefaults.shapes(),
             enabled = scaled != null && !busy && !pending, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
             Text(if (onDelete == null) "Добавить еду" else "Сохранить количество")
         }
