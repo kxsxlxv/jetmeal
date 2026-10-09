@@ -48,6 +48,10 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         if (intent?.getBooleanExtra(EXTRA_OPEN_TODAY, false) == true) {
             model.openDate(LocalDate.now())
+            // A tap on an existing widget must request a fresh snapshot now;
+            // onResume refreshes the foreground diary as well.
+            (application as JetMealApplication).widgetCoordinator.requestSync()
+            model.refresh()
             intent.removeExtra(EXTRA_OPEN_TODAY)
         }
     }
