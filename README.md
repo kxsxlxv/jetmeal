@@ -174,9 +174,24 @@ Run Android lint:
   recently downloaded timeline period in an Android Keystore AES-GCM encrypted
   private file (excluded from backups). That period can be read while offline;
   uncached date ranges must be loaded online before becoming available offline.
-- Previously searched personal catalogue foods are cached, allowing manual
-  food logging without internet once the catalogue was loaded at least once.
-  Searches for never-loaded foods still need network access.
+- After authenticated timeline refresh, JetMeal asynchronously downloads and
+  encrypts the **entire personal food catalogue**, not merely earlier search
+  results. Online and offline matching share the same Cyrillic normalization,
+  confidence ordering and usage ranking. Search exposes the cached item count
+  and an explicit **Обновить** action; newly added cloud foods become available
+  offline after refreshing that catalogue. Initial download still requires
+  a working connection to Supabase. The encrypted catalogue belongs to the
+  signed-in owner and is never bundled with the APK.
+- Network availability and **Supabase availability** are distinct. A validated
+  Android connection is not proof the database is reachable. After a failed
+  remote refresh, a banner identifies whether the network is absent or Supabase
+  is unreachable, always offers manual **Повторить**, and retries after
+  network changes or with bounded 3–60-second backoff. The banner disappears
+  only after a genuine successful server refresh.
+- Background diary reads do not await outbox replay. Transport exceptions from
+  the Supabase SDK are retryable and do not silently convert unsent operations
+  into permanent conflicts. Previously blocked operations can be explicitly
+  rechecked with identical UUIDs and revision guards.
 - Manual food log, quantity correction and soft delete are committed to a
   persistent, owner-scoped encrypted outbox first and displayed provisionally.
   Other actions (target changes, zero-day confirmations, undo of already
