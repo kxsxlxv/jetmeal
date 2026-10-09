@@ -161,7 +161,17 @@ private sealed interface Editor {
                             busy=state.busy,error=state.error,successNotice=state.notice,
                             onSave={ quantity -> if(entry!=null) viewModel.edit(entry,quantity) else if(food!=null && current is Editor.Add) viewModel.log(food,quantity,current.meal,state.day) },
                             onDelete=entry?.let { { viewModel.delete(it) } },onSuccess={editor=null;chosenFood=null},
-                            onBack=if(food!=null) ({ chosenFood=null }) else null)
+                            onBack=if(food!=null) ({ chosenFood=null }) else null,
+                            measures=food?.measures ?: entry?.variantId?.let {state.catalogueMeasures[it]}.orEmpty(),
+                            measurePreferenceKey=food?.id ?: entry?.variantId,
+                            enteredMeasureKey=entry?.enteredMeasureKey,
+                            enteredMeasureQuantity=entry?.enteredMeasureQuantity,
+                            enteredMeasureBaseAmount=entry?.enteredMeasureBaseAmount,
+                            onMeasuredSave={ quantity,selected ->
+                                if(entry!=null) viewModel.edit(entry,quantity,selected)
+                                else if(food!=null && current is Editor.Add)
+                                    viewModel.log(food,quantity,current.meal,state.day,selected)
+                            })
                     }
                 }
             }
