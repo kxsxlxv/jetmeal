@@ -149,7 +149,8 @@ private sealed interface Editor {
                         foods=state.foods,searching=state.searching,onSearch=viewModel::search,
                         onSelect={chosenFood=it},
                         cachedCount=state.catalogueCount,catalogueLoading=state.catalogueLoading,
-                        offline=state.cachedOffline,onDownload=viewModel::downloadCatalogue)
+                        offline=state.cachedOffline,onDownload=viewModel::downloadCatalogue,
+                        catalogueError=state.catalogueError)
                     else {
                         val food=chosenFood
                         val entry=(current as? Editor.Edit)?.entry
