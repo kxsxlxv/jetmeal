@@ -98,22 +98,17 @@ internal class ConnectionDiagnostics(context: Context) {
     /** Only structured allowlisted fields reach persistent storage or logcat. */
     @Synchronized fun networkTrace(trace: NetworkTrace) {
         when {
-            trace.cause != null -> {
-                sawTransportFailure = true
+            trace.cause != null || (trace.status != null && trace.status >= 400) -> {
+                failedRoutes.add(trace.route)
                 record(trace.safeLine())
             }
-            trace.status != null && trace.status >= 400 -> {
-                sawTransportFailure = true
-                record(trace.safeLine())
-            }
-            sawTransportFailure -> {
-                sawTransportFailure = false
-                record(trace.safeLine())
-            }
+            failedRoutes.remove(trace.route) -> record(trace.safeLine())
         }
     }
 
-    private var sawTransportFailure = false
+    // Only a successful request of the same route can claim recovery.
+    // A healthy widget request must not hide continuing diary failures.
+    private val failedRoutes = mutableSetOf<NetworkRoute>()
 
     fun failure(operation: ConnectionOperation, error: Throwable) {
         val failure = if (operation == ConnectionOperation.Auth) authFailures.resolve(error) else ConnectionFailure.from(error)
