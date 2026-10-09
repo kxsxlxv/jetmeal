@@ -36,7 +36,7 @@ class JetMealUiTest {
         compose.setContent {
             JetmealTheme {
                 Surface {
-                    if (selected == null) FoodSearchContent(listOf(food), false, {}) { selected = it }
+                    if (selected == null) FoodSearchContent(listOf(food), false, {}) { selected = it.single() }
                     else AmountContent(food.name, food.unit, food.amount, food.amount, food.nutrition,
                         false, false, null, { writes.add(it) }, null, {}, null)
                 }
