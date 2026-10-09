@@ -179,7 +179,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
                 diary.rememberFoods(foods)
                 catalogueOwner = ownerId
-                mutable.update { it.copy(catalogueCount = foods.size,
+                mutable.update { it.copy(catalogueCount = foods.map { it.foodId }.distinct().size,
                     catalogueMeasures=foods.associate { it.id to it.measures },catalogueError=null) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
@@ -542,7 +542,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         requireNotNull(repository).rankedCatalogue()
                     }
                     diary?.rememberFoods(foods)
-                    if(diary!=null) mutable.update { it.copy(catalogueCount=foods.size) }
+                    if(diary!=null) mutable.update { it.copy(catalogueCount=foods.map { it.foodId }.distinct().size) }
                     rankFoodCandidates(foods,query)
                 }
                 ensureActive()
