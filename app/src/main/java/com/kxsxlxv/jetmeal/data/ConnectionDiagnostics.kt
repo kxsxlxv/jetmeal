@@ -43,7 +43,7 @@ internal data class ConnectionFailure(
                 causes.any { it is UnknownHostException } -> ConnectionFailureKind.Dns
                 causes.any { it is SSLException } -> ConnectionFailureKind.Tls
                 causes.any { it is HttpRequestTimeoutException || it is SocketTimeoutException } -> ConnectionFailureKind.Timeout
-                causes.any { it is IOException } -> ConnectionFailureKind.Transport
+                causes.any { it is IOException || it is HttpRequestException } -> ConnectionFailureKind.Transport
                 else -> ConnectionFailureKind.Unknown
             }
             return ConnectionFailure(kind)
