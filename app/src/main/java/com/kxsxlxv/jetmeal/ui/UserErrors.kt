@@ -9,6 +9,7 @@ import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.exception.SessionRequiredException
 import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.exceptions.HttpRequestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import java.io.IOException
 import javax.net.ssl.SSLException
@@ -34,7 +35,7 @@ internal object UserErrors {
         if (causes.any { it is SSLException }) {
             return "Не удалось установить защищённое соединение. Проверьте интернет и дату на устройстве."
         }
-        if (causes.any { it is IOException || it is HttpRequestTimeoutException }) {
+        if (causes.any { it is IOException || it is HttpRequestTimeoutException || it is HttpRequestException }) {
             return if (operation == ErrorOperation.Data)
                 "Связь прервалась. Проверьте интернет и обновите дневник перед повторной попыткой."
             else "Не удалось подключиться для входа. Проверьте интернет и повторите попытку."
