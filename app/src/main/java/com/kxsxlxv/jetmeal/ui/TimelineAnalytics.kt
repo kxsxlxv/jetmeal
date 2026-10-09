@@ -51,7 +51,8 @@ internal object CalendarAdherence {
     fun marker(actual:Double,target:Double?):String = when(status(actual,target)) {"Близко к норме"->"≈"; "Выше нормы"->"↑"; "Ниже нормы"->"↓"; else->"·"}
 }
 
-@Composable internal fun WeekContent(week:WeekState?,onTargets:()->Unit,onDay:(LocalDate)->Unit={}) {
+@Composable internal fun WeekContent(week:WeekState?,onTargets:()->Unit,onDay:(LocalDate)->Unit={},
+    dailyTargets: Map<LocalDate, com.kxsxlxv.jetmeal.domain.Targets> = emptyMap()) {
     if(week==null) { TargetsPrompt(onTargets); return }
     val palette=nutritionColors()
     val maxValue=week.days.maxOf {maxOf(it.actual,it.target)}.coerceAtLeast(1.0)
@@ -64,6 +65,7 @@ internal object CalendarAdherence {
             Text(number(week.effectiveTarget),style=MaterialTheme.typography.displayMediumEmphasized)
             Text("ккал · ${if(today in week.start..week.end) "норма на сегодня" else if(today>week.end) "норма к концу недели" else "начальная дневная норма"}",color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        item { WeekBudgetExplanation(week,dailyTargets) }
         item {
             Text("Ритм недели",style=MaterialTheme.typography.titleLargeEmphasized,modifier=Modifier.semantics {heading()})
             Spacer(Modifier.height(16.dp))
