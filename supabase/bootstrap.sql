@@ -1161,9 +1161,9 @@ create or replace function public.jetmeal_sync_mutation(
     p_input jsonb,
     p_expected_updated_at timestamptz default null
 ) returns jsonb language sql security invoker set search_path = ''
-as $
+as $replay$
     select private.apply_offline_mutation(p_request_id,p_operation,p_input,p_expected_updated_at)
-$;
+$replay$;
 revoke all on function public.jetmeal_sync_mutation(uuid,text,jsonb,timestamptz)
     from public, anon;
 grant execute on function public.jetmeal_sync_mutation(uuid,text,jsonb,timestamptz)
