@@ -23,6 +23,14 @@ class FoodSearchPresentationTest {
         assertEquals(listOf("piece","grams"),grouped.first().map { it.id })
     }
 
+    @Test fun russianVariantCountsAreGrammaticallyCorrect() {
+        assertEquals("1 вариант", variantCountLabel(1))
+        assertEquals("2 варианта", variantCountLabel(2))
+        assertEquals("5 вариантов", variantCountLabel(5))
+        assertEquals("11 вариантов", variantCountLabel(11))
+        assertEquals("21 вариант", variantCountLabel(21))
+    }
+
     @Test fun searchBrandIsNotDuplicatedOrMixedWithPhotoSource() {
         assertEquals("Ростикс",compactFoodBrand(food("1","1","Ростмастер","Ростикс","Ростикс")))
         assertNull(compactFoodBrand(food("2","2","Ростикс Чизбургер","Ростикс","Фото пользователя 07.10.2026")))
