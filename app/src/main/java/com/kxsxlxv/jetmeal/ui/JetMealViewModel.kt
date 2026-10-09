@@ -329,22 +329,21 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     ConnectionFailureKind.Timeout,ConnectionFailureKind.Transport,
                     ConnectionFailureKind.Service,ConnectionFailureKind.RateLimit)
                 val connected=offline?.onlineNow() == true
-                val warning = if (!retryable) {
-                    "Не удалось обработать загруженные данные. Показана последняя сохранённая версия."
-                } else if (connected) {
-                    "Не удалось завершить запрос к Supabase. Показаны сохранённые данные."
-                } else {
-                    "Нет подключения к интернету. Показаны сохранённые данные."
+                val reason = when {
+                    !retryable && issue.status != null -> "Supabase отклонил запрос (HTTP ${issue.status})."
+                    !retryable -> "Ошибка обработки данных приложения."
+                    connected -> "Не удалось завершить запрос к Supabase."
+                    else -> "Нет подключения к интернету."
                 }
                 val cached=runCatching { offline?.cachedSnapshot() }.getOrNull()
                 val requested=mutable.value
                 val cachedValid=cached?.let { validCacheFor(it,requested) } ?: false
                 if(cachedValid && cached!=null) {
                     displaySnapshot(cached,requested,true)
-                    mutable.update { it.copy(connectionWarning=warning) }
+                    mutable.update { it.copy(connectionWarning="$reason Показаны сохранённые данные.") }
                 } else {
                     if(generation==refreshGeneration)
-                        mutable.update {it.copy(connectionWarning=warning,
+                        mutable.update {it.copy(connectionWarning=reason,
                             error=if (retryable) "Не удалось обновить период с Supabase. Повторите попытку."
                                 else "Ошибка обработки данных. Откройте диагностику подключения и сообщите детали.")}
                 }
