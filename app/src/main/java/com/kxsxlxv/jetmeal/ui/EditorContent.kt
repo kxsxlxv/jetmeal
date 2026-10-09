@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, onSearch: (String) -> Unit,
     onSelect: (FoodCandidate) -> Unit, cachedCount: Int = 0,
     catalogueLoading: Boolean = false, offline: Boolean = false,
-    onDownload: () -> Unit = {}) {
+    onDownload: () -> Unit = {}, catalogueError: String? = null) {
     val query = rememberTextFieldState()
     val searchBar = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
     val search by rememberUpdatedState(onSearch)
@@ -58,6 +58,10 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
             }
             if(catalogueLoading) LoadingIndicator(Modifier.size(32.dp))
             else TextButton(onClick=onDownload) { Text("Обновить") }
+        }
+        catalogueError?.let { message ->
+            Text(message,style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.error)
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(if (query.text.isBlank()) "Часто добавляете" else "Результаты поиска",
