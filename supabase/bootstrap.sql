@@ -1277,8 +1277,7 @@ cross join (values ('egg_medium','Среднее',44.0,false,'Примерно 4
                    ('egg_large','Большое',50.0,true,'Примерно 50 г съедобной части'))
  as m(key,label,grams,def,source)
 where v.archived_at is null and f.archived_at is null and v.serving_unit='g'
- and f.name ~* '^яйцо( куриное)?( сырое)?
-
+ and f.name ~* '^яйцо( куриное)?( сырое)?$'
 on conflict do nothing;
 insert into public.food_measures(owner_id,food_variant_id,measure_key,label,base_amount,
  is_default,is_approximate,source_note)
@@ -1288,8 +1287,7 @@ cross join (values ('tsp','ч. л.',4.0,'Примерно 4 г сахара'),
                    ('tbsp','ст. л.',12.0,'Примерно 12 г сахара'))
  as m(key,label,grams,source)
 where v.archived_at is null and f.archived_at is null and v.serving_unit='g'
- and f.name ~* '^сахар( белый| песок)?
-
+ and f.name ~* '^сахар( белый| песок)?$'
 on conflict do nothing;
 
 create or replace function private.nutrition_operation(p_operation text,p_input jsonb)
