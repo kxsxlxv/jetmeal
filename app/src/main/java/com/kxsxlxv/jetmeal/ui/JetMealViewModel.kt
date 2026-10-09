@@ -33,6 +33,7 @@ data class AppState(
     val connectionWarning: String? = null,
     val catalogueCount: Int = 0,
     val catalogueLoading: Boolean = false,
+    val catalogueError: String? = null,
     val pendingWrites: Int = 0,
     val blockedWrites: Int = 0,
     val picoocConnected: Boolean = false, val weightLoading: Boolean = false,
@@ -135,7 +136,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             offline.networkChanges().collect { available ->
                 val loggedIn = repository?.client?.auth?.currentUserOrNull() != null
                 if (!loggedIn) return@collect
-                if (available && mutable.value.cachedOffline) {
+                if (available && (mutable.value.cachedOffline || mutable.value.connectionWarning!=null)) {
                     retryJob?.cancel()
                     retryAttempt = 0
                     refresh()
@@ -160,21 +161,27 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         if (catalogueJob?.isActive == true) return
         if (!force && catalogueOwner == ownerId) return
         catalogueJob = viewModelScope.launch(Dispatchers.Default) {
-            mutable.update { it.copy(catalogueLoading = true) }
+            mutable.update { it.copy(catalogueLoading = true, catalogueError=null) }
             try {
                 val count = diary.catalogueCount()
                 if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
                 mutable.update { it.copy(catalogueCount = count) }
-                if (!diary.onlineNow()) return@launch
+                if (!diary.onlineNow()) {
+                    mutable.update { it.copy(catalogueError=
+                        "Нет подключения: каталог загрузится, когда появится интернет.") }
+                    return@launch
+                }
                 val foods = repo.rankedCatalogue()
                 ensureActive()
                 if (repo.client.auth.currentUserOrNull()?.id != ownerId) return@launch
                 diary.rememberFoods(foods)
                 catalogueOwner = ownerId
-                mutable.update { it.copy(catalogueCount = foods.size) }
+                mutable.update { it.copy(catalogueCount = foods.size,catalogueError=null) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 repo.diagnostics?.failure(ConnectionOperation.Catalogue, error)
+                mutable.update { it.copy(catalogueError=
+                    "Не удалось загрузить каталог с Supabase. Сохранённые продукты доступны; повторите позже.") }
             } finally {
                 if (repo.client.auth.currentUserOrNull()?.id == ownerId)
                     mutable.update { it.copy(catalogueLoading = false) }
@@ -192,7 +199,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         retryAttempt++
         retryJob = viewModelScope.launch {
             delay(seconds * 1_000L)
-            if (diary.onlineNow() && mutable.value.cachedOffline &&
+            if (diary.onlineNow() &&
+                (mutable.value.cachedOffline || mutable.value.connectionWarning != null) &&
                 repository?.client?.auth?.currentUserOrNull() != null) refresh()
         }
     }
