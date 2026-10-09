@@ -178,12 +178,20 @@ class SupabaseRepository(val client: SupabaseClient) {
     /** Paginate the personal catalogue; never silently truncate search or usage ranking. */
     suspend fun catalogue(): List<FoodCandidate> {
         val foods = activeRows("foods").associateBy { it.string("id") }
+        val measures = activeRows("food_measures").groupBy { it.string("food_variant_id") }
         return activeRows("food_variants").mapNotNull { variant ->
             val food = foods[variant.string("food_id")] ?: return@mapNotNull null
             FoodCandidate(variant.string("id"), food.string("id"), food.string("name"),
                 food.optional("brand"), food.optional("source"), variant.number("serving_amount"),
                 variant.string("serving_unit"), nutrition(variant),
-                variant["is_estimated"]?.jsonPrimitive?.boolean ?: false)
+                variant["is_estimated"]?.jsonPrimitive?.boolean ?: false,
+                measures=measures[variant.string("id")].orEmpty().map { measure ->
+                    FoodMeasure(measure.string("id"), measure.string("food_variant_id"),
+                        measure.string("measure_key"),measure.string("label"),
+                        measure.number("base_amount"),
+                        measure["is_approximate"]?.jsonPrimitive?.boolean ?: false,
+                        measure["is_default"]?.jsonPrimitive?.boolean ?: false)
+                })
         }
     }
 
@@ -258,7 +266,12 @@ class SupabaseRepository(val client: SupabaseClient) {
             confidence = row["confidence"]?.jsonPrimitive?.doubleOrNull,
             estimated = row["is_estimated_snapshot"]?.jsonPrimitive?.boolean ?: false,
             updatedAt = row.optional("updated_at")?.let(Instant::parse),
-            mealGroupId = row.optional("meal_group_id")
+            mealGroupId = row.optional("meal_group_id"),
+            enteredMeasureLabel = row.optional("entered_measure_label"),
+            enteredMeasureKey = row.optional("entered_measure_key"),
+            enteredMeasureQuantity = row["entered_measure_quantity"]?.jsonPrimitive?.doubleOrNull,
+            enteredMeasureBaseAmount = row["entered_measure_base_amount"]?.jsonPrimitive?.doubleOrNull,
+            enteredMeasureApproximate = row["entered_measure_approximate"]?.jsonPrimitive?.boolean ?: false
         )
 
         private fun nutrition(row: JsonObject) = Nutrition(row.number("calories_kcal"),
