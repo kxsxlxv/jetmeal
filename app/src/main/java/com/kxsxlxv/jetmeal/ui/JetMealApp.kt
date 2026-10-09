@@ -43,6 +43,7 @@ private sealed interface Editor {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var editor by remember { mutableStateOf<Editor?>(null) }
     var chosenFood by remember { mutableStateOf<FoodCandidate?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
     val backStack = rememberNavBackStack(MainScreen.Timeline)
     val settings = state.destination == Destination.Settings
     val snackbar = remember { SnackbarHostState() }
@@ -78,6 +79,32 @@ private sealed interface Editor {
             ) { insets ->
                 Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
                     if(settings && state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if(state.cachedOffline || state.pendingWrites>0) {
+                        Surface(color=MaterialTheme.colorScheme.secondaryContainer) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),
+                                verticalAlignment=Alignment.CenterVertically,
+                                horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        when {
+                                            state.blockedWrites>0 -> "Нужна проверка: ${state.blockedWrites} офлайн-изменений"
+                                            state.pendingWrites>0 -> "Ожидают отправки: ${state.pendingWrites}"
+                                            else -> "Офлайн · показана сохранённая копия"
+                                        },
+                                        style=MaterialTheme.typography.labelMedium)
+                                    if(state.blockedWrites>0) Text(
+                                        "Запись могла измениться через ChatGPT. Не перезаписываем её автоматически.",
+                                        style=MaterialTheme.typography.labelSmall)
+                                }
+                                if(state.pendingWrites>0) TextButton(onClick=viewModel::syncPending) {
+                                    Text("Повторить")
+                                }
+                                if(state.blockedWrites>0) TextButton(onClick={confirmDiscard=true}) {
+                                    Text("Разобрать")
+                                }
+                            }
+                        }
+                    }
                     NavDisplay(backStack=backStack,onBack=viewModel::closeSettings,
                         modifier=Modifier.fillMaxSize(),entryProvider=entryProvider {
                             entry<MainScreen> { screen -> when(screen) {
@@ -97,6 +124,17 @@ private sealed interface Editor {
                 }
             }
         }
+        if(confirmDiscard) AlertDialog(
+            onDismissRequest={confirmDiscard=false},
+            title={Text("Удалить конфликтующие правки?")},
+            text={Text("Неотправленные действия с конфликтом будут удалены только с телефона. " +
+                "Подтверждённые записи Supabase останутся без изменений.")},
+            confirmButton={TextButton(onClick={
+                confirmDiscard=false
+                viewModel.discardBlocked()
+            }){Text("Удалить правки")}},
+            dismissButton={TextButton(onClick={confirmDiscard=false}){Text("Отмена")}},
+        )
         if(state.email!=null && editor!=null) {
             val writeBusy by rememberUpdatedState(state.busy)
             ModalBottomSheet(onDismissRequest={ if(!state.busy) { editor=null; chosenFood=null } },
@@ -219,7 +257,8 @@ private sealed interface Editor {
                         state.targetVersions.lastOrNull { it.date <= state.day }?.targets ?: state.targets,
                         state.week,onAdd,onEdit,model::openSettings,
                         confirmedZero=state.day in state.confirmedZeroDays,onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
-                    TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate)
+                    TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate,
+                        dailyTargets=state.budgetTargets)
                     TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),state.monthCalories,state.monthTargets,model::setMonth,model::openDate,selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
                     TimeScale.Quarter -> QuarterContent(date,state.monthCalories,state.monthTargets,model::openDate,confirmedZeroDays=state.confirmedZeroDays)
                 } }
