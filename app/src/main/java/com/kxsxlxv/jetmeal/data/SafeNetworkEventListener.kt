@@ -4,7 +4,6 @@ import okhttp3.Call
 import okhttp3.EventListener
 import okhttp3.Handshake
 import okhttp3.Protocol
-import okhttp3.Request
 import okhttp3.Response
 import java.io.EOFException
 import java.io.IOException
@@ -17,7 +16,6 @@ import java.net.ProtocolException
 import java.net.Proxy
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
@@ -165,11 +163,12 @@ internal class SafeNetworkEventListener(
         if (phase == NetworkPhase.Dns) dnsMs = duration(dnsStart)
         if (phase == NetworkPhase.Tcp) tcpMs = duration(tcpStart)
         if (phase == NetworkPhase.Tls) tlsMs = duration(tlsStart)
-        diagnostics.networkTrace(snapshot(networkCause(ioe)))
+        runCatching { diagnostics.networkTrace(snapshot(networkCause(ioe))) }
+        // Telemetry must never change the outcome of the user's original request.
     }
 
     @Synchronized override fun callEnd(call: Call) {
-        diagnostics.networkTrace(snapshot(null))
+        runCatching { diagnostics.networkTrace(snapshot(null)) }
     }
 
     private fun snapshot(cause: NetworkCause?): NetworkTrace = NetworkTrace(
