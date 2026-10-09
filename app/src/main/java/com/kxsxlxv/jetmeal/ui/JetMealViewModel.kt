@@ -303,7 +303,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         widgetCoordinator.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) {
-                        repository.diagnostics?.failure(ConnectionOperation.Widget,error,ConnectionStage.WidgetUpdate)
+                        repository.diagnostics?.failure(ConnectionOperation.Widget,error)
                     }
                 }
                 // Upload queued actions after successfully loading live data. A
