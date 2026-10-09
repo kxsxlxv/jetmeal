@@ -211,6 +211,29 @@ Run Android lint:
   cannot recover unsent offline writes; sync before uninstalling.
 - The home-screen widget may lag until the outbox has synchronized.
 
+## Diagnosing Supabase connection failures
+
+In **Settings → Connection diagnostics**, the user can refresh and copy a local
+report. The shared Ktor/OkHttp engine records the final failure of each request
+at the transport boundary, before supabase-kt can strip `IOException.cause`.
+Reports include a coarse route category (Auth, Diary, Catalogue, Mutation,
+Other), failed network phase (DNS/TCP/TLS/request/response), allowlisted error
+type, total latency and available DNS/TCP/TLS durations. An HTTP 4xx/5xx
+response includes numeric status and a validated `sb-request-id` if supplied.
+After a failure, the next successful request is logged as `result=recovered`.
+
+Pooled connections legitimately omit DNS/TCP/TLS timings. Failure events may
+also be missing if a request never reached OkHttp (for example, a locally
+rejected operation). Android `network=wifi:validated` proves only validated
+network transport, **not** that Supabase was reachable.
+
+No endpoint URL, hostname, IP address, query string, headers, credentials,
+session token, body, raw exception message or exception stack trace is retained,
+even in debug builds. Recent history is capped at 160 entries in app-private
+preferences. The UI shows the last 12 or last 60; **Copy report** includes all
+currently stored entries. This feature has no special diagnostic permissions
+and does not send logs to third-party services.
+
 ## Current product decisions
 
 - Food calculation from weight-loss goals is outside JetMeal. The app stores already-decided calorie and macro targets.
