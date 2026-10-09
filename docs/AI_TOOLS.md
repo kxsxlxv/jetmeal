@@ -38,6 +38,25 @@ Every tool should eventually return an envelope equivalent to:
 
 `action_id` groups all writes produced by one user intent. For example, “два сырка и банан” may create three diary rows while remaining one undoable action.
 
+## Food-specific measures (additive operation fields)
+
+An optional catalogue-specific `measure_id` and positive
+`measure_quantity` may be provided to `log_food` or `update_log`.
+When supplied, both values are required, the chosen measure must belong to
+the authenticated user's chosen food variant, and the server derives
+`quantity` in the variant's underlying g/ml serving unit. The caller
+must **never trust a client-computed conversion as authoritative**. Normal
+`quantity` and `quantity_unit` operations remain valid and backwards
+compatible. Invalid, archived and cross-variant measure IDs are rejected.
+
+Measures are RLS-protected `food_measures` rows. A historical entry stores
+its originally entered quantity, unit label and conversion factor as a
+snapshot, alongside its existing immutable nutritional basis. Future
+catalogue updates never silently rewrite previous meals. Default measures
+are conservative (e.g. explicitly sourced restaurant portions), and
+estimated measures (sugar spoons, medium/large eggs) must indicate they are
+approximate. The egg UI presents only **Среднее** and **Большое**.
+
 ## Identity and authorization
 
 Tools operate as the intended authenticated Supabase user and preserve RLS.
