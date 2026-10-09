@@ -163,6 +163,39 @@ Run Android lint:
 - No PICOOC account credentials are included in CI; successful live PICOOC account
   authentication must be verified by the user through the app.
 
+## Transparent weekly allowances and offline diary (2026-10-09)
+
+- Week view exposes the full calculation: base calories, signed deviations on
+  each *known completed* day, the number of remaining days, theoretical
+  allowance, configurable clamp, and unreconciled residual. Missing dates are
+  shown as unknown, not as zero. Macro targets remain unchanged. No workout
+  calorie credit is added.
+- After at least one successful online timeline refresh, JetMeal keeps the most
+  recently downloaded timeline period in an Android Keystore AES-GCM encrypted
+  private file (excluded from backups). That period can be read while offline;
+  uncached date ranges must be loaded online before becoming available offline.
+- Previously searched personal catalogue foods are cached, allowing manual
+  food logging without internet once the catalogue was loaded at least once.
+  Searches for never-loaded foods still need network access.
+- Manual food log, quantity correction and soft delete are committed to a
+  persistent, owner-scoped encrypted outbox first and displayed provisionally.
+  Other actions (target changes, zero-day confirmations, undo of already
+  synchronized actions) still require the server.
+- Each request has a stable UUID, applied atomically by
+  `public.jetmeal_sync_mutation`. Private receipts preserve exactly-once
+  database execution even if HTTP replies are lost; duplicate retries cannot
+  create extra foods or audit events. Entry revisions prevent an offline update
+  from overwriting an edit made from ChatGPT. Rejected actions remain visible as
+  conflicts and can be explicitly discarded after review.
+- Pending edits survive process death and are retried using a unique,
+  network-constrained WorkManager request and while the app is active.
+  Offline entries are **not** claimed to have reached Supabase until the
+  server acknowledges them. Signing out while pending edits remain is blocked.
+  Queued writes possibly already sent cannot be cancelled blindly.
+- Local cache and outbox are non-backed-up. Reinstallation/device migration
+  cannot recover unsent offline writes; sync before uninstalling.
+- The home-screen widget may lag until the outbox has synchronized.
+
 ## Current product decisions
 
 - Food calculation from weight-loss goals is outside JetMeal. The app stores already-decided calorie and macro targets.
