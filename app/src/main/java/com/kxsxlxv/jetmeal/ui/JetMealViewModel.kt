@@ -421,6 +421,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // Explicit retry is safe because server requests are idempotent.
                 if ((offline?.status()?.blocked ?: 0) > 0) offline?.retryBlocked()
                 val result=offline?.sync()
+                updateWidgetFromLocalCache()
+                widgetCoordinator?.requestSync()
                 if(result!=null && result.blocked>0)
                     mutable.update{it.copy(error="Есть конфликтующие офлайн-изменения. Проверьте очередь перед удалением.")}
                 refresh()
@@ -567,6 +569,16 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refresh()
     }
 
+    /** Never let widget rendering interfere with an already queued diary write. */
+    private suspend fun updateWidgetFromLocalCache() {
+        try {
+            widgetCoordinator?.updateFromLocalCache()
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            repository?.diagnostics?.failure(ConnectionOperation.Widget,error)
+        }
+    }
+
     private suspend fun persistQueued() {
         val result=offline?.sync()
         val pending=result?.remaining ?: 0
@@ -576,6 +588,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
                 pendingWrites=pending,blockedWrites=result?.blocked ?: 0)
         }
+        // Also reconcile the widget after the server acknowledges the mutation.
+        if(pending == 0) widgetCoordinator?.requestSync()
         refresh()
     }
 
@@ -587,14 +601,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 when(meal) {MealPeriod.Morning->8;MealPeriod.Day->13;
                     MealPeriod.Evening->19;MealPeriod.Snack->15},0).atZone(zone).toInstant()
             requireNotNull(offline).enqueueLog(candidate,quantity,at,meal,chosen)
+            updateWidgetFromLocalCache()
             persistQueued()
         }
     fun edit(entry: DiaryEntry,quantity: Double,chosen: ChosenMeasure? = null)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueEdit(entry,quantity,chosen)
+        updateWidgetFromLocalCache()
         persistQueued()
     }
     fun delete(entry: DiaryEntry)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueDelete(entry)
+        updateWidgetFromLocalCache()
         persistQueued()
     }
     fun undo()=action(allowDuringRecovery=true) {
@@ -612,6 +629,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             requireNotNull(tools).undoLastAction()
             mutable.update{it.copy(notice="Действие отменено.")}
         }
+        updateWidgetFromLocalCache()
         widgetCoordinator?.requestSync()
         refresh()
     }

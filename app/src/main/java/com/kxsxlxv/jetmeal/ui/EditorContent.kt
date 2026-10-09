@@ -4,6 +4,12 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import com.kxsxlxv.jetmeal.ui.theme.RingColors
+import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -227,7 +233,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             // Expressive connected toggle-button group: pictograms, not a second heading
             // or redundant weight/portion labels. Spoken descriptions remain accessible.
             val count = measures.size + 1
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            Row(Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
                 verticalAlignment = Alignment.CenterVertically) {
                 ToggleButton(checked=chosen==null,
@@ -237,7 +243,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                     },
                     shapes=ButtonGroupDefaults.connectedLeadingButtonShapes(),
                     enabled=!busy,
-                    modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                    modifier=Modifier.weight(1f).heightIn(min=48.dp)
                         .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" }) {
                     SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(22.dp))
                 }
@@ -253,7 +259,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                         shapes=if(index==count-2) ButtonGroupDefaults.connectedTrailingButtonShapes()
                             else ButtonGroupDefaults.connectedMiddleButtonShapes(),
                         enabled=!busy,
-                        modifier=Modifier.widthIn(min=64.dp).heightIn(min=48.dp)
+                        modifier=Modifier.weight(1f).heightIn(min=48.dp)
                             .semantics { role=Role.RadioButton; contentDescription=measure.label }) {
                         SymbolIcon(symbol,null,Modifier.size(22.dp))
                         if(repeated) {
@@ -305,12 +311,23 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                 color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
         scaled?.let {
-            Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.primaryContainer) {
-                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${number(it.calories)} ккал", style = MaterialTheme.typography.headlineLargeEmphasized,
+            val palette = nutritionColors()
+            Surface(shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier=Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("${number(it.calories)} ккал",
+                        style = MaterialTheme.typography.headlineLargeEmphasized,
                         color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text("Б ${number(it.protein, 1)} г · Ж ${number(it.fat, 1)} г · У ${number(it.carbs, 1)} г",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        MacroSummaryTile("Белки",it.protein,JetMealSymbol.Protein,palette.protein,
+                            Modifier.weight(1f))
+                        MacroSummaryTile("Жиры",it.fat,JetMealSymbol.Fat,palette.fat,
+                            Modifier.weight(1f))
+                        MacroSummaryTile("Углеводы",it.carbs,JetMealSymbol.Carbs,palette.carbs,
+                            Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -337,6 +354,33 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             TextButton(onClick = { pending = true; action() }, enabled = !busy && !pending, modifier = Modifier.fillMaxWidth()) {
                 Text("Удалить запись", color = MaterialTheme.colorScheme.error)
             }
+        }
+    }
+}
+
+/** Compact tonal Material 3 Expressive Surface, not a second progress indicator. */
+@Composable
+internal fun MacroSummaryTile(label: String, grams: Double, symbol: JetMealSymbol,
+    palette: RingColors, modifier: Modifier = Modifier) {
+    Surface(modifier=modifier.semantics(mergeDescendants=true) {
+            contentDescription="$label: ${number(grams,1)} г"
+        },
+        shape=MaterialTheme.shapes.large, color=palette.container,
+        contentColor=palette.onContainer) {
+        Column(Modifier.fillMaxWidth()
+            .background(Brush.horizontalGradient(
+                0f to palette.container,
+                1f to palette.start.copy(alpha=.38f)))
+            .padding(horizontal=8.dp,vertical=10.dp),
+            horizontalAlignment=Alignment.CenterHorizontally,
+            verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            Box(Modifier.size(30.dp).clip(CircleShape).background(palette.container),
+                contentAlignment=Alignment.Center) {
+                SymbolIcon(symbol,null,Modifier.size(21.dp))
+            }
+            Text("${number(grams,1)} г",style=MaterialTheme.typography.titleSmallEmphasized,
+                maxLines=1)
+            Text(label,style=MaterialTheme.typography.labelSmall,maxLines=1)
         }
     }
 }

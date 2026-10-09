@@ -3,6 +3,10 @@ package com.kxsxlxv.jetmeal.widget
 import android.content.Context
 import androidx.glance.appwidget.updateAll
 import com.kxsxlxv.jetmeal.data.SupabaseRepository
+import com.kxsxlxv.jetmeal.data.OfflineDiary
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.kxsxlxv.jetmeal.data.ConnectionStage
 import com.kxsxlxv.jetmeal.data.atConnectionStage
 import io.github.jan.supabase.auth.status.SessionStatus
@@ -16,13 +20,16 @@ import java.time.ZoneId
 class HeroWidgetCoordinator(
     context: Context,
     private val repository: SupabaseRepository?,
+    private val offlineDiary: OfflineDiary? = null,
 ) {
     private val appContext = context.applicationContext
     private val store = HeroWidgetStore(appContext)
+    private val writeMutex = Mutex()
 
     fun requestSync() = HeroWidgetScheduler.enqueueImmediate(appContext)
 
     suspend fun syncFromServer() {
+        val startedAt = System.currentTimeMillis()
         val data = repository
         if (data == null) {
             store.write(HeroWidgetState.Empty)
@@ -48,8 +55,12 @@ class HeroWidgetCoordinator(
 
         if (targets == null) {
             atConnectionStage(ConnectionStage.WidgetUpdate) {
-                store.write(HeroWidgetState.MissingTargets)
+                writeMutex.withLock {
+                    store.write(HeroWidgetState.MissingTargets)
+                    updateWidgets()
+                }
             }
+            return
         } else {
             val weekStart = today.minusDays(today.dayOfWeek.value - 1L)
             val entries = atConnectionStage(ConnectionStage.Entries) {
@@ -64,11 +75,21 @@ class HeroWidgetCoordinator(
                 day to (history.lastOrNull { it.date <= day }?.targets ?: targets)
             }
             atConnectionStage(ConnectionStage.Presentation) {
-                store.write(HeroWidgetSnapshot.calculate(today, entries, perDay[today] ?: targets, zone,
-                    confirmedZeroDays = zeroDays, dailyTargets = perDay))
+                // Apply the user's unsent offline diary before calculating today's totals.
+                // A background network fetch must not erase an optimistic local update.
+                writeMutex.withLock {
+                    val currentlyShown = store.read() as? HeroWidgetState.Ready
+                    if (currentlyShown != null && currentlyShown.updatedAtMillis > startedAt) {
+                        return@withLock
+                    }
+                    val visibleEntries = offlineDiary?.overlay(entries) ?: entries
+                    store.write(HeroWidgetSnapshot.calculate(today, visibleEntries,
+                        perDay[today] ?: targets, zone,
+                        confirmedZeroDays = zeroDays, dailyTargets = perDay))
+                    updateWidgets()
+                }
             }
         }
-        atConnectionStage(ConnectionStage.WidgetUpdate) { updateWidgets() }
     }
 
     suspend fun updateFromLoaded(
@@ -85,18 +106,37 @@ class HeroWidgetCoordinator(
         if (start > weekStart || endExclusive <= today) return
 
         atConnectionStage(ConnectionStage.Presentation) {
-            store.write(
-                if (targets == null) HeroWidgetState.MissingTargets
-                else HeroWidgetSnapshot.calculate(today, entries, dailyTargets[today] ?: targets, zone,
-                    confirmedZeroDays = confirmedZeroDays, dailyTargets = dailyTargets)
-            )
+            writeMutex.withLock {
+                val visibleEntries = offlineDiary?.overlay(entries) ?: entries
+                store.write(
+                    if (targets == null) HeroWidgetState.MissingTargets
+                    else HeroWidgetSnapshot.calculate(today, visibleEntries,
+                        dailyTargets[today] ?: targets, zone,
+                        confirmedZeroDays = confirmedZeroDays, dailyTargets = dailyTargets)
+                )
+                updateWidgets()
+            }
         }
-        atConnectionStage(ConnectionStage.WidgetUpdate) { updateWidgets() }
+    }
+
+    /** Fast path for a manual add/edit/delete. No network or WorkManager delay. */
+    suspend fun updateFromLocalCache() {
+        val snapshot = offlineDiary?.cachedSnapshot() ?: return
+        val zone = ZoneId.systemDefault()
+        val targetsByDate = (generateSequence(snapshot.start) { it.plusDays(1) }
+            .takeWhile { it < snapshot.end }).mapNotNull { date ->
+                (snapshot.history.lastOrNull { it.date <= date }?.targets ?: snapshot.targets)
+                    ?.let { date to it }
+            }.toMap()
+        updateFromLoaded(snapshot.start, snapshot.end, snapshot.entries, snapshot.targets,
+            zone, snapshot.zeroDays, targetsByDate)
     }
 
     suspend fun showSignedOut() {
-        store.write(HeroWidgetState.SignedOut)
-        updateWidgets()
+        writeMutex.withLock {
+            store.write(HeroWidgetState.SignedOut)
+            updateWidgets()
+        }
     }
 
     private suspend fun updateWidgets() {

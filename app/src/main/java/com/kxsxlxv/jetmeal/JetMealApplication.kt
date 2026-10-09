@@ -78,6 +78,6 @@ class JetMealApplication : Application() {
     val picoocIntegration: PicoocIntegration by lazy { PicoocIntegration(this, repository) }
 
     val widgetCoordinator: HeroWidgetCoordinator by lazy {
-        HeroWidgetCoordinator(this, repository)
+        HeroWidgetCoordinator(this, repository, offlineDiary)
     }
 }
