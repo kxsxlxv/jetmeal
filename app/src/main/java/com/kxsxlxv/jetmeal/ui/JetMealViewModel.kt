@@ -28,13 +28,18 @@ data class AppState(
     val targetVersions: List<TargetVersion> = emptyList(),
     val weightMeasurements: List<WeightMeasurement> = emptyList(),
     val weightGoal: WeightGoal? = null,
+    val budgetTargets: Map<LocalDate,Targets> = emptyMap(),
+    val cachedOffline: Boolean = false,
+    val pendingWrites: Int = 0,
+    val blockedWrites: Int = 0,
     val picoocConnected: Boolean = false, val weightLoading: Boolean = false,
     val foods: List<FoodCandidate> = emptyList(), val searching: Boolean = false, val notice: String? = null
 )
 
 @OptIn(SupabaseExperimental::class)
 class JetMealViewModel(private val repository: SupabaseRepository?, private val saved: SavedStateHandle, private val widgetCoordinator: HeroWidgetCoordinator? = null,
-    private val picooc: PicoocIntegration? = null) : ViewModel() {
+    private val picooc: PicoocIntegration? = null,
+    private val offline: OfflineDiary? = null) : ViewModel() {
     private val mutable = MutableStateFlow(AppState(authLoading = repository != null,
         destination = saved.get<String>("destination")?.let { runCatching { Destination.valueOf(it) }.getOrNull() } ?: Destination.Today,
         scale = saved.get<String>("scale")?.let { runCatching { TimeScale.valueOf(it) }.getOrNull() } ?: TimeScale.Day,
@@ -121,6 +126,11 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refreshJob?.cancel(); searchJob?.cancel()
         refreshInFlight = false
         mutable.update { it.copy(searching = false) }
+        if ((offline?.status()?.remaining ?: 0) > 0) {
+            mutable.update { it.copy(error =
+                "В дневнике есть несинхронизированные изменения. Сначала отправьте их в Supabase или отмените.") }
+            return@action
+        }
         picooc?.disconnect()
         requireNotNull(repository).client.auth.signOut()
         widgetCoordinator?.showSignedOut()
@@ -132,76 +142,146 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun refresh() = refresh(showPullIndicator = false)
     fun pullToRefresh() = refresh(showPullIndicator = true)
     private fun refresh(showPullIndicator: Boolean) {
-        if (repository?.client?.auth?.currentUserOrNull() == null) return
-        val generation = ++refreshGeneration
+        if(repository?.client?.auth?.currentUserOrNull()==null) return
+        val generation=++refreshGeneration
         refreshJob?.cancel()
-        refreshJob = viewModelScope.launch {
-            refreshInFlight = true
-            mutable.update { it.copy(busy = true, refreshing = showPullIndicator, error = null) }
+        refreshJob=viewModelScope.launch {
+            refreshInFlight=true
+            val navigation=mutable.value
+            mutable.update { it.copy(busy=true,refreshing=showPullIndicator,error=null) }
             try {
-                val zone = ZoneId.systemDefault()
+                val zone=ZoneId.systemDefault()
+                if(offline!=null && !offline.onlineNow()) throw java.io.IOException("Network unavailable")
+                offline?.sync()
                 repository.invalidateSearch()
                 repository.syncTimezone(zone)
                 ensureActive()
-                if (generation != refreshGeneration) return@launch
-                val newToday = LocalDate.now(zone)
-                if (mutable.value.day == today && today != newToday) { mutable.update { it.copy(day = newToday, month = YearMonth.from(newToday)) }; saveNavigation() }
-                today = newToday
-                val snapshot = mutable.value
-                val targets = repository.targets()
-                val history = repository.targetHistory()
-                ensureActive()
-                if (generation != refreshGeneration) return@launch
-                val weekStart = snapshot.day.minusDays((snapshot.day.dayOfWeek.value - 1).toLong())
-                val visibleStart = TimelinePeriods.start(snapshot.scale, snapshot.day)
-                // Include the complete preceding week to replay targets at month/quarter boundaries.
-                val start = minOf(weekStart, visibleStart.minusDays(visibleStart.dayOfWeek.value - 1L))
-                val end = maxOf(weekStart.plusDays(7), TimelinePeriods.endExclusive(snapshot.scale, snapshot.day))
-                val all = repository.entries(start, end, zone)
-                ensureActive()
-                if (generation != refreshGeneration) return@launch
-                val confirmedZero = repository.confirmedZeroDays(start, end)
-                ensureActive()
-                if (generation != refreshGeneration) return@launch
-                val totals = all.groupBy { it.consumedAt.atZone(zone).toLocalDate() }
-                    .mapValues { (_, entries) -> entries.sumOf { it.nutrition.calories } }
-                val knownTotals = totals + confirmedZero.filterNot { it in totals }.associateWith { 0.0 }
-                fun targetFor(date: LocalDate): Targets? =
-                    history.lastOrNull { it.date <= date }?.targets ?: targets
-                val dates = generateSequence(start) { it.plusDays(1) }
-                    .takeWhile { it < end }.toList()
-                val dailyTargets = dates.mapNotNull { date -> targetFor(date)?.let { date to it } }.toMap()
-                val asOf = if (snapshot.scale == TimeScale.Day) snapshot.day else
-                    when { weekStart.plusDays(6) < today -> weekStart.plusDays(6); weekStart > today -> weekStart; else -> today }
-                val week = targetFor(asOf)?.let {
-                    WeekBudget.calculate(asOf, it, totals, confirmedZero,
-                        asOfDayCompleted = asOf < today, dailyTargets = dailyTargets)
+                if(generation!=refreshGeneration) return@launch
+                val newToday=LocalDate.now(zone)
+                if(mutable.value.day==today && today!=newToday) {
+                    mutable.update { it.copy(day=newToday,month=YearMonth.from(newToday)) }
+                    saveNavigation()
                 }
-                val calendarTargets = if (targets == null) emptyMap() else knownTotals.keys.associateWith {
-                    WeekBudget.calculate(it, targetFor(it) ?: targets, totals, confirmedZero,
-                        dailyTargets = dailyTargets).effectiveTarget
-                }
-                mutable.update { it.copy(entries = all.filter { row -> row.consumedAt.atZone(zone).toLocalDate() == snapshot.day },
-                    targets = targets, week = week, monthCalories = totals,
-                    monthTargets = calendarTargets, confirmedZeroDays = confirmedZero,
-                    targetVersions = history) }
-                if (snapshot.destination == Destination.Settings) loadWeights()
-                widgetCoordinator?.updateFromLoaded(start, end, all, targets, zone, confirmedZero,
-                    dailyTargets)
-                // The catalogue belongs to the Add/search flow. Loading and ranking it
-                // here blocked the main thread while a newly opened day's Hero animated.
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) {
-                // Engines may surface canceled I/O as an IOException rather than CancellationException.
+                today=newToday
+                val nav=mutable.value
+                val weekStart=nav.day.minusDays((nav.day.dayOfWeek.value-1).toLong())
+                val visibleStart=TimelinePeriods.start(nav.scale,nav.day)
+                val start=minOf(weekStart,visibleStart.minusDays(visibleStart.dayOfWeek.value-1L))
+                val end=maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(nav.scale,nav.day))
+                val targets=repository.targets()
+                val history=repository.targetHistory()
                 ensureActive()
-                repository.diagnostics?.failure(ConnectionOperation.Diary, error)
-                if (generation == refreshGeneration) mutable.update { it.copy(error = userMessage(error)) }
+                if(generation!=refreshGeneration) return@launch
+                val entries=repository.entries(start,end,zone)
+                ensureActive()
+                if(generation!=refreshGeneration) return@launch
+                val zero=repository.confirmedZeroDays(start,end)
+                val snap=OfflineSnapshot(start,end,entries,targets,history,zero)
+                offline?.remember(snap)
+                ensureActive()
+                if(generation!=refreshGeneration) return@launch
+                displaySnapshot(snap,nav,false)
+                if(nav.destination==Destination.Settings) loadWeights()
+                val perDay=weekTargets(snap)
+                widgetCoordinator?.updateFromLoaded(start,end,entries,targets,zone,zero,perDay)
+            } catch(cancelled:CancellationException) { throw cancelled }
+            catch(error:Exception) {
+                ensureActive()
+                val cached=runCatching { offline?.cachedSnapshot() }.getOrNull()
+                val requested=mutable.value
+                val cachedValid=cached?.let { validCacheFor(it,requested) } ?: false
+                if(cachedValid && cached!=null) {
+                    displaySnapshot(cached,requested,true)
+                    // A stale read is never silently presented as a live Supabase response.
+                } else {
+                    repository.diagnostics?.failure(ConnectionOperation.Diary,error)
+                    if(generation==refreshGeneration)
+                        mutable.update {it.copy(error=
+                            "Нет соединения или сохранённых данных для этого периода. " +
+                            "Подключитесь к интернету и обновите дневник.")}
+                }
+            } finally {
+                if(generation==refreshGeneration) {
+                    refreshInFlight=false
+                    mutable.update { it.copy(busy=writeInFlight,refreshing=false) }
+                }
             }
-            finally {
-                if (generation == refreshGeneration) {
-                    refreshInFlight = false
-                    mutable.update { it.copy(busy = writeInFlight, refreshing = false) }
-                }
+        }
+    }
+
+    private fun weekTargets(snap:OfflineSnapshot):Map<LocalDate,Targets> {
+        val dates=generateSequence(snap.start){it.plusDays(1)}.takeWhile {it<snap.end}
+        return dates.mapNotNull {date ->
+            (snap.history.lastOrNull {it.date<=date}?.targets ?: snap.targets)
+                ?.let{date to it}
+        }.toMap()
+    }
+
+    private fun validCacheFor(snap:OfflineSnapshot,nav:AppState):Boolean {
+        val weekStart=nav.day.minusDays((nav.day.dayOfWeek.value-1).toLong())
+        val visibleStart=TimelinePeriods.start(nav.scale,nav.day)
+        val start=minOf(weekStart,visibleStart.minusDays(visibleStart.dayOfWeek.value-1L))
+        val end=maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(nav.scale,nav.day))
+        return snap.start<=start && snap.end>=end
+    }
+
+    private suspend fun displaySnapshot(snap:OfflineSnapshot,nav:AppState,cached:Boolean) {
+        val zone=ZoneId.systemDefault()
+        val all=offline?.overlay(snap.entries) ?: snap.entries
+        val zero=snap.zeroDays.filterNotTo(mutableSetOf()) {date ->
+            all.any {it.consumedAt.atZone(zone).toLocalDate()==date}
+        }
+        val totals=all.groupBy {it.consumedAt.atZone(zone).toLocalDate()}
+            .mapValues {(_,entries)->entries.sumOf{it.nutrition.calories}}
+        val knownTotals=totals+zero.filterNot{it in totals}.associateWith{0.0}
+        val dailyTargets=weekTargets(snap)
+        fun targetFor(date:LocalDate)=dailyTargets[date] ?: snap.targets
+        val weekStart=nav.day.minusDays((nav.day.dayOfWeek.value-1).toLong())
+        val asOf=if(nav.scale==TimeScale.Day) nav.day else
+            when {
+                weekStart.plusDays(6)<today -> weekStart.plusDays(6)
+                weekStart>today -> weekStart
+                else -> today
+            }
+        val week=targetFor(asOf)?.let {
+            WeekBudget.calculate(asOf,it,totals,zero,
+                asOfDayCompleted=asOf<today,dailyTargets=dailyTargets)
+        }
+        val monthTargets=if(snap.targets==null) emptyMap() else knownTotals.keys.associateWith {
+            WeekBudget.calculate(it,targetFor(it) ?: snap.targets,totals,zero,
+                dailyTargets=dailyTargets).effectiveTarget
+        }
+        val pendingStatus=offline?.status()
+        mutable.update {it.copy(
+            entries=all.filter {row->row.consumedAt.atZone(zone).toLocalDate()==nav.day},
+            targets=snap.targets,week=week,monthCalories=totals,monthTargets=monthTargets,
+            confirmedZeroDays=zero,targetVersions=snap.history,budgetTargets=dailyTargets,
+            cachedOffline=cached,pendingWrites=pendingStatus?.remaining ?: 0,
+            blockedWrites=pendingStatus?.blocked ?: 0,
+        )}
+    }
+
+    fun syncPending() {
+        viewModelScope.launch {
+            try {
+                val result=offline?.sync()
+                if(result!=null && result.blocked>0)
+                    mutable.update{it.copy(error="Есть конфликтующие офлайн-изменения. Проверьте очередь перед удалением.")}
+                refresh()
+            } catch(error:Exception) {
+                if(error is CancellationException) throw error
+                mutable.update{it.copy(error=userMessage(error))}
+            }
+        }
+    }
+    fun discardBlocked() {
+        viewModelScope.launch {
+            try {
+                offline?.discardBlocked()
+                refresh()
+            } catch(error:Exception) {
+                if(error is CancellationException) throw error
+                mutable.update{it.copy(error=userMessage(error))}
             }
         }
     }
@@ -295,7 +375,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             mutable.update { it.copy(searching = true) }
             try {
                 if (query.isNotBlank()) delay(180)
-                val results = requireNotNull(tools).searchFood(query).data
+                val results = try {
+                    if(offline!=null && !offline.onlineNow()) throw java.io.IOException("Offline")
+                    requireNotNull(tools).searchFood(query).data.also {
+                        if(offline!=null) offline.rememberFoods(requireNotNull(repository).rankedCatalogue())
+                    }
+                } catch(failure:Exception) {
+                    if(failure is CancellationException) throw failure
+                    val cached = offline?.cachedFoods(query).orEmpty()
+                    if(cached.isEmpty()) throw failure
+                    cached
+                }
                 ensureActive()
                 if (generation != searchGeneration) return@launch
                 mutable.update { it.copy(foods = results, searching = false) }
@@ -318,28 +408,44 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refresh()
     }
 
-    fun log(candidate: FoodCandidate, quantity: Double, meal: MealPeriod, date: LocalDate) = action {
-        val zone = ZoneId.systemDefault()
-        val consumedAt = if (date == LocalDate.now(zone)) Instant.now()
-            else date.atTime(when (meal) { MealPeriod.Morning -> 8; MealPeriod.Day -> 13; MealPeriod.Evening -> 19; MealPeriod.Snack -> 15 }, 0)
-                .atZone(zone).toInstant()
-        requireNotNull(tools).logFood(LogFood(candidate.id, quantity, consumedAt, meal))
-        widgetCoordinator?.requestSync()
-        mutable.update { it.copy(notice = "Еда добавлена. Можно отменить.") }; refresh()
+    private suspend fun persistQueued() {
+        val result=offline?.sync()
+        val pending=result?.remaining ?: 0
+        mutable.update {
+            it.copy(
+                notice=if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
+                    else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
+                pendingWrites=pending,blockedWrites=result?.blocked ?: 0)
+        }
+        refresh()
     }
-    fun edit(entry: DiaryEntry, quantity: Double) = action {
-        requireNotNull(tools).updateLog(LogCorrection(entry.id, quantity))
-        widgetCoordinator?.requestSync()
-        mutable.update { it.copy(notice = "Количество изменено. Можно отменить.") }; refresh()
+
+    fun log(candidate: FoodCandidate,quantity: Double,meal: MealPeriod,date: LocalDate) =
+        action(allowDuringRecovery=true) {
+            val zone=ZoneId.systemDefault()
+            val at=if(date==LocalDate.now(zone)) Instant.now() else date.atTime(
+                when(meal) {MealPeriod.Morning->8;MealPeriod.Day->13;
+                    MealPeriod.Evening->19;MealPeriod.Snack->15},0).atZone(zone).toInstant()
+            requireNotNull(offline).enqueueLog(candidate,quantity,at,meal)
+            persistQueued()
+        }
+    fun edit(entry: DiaryEntry,quantity: Double)=action(allowDuringRecovery=true) {
+        requireNotNull(offline).enqueueEdit(entry,quantity)
+        persistQueued()
     }
-    fun delete(entry: DiaryEntry) = action {
-        requireNotNull(tools).deleteLog(entry.id)
-        widgetCoordinator?.requestSync()
-        mutable.update { it.copy(notice = "Запись удалена. Можно отменить.") }; refresh()
+    fun delete(entry: DiaryEntry)=action(allowDuringRecovery=true) {
+        requireNotNull(offline).enqueueDelete(entry)
+        persistQueued()
     }
-    fun undo() = action {
-        requireNotNull(tools).undoLastAction(); widgetCoordinator?.requestSync()
-        mutable.update { it.copy(notice = "Действие отменено.") }; refresh()
+    fun undo()=action(allowDuringRecovery=true) {
+        if(offline?.cancelLast()==true) {
+            mutable.update {it.copy(notice="Ожидавшее отправки действие отменено.")}
+        } else {
+            requireNotNull(tools).undoLastAction()
+            mutable.update{it.copy(notice="Действие отменено.")}
+        }
+        widgetCoordinator?.requestSync()
+        refresh()
     }
     /** Invoked only by the explicit human target-review confirmation action. */
     fun saveTargets(targets: Targets) = action {
