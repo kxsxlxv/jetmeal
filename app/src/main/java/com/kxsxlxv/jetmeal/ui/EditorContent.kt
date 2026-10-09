@@ -42,11 +42,22 @@ internal fun groupFoodSearchResults(foods: List<FoodCandidate>): List<List<FoodC
 internal fun compactFoodBrand(food: FoodCandidate): String? =
     food.brand?.trim()?.takeIf { it.isNotBlank() && !food.name.contains(it, ignoreCase = true) }
 
-internal fun variantDescription(food: FoodCandidate): String {
-    val measure = food.measures.firstOrNull { it.isDefault } ?: food.measures.firstOrNull()
-    return if (measure != null)
-        "1 ${measure.label} · ${number(measure.baseAmount, 1)} ${unitLabel(food.unit)}"
+internal fun primaryFoodMeasure(food: FoodCandidate): FoodMeasure? =
+    food.measures.firstOrNull { it.isDefault } ?: food.measures.firstOrNull()
+
+internal fun variantTitle(food: FoodCandidate): String {
+    val measure = primaryFoodMeasure(food)
+    return if(measure != null) "1 ${measure.label}"
     else "${number(food.amount, 1)} ${unitLabel(food.unit)}"
+}
+
+internal fun variantCountLabel(count: Int): String {
+    val suffix = if(count % 100 in 11..14) "вариантов" else when(count % 10) {
+        1 -> "вариант"
+        in 2..4 -> "варианта"
+        else -> "вариантов"
+    }
+    return "$count $suffix"
 }
 
 @Composable
@@ -69,15 +80,10 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
             leadingIcon = { SymbolIcon(JetMealSymbol.Search, null) }, modifier = Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(if(cachedCount>0) "Сохранено для офлайна: $cachedCount продуктов"
-                    else "Локальный каталог ещё не загружен",
-                    style=MaterialTheme.typography.labelMedium)
-                Text(if(offline) "Поиск по сохранённому каталогу"
-                    else "Каталог доступен без сети после загрузки",
-                    style=MaterialTheme.typography.labelSmall,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(if(cachedCount>0) "$cachedCount продуктов · офлайн"
+                else if(offline) "Нет офлайн-каталога" else "Каталог ещё не загружен",
+                modifier=Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,
+                color=MaterialTheme.colorScheme.onSurfaceVariant)
             if(catalogueLoading) LoadingIndicator(Modifier.size(32.dp))
             else TextButton(onClick=onDownload) { Text("Обновить") }
         }
@@ -109,7 +115,7 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
                     shapes = ListItemDefaults.segmentedShapes(index, groups.size),
                     supportingContent = {
                         Text(listOfNotNull(compactFoodBrand(food),
-                            if (variants.size > 1) "${variants.size} варианта"
+                            if (variants.size > 1) variantCountLabel(variants.size)
                             else "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · "))
                     },
                     trailingContent = {
@@ -142,16 +148,18 @@ internal fun FoodVariantsContent(variants: List<FoodCandidate>,
             verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(bottom = 20.dp)) {
             itemsIndexed(variants, key = { _, variant -> variant.id }) { index, variant ->
+                val measure = primaryFoodMeasure(variant)
                 SegmentedListItem(onClick = { onSelect(variant) },
                     shapes = ListItemDefaults.segmentedShapes(index, variants.size),
-                    supportingContent = { Text(variantDescription(variant)) },
+                    supportingContent = if (measure != null) {{
+                        Text("${number(measure.baseAmount, 1)} ${unitLabel(variant.unit)}")
+                    }} else null,
                     trailingContent = {
                         Text("${number(variant.nutrition.calories)}\nккал",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary)
                     }) {
-                    Text("${number(variant.amount, 1)} ${unitLabel(variant.unit)}",
-                        style = MaterialTheme.typography.titleMedium)
+                    Text(variantTitle(variant), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
