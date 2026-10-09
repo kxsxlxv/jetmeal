@@ -30,22 +30,37 @@ import com.kxsxlxv.jetmeal.domain.Nutrition
 import com.kxsxlxv.jetmeal.domain.QuantityScaling
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+/** The catalogue is variant-based, but search offers one item per actual product. */
+internal fun groupFoodSearchResults(foods: List<FoodCandidate>): List<List<FoodCandidate>> =
+    foods.groupBy { it.foodId }.values.map { variants ->
+        variants.sortedByDescending { it.measures.isNotEmpty() }
+    }
+
+internal fun compactFoodBrand(food: FoodCandidate): String? =
+    food.brand?.trim()?.takeIf { it.isNotBlank() && !food.name.contains(it, ignoreCase = true) }
+
+internal fun variantDescription(food: FoodCandidate): String {
+    val measure = food.measures.firstOrNull { it.isDefault } ?: food.measures.firstOrNull()
+    return if (measure != null)
+        "1 ${measure.label} · ${number(measure.baseAmount, 1)} ${unitLabel(food.unit)}"
+    else "${number(food.amount, 1)} ${unitLabel(food.unit)}"
+}
+
 @Composable
 internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, onSearch: (String) -> Unit,
     cachedCount: Int = 0, catalogueLoading: Boolean = false, offline: Boolean = false,
     onDownload: () -> Unit = {}, catalogueError: String? = null,
-    onSelect: (FoodCandidate) -> Unit) {
+    onSelect: (List<FoodCandidate>) -> Unit) {
     val query = rememberTextFieldState()
     val searchBar = rememberSearchBarState(initialValue = SearchBarValue.Expanded)
     val search by rememberUpdatedState(onSearch)
     val focus = LocalFocusManager.current
+    val groups = remember(foods) { groupFoodSearchResults(foods) }
     LaunchedEffect(query) {
         snapshotFlow { query.text.toString() }.distinctUntilChanged().collect { search(it) }
     }
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp).imePadding()
         .padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // The official search input remains inline in the existing sheet; a second fullscreen
-        // search overlay would compete with the sheet's quantity-confirmation navigation.
         SearchBarDefaults.InputField(textFieldState = query, searchBarState = searchBar,
             onSearch = { focus.clearFocus() }, placeholder = { Text("Найти еду в каталоге") },
             leadingIcon = { SymbolIcon(JetMealSymbol.Search, null) }, modifier = Modifier.fillMaxWidth())
@@ -74,26 +89,66 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
         }
         LazyColumn(Modifier.heightIn(min = 120.dp, max = 420.dp),
             contentPadding = PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (!searching && foods.isEmpty()) item {
+            if (!searching && groups.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (cachedCount==0 && offline) "Каталог недоступен без предварительной загрузки"
                         else if (query.text.isBlank()) "В каталоге пока пусто" else "Ничего не найдено",
                         style = MaterialTheme.typography.titleMediumEmphasized)
                     Text(if(cachedCount==0 && offline) "Подключитесь к интернету и нажмите «Обновить», чтобы сохранить весь каталог."
                         else if (query.text.isBlank()) "Добавьте продукт через подключённые инструменты питания."
-                        else "Попробуйте другое название, бренд или источник.",
+                        else "Попробуйте другое название или бренд.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            itemsIndexed(foods, key = { _, food -> food.id }) { index, food ->
-                SegmentedListItem(onClick = { focus.clearFocus(); onSelect(food) },
-                    shapes = ListItemDefaults.segmentedShapes(index, foods.size),
-                    supportingContent = { Text(listOfNotNull(food.brand, food.source,
-                        "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · ")) },
-                    overlineContent = if (food.estimated) {{ Text("Примерная пищевая ценность") }} else null,
-                    trailingContent = { Text("${number(food.nutrition.calories)}\nккал",
-                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }) {
+            itemsIndexed(groups, key = { _, variants -> variants.first().foodId }) { index, variants ->
+                val food = variants.first()
+                SegmentedListItem(onClick = { focus.clearFocus(); onSelect(variants) },
+                    shapes = ListItemDefaults.segmentedShapes(index, groups.size),
+                    supportingContent = {
+                        Text(listOfNotNull(compactFoodBrand(food),
+                            if (variants.size > 1) "${variants.size} варианта"
+                            else "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · "))
+                    },
+                    trailingContent = {
+                        if(variants.size > 1) SymbolIcon(JetMealSymbol.Next, null, Modifier.size(24.dp))
+                        else Text("${number(food.nutrition.calories)}\nккал",
+                            style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }) {
                     Text(food.name, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+    }
+}
+
+/** Different nutrition/size variants belong inside a product, not in search results. */
+@Composable
+internal fun FoodVariantsContent(variants: List<FoodCandidate>,
+    onSelect: (FoodCandidate) -> Unit, onBack: () -> Unit) {
+    if (variants.isEmpty()) return
+    Column(Modifier.fillMaxWidth().widthIn(max = 640.dp)
+        .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        TextButton(onClick = onBack) {
+            SymbolIcon(JetMealSymbol.Back, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("К поиску")
+        }
+        Text(variants.first().name, style = MaterialTheme.typography.headlineSmallEmphasized)
+        LazyColumn(Modifier.heightIn(min = 120.dp, max = 420.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)) {
+            itemsIndexed(variants, key = { _, variant -> variant.id }) { index, variant ->
+                SegmentedListItem(onClick = { onSelect(variant) },
+                    shapes = ListItemDefaults.segmentedShapes(index, variants.size),
+                    supportingContent = { Text(variantDescription(variant)) },
+                    trailingContent = {
+                        Text("${number(variant.nutrition.calories)}\nккал",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary)
+                    }) {
+                    Text("${number(variant.amount, 1)} ${unitLabel(variant.unit)}",
+                        style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
