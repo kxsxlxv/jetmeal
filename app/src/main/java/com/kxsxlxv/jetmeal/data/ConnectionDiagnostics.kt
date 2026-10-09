@@ -95,6 +95,26 @@ internal class ConnectionDiagnostics(context: Context) {
 
     fun recent(): String = preferences.getString("events", "").orEmpty()
 
+    /** Only structured allowlisted fields reach persistent storage or logcat. */
+    @Synchronized fun networkTrace(trace: NetworkTrace) {
+        when {
+            trace.cause != null -> {
+                sawTransportFailure = true
+                record(trace.safeLine())
+            }
+            trace.status != null && trace.status >= 400 -> {
+                sawTransportFailure = true
+                record(trace.safeLine())
+            }
+            sawTransportFailure -> {
+                sawTransportFailure = false
+                record(trace.safeLine())
+            }
+        }
+    }
+
+    private var sawTransportFailure = false
+
     fun failure(operation: ConnectionOperation, error: Throwable) {
         val failure = if (operation == ConnectionOperation.Auth) authFailures.resolve(error) else ConnectionFailure.from(error)
         if (operation == ConnectionOperation.Auth) authFailures.capture(failure)
@@ -118,7 +138,7 @@ internal class ConnectionDiagnostics(context: Context) {
     @Synchronized private fun record(details: String) {
         val line = "${Instant.now()} $details network=${network()}"
         val recent = preferences.getString("events", "").orEmpty().lineSequence().filter { it.isNotBlank() }.toList()
-        preferences.edit().putString("events", (recent.takeLast(59) + line).joinToString("\n")).apply()
+        preferences.edit().putString("events", (recent.takeLast(159) + line).joinToString("\n")).apply()
         Log.i("JetMealConnection", line)
     }
 
