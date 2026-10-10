@@ -307,14 +307,19 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             "tsp","tbsp" -> 0.5
             else -> 0.1
         }
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp),
             verticalAlignment=Alignment.CenterVertically) {
             OutlinedIconButton(
                 onClick={text=decimalInput(((entered ?: step)-step).coerceAtLeast(minimum))},
                 enabled=!busy && entered!=null && entered>minimum,
-                modifier=Modifier.size(56.dp)) { Text("−") }
+                modifier=Modifier.size(48.dp)) { Text("−") }
             TextField(text, { text = it },
-                label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") },
+                label = {
+                    Text("Количество (${chosen?.label ?: unitLabel(unit)})",
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, softWrap = false,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                },
                 suffix = { equivalent?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -327,7 +332,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                 modifier = Modifier.weight(1f).heightIn(min=56.dp))
             OutlinedIconButton(
                 onClick={text=decimalInput((entered ?: 0.0)+step)},
-                enabled=!busy,modifier=Modifier.size(56.dp)) { Text("+") }
+                enabled=!busy,modifier=Modifier.size(48.dp)) { Text("+") }
         }
         if(scaled==null) Text("Введите количество больше нуля",
             style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
