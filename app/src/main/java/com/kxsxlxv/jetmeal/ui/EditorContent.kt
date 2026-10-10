@@ -143,14 +143,10 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
 internal fun FoodVariantsContent(variants: List<FoodCandidate>,
     onSelect: (FoodCandidate) -> Unit, onBack: () -> Unit) {
     if (variants.isEmpty()) return
+    BackHandler(onBack = onBack)
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp)
         .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        TextButton(onClick = onBack) {
-            SymbolIcon(JetMealSymbol.Back, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("К поиску")
-        }
         Text(variants.first().name, style = MaterialTheme.typography.headlineSmallEmphasized)
         LazyColumn(Modifier.heightIn(min = 120.dp, max = 420.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
