@@ -446,6 +446,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // Explicit retry is safe because server requests are idempotent.
                 if ((offline?.status()?.blocked ?: 0) > 0) offline?.retryBlocked()
                 val result=offline?.sync()
+                if(result != null && result.synced > 0) recentSnapshots.clear()
                 updateWidgetFromLocalCache()
                 widgetCoordinator?.requestSync()
                 if(result!=null && result.blocked>0)
@@ -615,6 +616,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun setZeroDay(date: LocalDate, confirmed: Boolean) = action {
         require(date < LocalDate.now(ZoneId.systemDefault())) { "Only past days can be confirmed." }
         requireNotNull(tools).confirmZeroDay(date, confirmed)
+        recentSnapshots.clear()
         widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = if (confirmed) "Подтверждено: 0 ккал за день." else "Подтверждение нулевого дня снято.") }
         refresh()
@@ -633,6 +635,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private suspend fun persistQueued() {
         val result=offline?.sync()
         val pending=result?.remaining ?: 0
+        // The server has accepted the change: do not re-display a pre-write
+        // snapshot from memory after the optimistic outbox item disappears.
+        if (result != null && pending == 0) recentSnapshots.clear()
         mutable.update {
             it.copy(
                 notice=if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
@@ -678,6 +683,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             }
         } else {
             requireNotNull(tools).undoLastAction()
+            recentSnapshots.clear()
             mutable.update{it.copy(notice="Действие отменено.")}
         }
         updateWidgetFromLocalCache()
@@ -688,6 +694,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun saveTargets(targets: Targets) = action {
         val application = requireNotNull(tools)
         application.updateTargets(targets, application.confirmedByUser(targets))
+        recentSnapshots.clear()
         widgetCoordinator?.requestSync()
         mutable.update { it.copy(notice = "Цели сохранены.") }; refresh()
     }
