@@ -22,6 +22,27 @@ class TimelinePeriodsTest {
         assertEquals(1450,weekFillMotion().durationMillis)
     }
 
+    @Test fun swipesChangeOnlyScaleAndStopAtEdges() {
+        assertEquals(TimeScale.Week,adjacentTimeScale(TimeScale.Day,1))
+        assertEquals(TimeScale.Month,adjacentTimeScale(TimeScale.Week,1))
+        assertEquals(TimeScale.Quarter,adjacentTimeScale(TimeScale.Month,1))
+        assertEquals(TimeScale.Week,adjacentTimeScale(TimeScale.Month,-1))
+        assertEquals(TimeScale.Day,adjacentTimeScale(TimeScale.Day,-1))
+        assertEquals(TimeScale.Quarter,adjacentTimeScale(TimeScale.Quarter,1))
+        assertEquals(listOf("День","Неделя","Месяц","3 месяца"),
+            TimeScale.entries.map {it.label})
+    }
+
+    @Test fun dateArrowsStayWithinTheSelectedScale() {
+        assertEquals(today.plusDays(1),TimelinePeriods.move(TimeScale.Day,today,1))
+        assertEquals(LocalDate.of(2026,10,12),
+            TimelinePeriods.move(TimeScale.Week,today,1))
+        assertEquals(LocalDate.of(2026,11,1),
+            TimelinePeriods.move(TimeScale.Month,today,1))
+        assertEquals(LocalDate.of(2027,1,1),
+            TimelinePeriods.move(TimeScale.Quarter,today,1))
+    }
+
     @Test fun weekUsesMondayThroughSundayAcrossNewYear() {
         val date = LocalDate.of(2027, 1, 1)
         assertEquals(LocalDate.of(2026, 12, 28), TimelinePeriods.start(TimeScale.Week, date))

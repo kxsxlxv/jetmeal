@@ -280,7 +280,8 @@ internal fun monthCalendarSizing(
     // The chart chrome consists of the 48dp info-button heading, a one-line
     // summary, date/percentage labels, vertical padding and internal gaps.
     // The drawing plot itself has a dedicated 36dp minimum.
-    val chartChrome=if(sparseLabels) 132.dp else 116.dp
+    // The refreshed chart has only one line of date labels at every density.
+    val chartChrome=116.dp
     val minPlot=36.dp
     val reserve=base+if(withChart) chartChrome+minPlot else 0.dp
     val byHeight=(availableHeight-reserve)/rows

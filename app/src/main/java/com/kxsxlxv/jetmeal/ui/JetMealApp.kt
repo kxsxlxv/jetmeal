@@ -2,18 +2,14 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import kotlinx.coroutines.flow.collect
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -28,10 +24,8 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.kxsxlxv.jetmeal.BuildConfig
 import com.kxsxlxv.jetmeal.domain.*
-import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 
 @Serializable private enum class MainScreen : NavKey { Timeline, Settings }
 private sealed interface Editor {
@@ -186,6 +180,31 @@ private sealed interface Editor {
     }
 }
 
+/** Exactly four pages: swipes choose the time SCALE, never the date.
+ * The connected button group and drill-down routes remain synchronized. */
+@Composable internal fun ScaleNavigationPager(scale:TimeScale,
+    onSelect:(TimeScale)->Unit,modifier:Modifier=Modifier,
+    content:@Composable (TimeScale)->Unit) {
+    val pager=rememberPagerState(initialPage=scale.ordinal) {TimeScale.entries.size}
+    val selected by rememberUpdatedState(scale)
+    val onSelectLatest by rememberUpdatedState(onSelect)
+    LaunchedEffect(pager) {
+        snapshotFlow {pager.settledPage}.collect {page ->
+            val next=TimeScale.entries[page]
+            if(next!=selected) onSelectLatest(next)
+        }
+    }
+    LaunchedEffect(scale) {
+        if(pager.currentPage!=scale.ordinal)
+            pager.animateScrollToPage(scale.ordinal)
+    }
+    HorizontalPager(state=pager,modifier=modifier.semantics {
+        contentDescription="Масштаб питания. Листайте влево или вправо, чтобы перейти между Днём, Неделей, Месяцем и 3 месяцами"
+    },key={TimeScale.entries[it].name}) {page ->
+        content(TimeScale.entries[page])
+    }
+}
+
 @Composable private fun NutritionTimeline(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
     PullToRefreshBox(
         isRefreshing=state.refreshing,
@@ -205,10 +224,10 @@ private sealed interface Editor {
                     modifier=Modifier.size(48.dp),
                 ) { SymbolIcon(JetMealSymbol.Settings,"Настройки") }
             }
-            val effects=MaterialTheme.motionScheme.fastEffectsSpec<Float>()
-            AnimatedContent(state.scale,modifier=Modifier.weight(1f),label="Масштаб времени",
-                transitionSpec={fadeIn(effects) togetherWith fadeOut(effects)}) { scale ->
-                key(scale) { PeriodPager(state.copy(scale=scale),model,onAdd,onEdit) }
+            ScaleNavigationPager(state.scale,model::setTimeScale,
+                Modifier.weight(1f).fillMaxWidth()) { scale ->
+                if(scale==state.scale) PeriodView(state,model,onAdd,onEdit)
+                else LoadingContent("Открываем ${scale.label.lowercase(RussianLocale)}…")
             }
         }
     }
@@ -249,53 +268,45 @@ private sealed interface Editor {
 internal fun weekMatchesPeriod(week: com.kxsxlxv.jetmeal.domain.WeekState?,
     day: LocalDate): Boolean = week?.start==TimelinePeriods.start(TimeScale.Week,day)
 
-@Composable private fun PeriodPager(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
-    val middle=5000
-    val originIso=rememberSaveable { state.day.toString() }
-    val origin=LocalDate.parse(originIso)
-    val pager=rememberPagerState(initialPage=middle) {10001}
-    val scope=rememberCoroutineScope()
-    fun pageFor(date:LocalDate):Int {
-        val start=TimelinePeriods.start(state.scale,origin)
-        val target=TimelinePeriods.start(state.scale,date)
-        val offset=when(state.scale) {TimeScale.Day->ChronoUnit.DAYS.between(start,target); TimeScale.Week->ChronoUnit.WEEKS.between(start,target); TimeScale.Month->ChronoUnit.MONTHS.between(start,target); TimeScale.Quarter->ChronoUnit.MONTHS.between(start,target)/3}
-        return (middle+offset).toInt().coerceIn(0,10000)
-    }
-    LaunchedEffect(pager.settledPage) {
-        val date=TimelinePeriods.move(state.scale,origin,pager.settledPage-middle)
-        if(TimelinePeriods.start(state.scale,state.day)!=date) model.showPeriod(date)
-    }
-    LaunchedEffect(state.day) {
-        val target=pageFor(state.day)
-        if(target!=pager.settledPage && !pager.isScrollInProgress) pager.animateScrollToPage(target)
-    }
+@Composable private fun PeriodView(state:AppState,model:JetMealViewModel,
+    onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
+    val date=TimelinePeriods.start(state.scale,state.day)
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start=20.dp,end=8.dp),verticalAlignment=Alignment.CenterVertically) {
-            Text(TimelinePeriods.title(state.scale,state.day),style=MaterialTheme.typography.titleMediumEmphasized,modifier=Modifier.weight(1f))
-            IconButton(onClick={scope.launch {pager.animateScrollToPage((pager.settledPage-1).coerceAtLeast(0))}}) { SymbolIcon(JetMealSymbol.Previous,"Предыдущий период") }
-            IconButton(onClick={scope.launch {pager.animateScrollToPage((pager.settledPage+1).coerceAtMost(10000))}}) { SymbolIcon(JetMealSymbol.Next,"Следующий период") }
-            IconButton(onClick=model::resetPeriod) { SymbolIcon(JetMealSymbol.Reset,"Текущий период") }
+        Row(Modifier.fillMaxWidth().padding(start=20.dp,end=8.dp),
+            verticalAlignment=Alignment.CenterVertically) {
+            Text(TimelinePeriods.title(state.scale,state.day),
+                style=MaterialTheme.typography.titleMediumEmphasized,
+                modifier=Modifier.weight(1f))
+            IconButton(onClick={
+                model.showPeriod(TimelinePeriods.move(state.scale,state.day,-1))
+            }) { SymbolIcon(JetMealSymbol.Previous,"Предыдущий период") }
+            IconButton(onClick={
+                model.showPeriod(TimelinePeriods.move(state.scale,state.day,1))
+            }) { SymbolIcon(JetMealSymbol.Next,"Следующий период") }
+            IconButton(onClick=model::resetPeriod) {
+                SymbolIcon(JetMealSymbol.Reset,"Текущий период")
+            }
         }
-        HorizontalPager(pager,modifier=Modifier.fillMaxSize().semantics {contentDescription="Шкала питания. Листайте периоды влево или вправо"},key={it}) { page ->
-            val date=TimelinePeriods.move(state.scale,origin,page-middle)
-            Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
-                // During a pager move the selected date can update one frame before
-                // the cached WeekState does. Never paint previous-week values under
-                // a new-week heading (or animate them backwards into fresh totals).
-                val weekIsStale = state.scale==TimeScale.Week && state.targets!=null &&
-                    !weekMatchesPeriod(state.week,date)
-                if(date!=TimelinePeriods.start(state.scale,state.day) ||
-                    weekIsStale || (state.busy && state.week==null)) LoadingContent("Загружаем период…")
-                else Box(Modifier.widthIn(max=1000.dp).fillMaxSize()) { when(state.scale) {
+        Box(Modifier.fillMaxSize(),contentAlignment=Alignment.TopCenter) {
+            val weekIsStale=state.scale==TimeScale.Week && state.targets!=null &&
+                !weekMatchesPeriod(state.week,date)
+            if(weekIsStale || (state.busy && state.week==null))
+                LoadingContent("Загружаем период…")
+            else Box(Modifier.widthIn(max=1000.dp).fillMaxSize()) {
+                when(state.scale) {
                     TimeScale.Day -> DayContent(state.day,state.entries,
                         state.targetVersions.lastOrNull { it.date <= state.day }?.targets ?: state.targets,
                         state.week,onAdd,onEdit,model::openSettings,
-                        confirmedZero=state.day in state.confirmedZeroDays,onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
+                        confirmedZero=state.day in state.confirmedZeroDays,
+                        onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
                     TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate,
                         dailyTargets=state.budgetTargets)
-                    TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),state.monthCalories,state.monthTargets,model::setMonth,model::openDate,selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
-                    TimeScale.Quarter -> QuarterContent(date,state.monthCalories,state.monthTargets,model::openDate,confirmedZeroDays=state.confirmedZeroDays)
-                } }
+                    TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),
+                        state.monthCalories,state.monthTargets,model::setMonth,model::openDate,
+                        selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
+                    TimeScale.Quarter -> QuarterContent(date,state.monthCalories,state.monthTargets,
+                        model::openDate,confirmedZeroDays=state.confirmedZeroDays)
+                }
             }
         }
     }
