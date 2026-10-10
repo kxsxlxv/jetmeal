@@ -157,6 +157,47 @@ class JetMealUiTest {
         ).assertIsDisplayed()
     }
 
+    @Test fun weekChartBarsAreClickableOnCompactScreensAndInfoIsOnDemand() {
+        val monday=LocalDate.of(2026,10,5)
+        val days=(0L..6L).map { offset ->
+            BudgetDay(monday.plusDays(offset),1200.0,1800.0,DayLoggingStatus.Recorded)
+        }
+        val week=WeekState(monday,monday.plusDays(6),days,12600.0,8400.0,-900.0,
+            4,1800.0,0.0)
+        var openedDay: LocalDate? = null
+        compose.setContent {
+            JetmealTheme {
+                Box(Modifier.width(320.dp).fillMaxSize()) {
+                    WeekContent(week,{},onDay={openedDay=it})
+                }
+            }
+        }
+        compose.onNodeWithContentDescription("5 октября",substring=true)
+            .assertHasClickAction().performClick()
+        compose.runOnIdle { assertEquals(monday,openedDay) }
+        compose.onNodeWithContentDescription("Информация: Ритм недели")
+            .performClick()
+        compose.onNodeWithText("Горизонтальная черта",substring=true).assertIsDisplayed()
+        compose.onNodeWithText("Понятно").performClick()
+        compose.onNodeWithText("Горизонтальная черта",substring=true).assertDoesNotExist()
+        compose.onNodeWithText("ккал · норма на сегодня").assertDoesNotExist()
+    }
+
+    @Test fun monthSummaryFollowsCalendarAndExplanationIsOptional() {
+        val month=YearMonth.of(2026,10)
+        compose.setContent {
+            JetmealTheme {
+                Box(Modifier.width(320.dp).fillMaxSize()) {
+                    CalendarContent(month,emptyMap(),emptyMap(),{}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("Итоги месяца").assertIsDisplayed()
+        compose.onNodeWithText("В норме").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Информация: Цвета календаря").performClick()
+        compose.onNodeWithText("Зелёный — записано",substring=true).assertIsDisplayed()
+    }
+
     @Test fun weeklyDetailRowsAreHiddenUntilRequested() {
         val monday=LocalDate.of(2026,10,5)
         val days=(0L..6L).map { offset ->
