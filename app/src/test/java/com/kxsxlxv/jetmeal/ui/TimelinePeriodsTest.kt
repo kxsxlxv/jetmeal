@@ -91,7 +91,7 @@ class TimelinePeriodsTest {
         val (start,end)=timelineFetchRange(TimeScale.Day,LocalDate.of(2026,10,10))
         val november20=timelineRequiredRange(TimeScale.Day,LocalDate.of(2026,11,20))
         assertTrue(start>november20.first || end<november20.second)
-        assertEquals(LocalDate.of(2026,10,1),
+        assertEquals(LocalDate.of(2026,9,28),
             timelineRequiredRange(TimeScale.Month,LocalDate.of(2026,10,10)).first)
         assertEquals(LocalDate.of(2026,11,1),
             timelineRequiredRange(TimeScale.Month,LocalDate.of(2026,10,10)).second)
