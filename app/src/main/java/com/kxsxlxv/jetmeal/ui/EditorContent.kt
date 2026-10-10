@@ -189,7 +189,18 @@ internal fun measureConversionHint(
     val measure = selected ?: reference ?: return null
     val converted = if (selected != null) value * measure.baseAmount else value / measure.baseAmount
     if (!converted.isFinite() || converted <= 0.0 || converted > 1_000_000.0) return null
-    val equivalentUnit = if (selected != null) unitLabel(unit) else measure.label
+    val equivalentUnit = if (selected != null) unitLabel(unit)
+        else if (measure.key == "serving" && measure.label.equals("порция", ignoreCase = true)) {
+            val rounded = kotlin.math.round(converted * 10.0) / 10.0
+            val whole = rounded.toLong()
+            if (rounded != whole.toDouble()) "порции"
+            else if (whole % 100 in 11L..14L) "порций"
+            else when (whole % 10) {
+                1L -> "порция"
+                2L, 3L, 4L -> "порции"
+                else -> "порций"
+            }
+        } else measure.label
     return "${if (measure.approximate) "≈" else "="} ${number(converted, 1)} $equivalentUnit"
 }
 
