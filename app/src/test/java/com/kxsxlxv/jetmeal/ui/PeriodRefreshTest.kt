@@ -67,14 +67,19 @@ class PeriodRefreshTest {
         try {
             runCurrent()
             assertNotNull(model.state.value.week)
+            val firstLoads = requests.count { it.endsWith("/diary_entries") }
+            assertEquals(1, firstLoads)
             model.showPeriod(day.minusDays(1))
             runCurrent()
             assertEquals(day.minusDays(1), model.state.value.day)
             assertNotNull(model.state.value.week)
+            assertEquals("Switching to a covered day must not contact Supabase",
+                firstLoads, requests.count { it.endsWith("/diary_entries") })
             model.refresh()
             runCurrent()
             assertFalse(model.state.value.busy)
-            assertEquals(3, requests.count { it.endsWith("/diary_entries") })
+            assertEquals("Explicit refresh should still contact Supabase",
+                firstLoads + 1, requests.count { it.endsWith("/diary_entries") })
             assertEquals("Day navigation must not start catalogue decoding/ranking during Hero animation", 0,
                 requests.count { it.endsWith("/foods") || it.endsWith("/food_variants") })
         } finally {
