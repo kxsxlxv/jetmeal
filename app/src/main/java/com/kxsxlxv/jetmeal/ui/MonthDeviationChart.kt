@@ -168,14 +168,29 @@ internal fun MonthDeviationChart(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(start=49.dp),
-                horizontalArrangement=Arrangement.SpaceBetween) {
-                val labelled=if(sorted.size<=7) sorted
-                    else listOf(sorted.first(),sorted[sorted.lastIndex/2],sorted.last())
-                labelled.forEach { point ->
-                    Text(point.date.dayOfMonth.toString(),
-                        style=MaterialTheme.typography.labelSmall,
-                        color=scheme.onSurfaceVariant,maxLines=1)
+            if(sorted.size<=8) {
+                // Few recorded days: show the REAL percentage and date for every
+                // column, so the chart communicates more than color and height.
+                Row(Modifier.fillMaxWidth().padding(start=49.dp)) {
+                    sorted.forEach { point ->
+                        Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally) {
+                            Text(deviationLabel(point.percent),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=scheme.onSurface,maxLines=1)
+                            Text(point.date.dayOfMonth.toString(),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=scheme.onSurfaceVariant,maxLines=1)
+                        }
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().padding(start=49.dp),
+                    horizontalArrangement=Arrangement.SpaceBetween) {
+                    listOf(sorted.first(),sorted[sorted.lastIndex/2],sorted.last()).forEach { point ->
+                        Text(point.date.dayOfMonth.toString(),
+                            style=MaterialTheme.typography.labelSmall,
+                            color=scheme.onSurfaceVariant,maxLines=1)
+                    }
                 }
             }
         }
