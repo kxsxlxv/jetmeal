@@ -164,37 +164,15 @@ internal object CalendarAdherence {
             }
         }
         item { WeekBudgetExplanation(week,dailyTargets) }
-        item {Text("Белки, жиры и углеводы сохраняют заданные дневные цели.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
     }
     }
 }
 
-/** Prominent consumed/budget comparison, then secondary compact metrics.
- * No extra bars: the weekly rhythm immediately above already shows progress. */
+/** Budget rail is the primary weekly summary: one number pair and a target marker.
+ * The detailed daily rhythm above remains the only 7-day chart. */
 @Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now()) {
-    val palette=nutritionColors()
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        Text("Итоги недели",style=MaterialTheme.typography.titleLargeEmphasized,
-            modifier=Modifier.semantics {heading()})
-        Surface(modifier=Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.extraLarge,
-            color=palette.calories.container,contentColor=palette.calories.onContainer) {
-            Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=18.dp),
-                verticalAlignment=Alignment.CenterVertically,
-                horizontalArrangement=Arrangement.spacedBy(16.dp)) {
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text("Съедено",style=MaterialTheme.typography.labelLarge)
-                    Text(number(week.totalConsumed),style=MaterialTheme.typography.headlineMediumEmphasized,
-                        maxLines=1)
-                    Text("ккал за неделю",style=MaterialTheme.typography.labelSmall)
-                }
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text("Бюджет недели",style=MaterialTheme.typography.labelLarge)
-                    Text(number(week.baseBudget),style=MaterialTheme.typography.titleLargeEmphasized,
-                        maxLines=1)
-                    Text("ккал",style=MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
+        WeeklyBudgetRail(week)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             WeekSummaryTile("Отклонение",signed(week.deviation),
                 "ккал · завершённые дни",Modifier.weight(1f))
@@ -268,6 +246,9 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
 ) {
     val actual = (calories + confirmedZeroDays.filterNot { it in calories }
         .associateWith { 0.0 }).filterKeys { YearMonth.from(it) == month }
+    val monthPoints = remember(month, actual, targets) {
+        monthDeviations(month, actual, targets, LocalDate.now())
+    }
     val rows = calendarWeekCount(month)
     val palette = nutritionColors()
     val enlargedText = LocalDensity.current.fontScale >= 1.4f
@@ -280,6 +261,12 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         val tileByWidth = (maxWidth - horizontalPadding * 2 - gap * 6) / 7
         val tileByHeight = (maxHeight - 190.dp - gap * (rows - 1)) / rows
         val tile = minOf(tileByWidth, tileByHeight).coerceAtLeast(28.dp)
+        // Every element shares the non-scrollable viewport. Never shrink dates
+        // merely to make the optional analysis chart fit.
+        val chartRoom = maxHeight - (tile*rows + gap*(rows-1) +
+            20.dp + 16.dp + 48.dp + 96.dp + 50.dp)
+        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= 150.dp
+        val chartPlotHeight = (chartRoom - 101.dp).coerceIn(54.dp,112.dp)
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(gap,Alignment.CenterHorizontally),
@@ -309,8 +296,12 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
                     }
                 }
             }
-            // Statistics belong immediately below the grid, not pinned to the
-            // bottom through an expanding empty spacer.
+            if(displayChart) {
+                MonthDeviationChart(month,monthPoints,chartPlotHeight,onDay)
+            }
+            // The month statistics remain adjacent to the calendar/chart with
+            // no vertically weighted gap or scroll.
+
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Text("Итоги месяца",style=MaterialTheme.typography.titleMediumEmphasized,
                     modifier=Modifier.weight(1f).semantics {heading()})
@@ -324,21 +315,36 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
                 )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                CalendarSummaryItem("Дней с данными",actual.size.toString(),Modifier.weight(1f))
-                CalendarSummaryItem("Съедено", "${number(actual.values.sum())} ккал",Modifier.weight(1f))
+                CalendarSummaryItem("Дней с данными",actual.size.toString(),
+                    "из ${month.lengthOfMonth()}",Modifier.weight(1f))
+                CalendarSummaryItem("Съедено",number(actual.values.sum()),"ккал",Modifier.weight(1f),
+                    emphasized=true)
             }
         }
     }
 }
 
-@Composable private fun CalendarSummaryItem(label: String, value: String, modifier: Modifier) {
-    Surface(modifier=modifier.height(68.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,
+@Composable private fun CalendarSummaryItem(label: String,value: String,unit: String,
+    modifier: Modifier,emphasized: Boolean=false) {
+    val palette=nutritionColors()
+    Surface(modifier=modifier.height(91.dp),
+        color=if(emphasized) palette.calories.container
+            else MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor=if(emphasized) palette.calories.onContainer
+            else MaterialTheme.colorScheme.onSurface,
         shape=MaterialTheme.shapes.large) {
-        Column(Modifier.padding(horizontal=12.dp,vertical=8.dp),
-            verticalArrangement=Arrangement.spacedBy(2.dp)) {
-            Text(label,style=MaterialTheme.typography.labelSmall,
-                color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-            Text(value,style=MaterialTheme.typography.titleMediumEmphasized,maxLines=1)
+        Column(Modifier.fillMaxSize().padding(horizontal=14.dp,vertical=10.dp),
+            verticalArrangement=Arrangement.SpaceBetween) {
+            Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1,
+                color=if(emphasized) palette.calories.onContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment=Alignment.Bottom,
+                horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                Text(value,style=MaterialTheme.typography.headlineSmallEmphasized,
+                    maxLines=1,modifier=Modifier.weight(1f,fill=false))
+                Text(unit,style=MaterialTheme.typography.labelSmall,maxLines=1,
+                    modifier=Modifier.padding(bottom=3.dp))
+            }
         }
     }
 }

@@ -198,6 +198,44 @@ class JetMealUiTest {
         compose.onNodeWithText("Зелёный — записано",substring=true).assertIsDisplayed()
     }
 
+    @Test fun expressiveWeekBudgetRailReplacesDuplicatedHeadline() {
+        val start=LocalDate.of(2026,10,5)
+        val days=(0L..6L).map { offset ->
+            BudgetDay(start.plusDays(offset),1200.0,1800.0,DayLoggingStatus.Recorded)
+        }
+        val week=WeekState(start,start.plusDays(6),days,
+            12600.0,8400.0,-900.0,4,1800.0,0.0)
+        compose.setContent {
+            JetmealTheme {
+                WeekSummary(week,start.plusDays(4))
+            }
+        }
+        compose.onNodeWithText("Итоги недели").assertDoesNotExist()
+        compose.onNodeWithText("Съедено").assertIsDisplayed()
+        compose.onNodeWithText("До бюджета").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Съедено 8 400",substring=true).assertExists()
+    }
+
+    @Test fun sparseMonthsHideDeviationWhileSixDaysShowChart() {
+        val month=YearMonth.of(2026,1)
+        var count by mutableIntStateOf(5)
+        compose.setContent {
+            val values=(1..count).associate { month.atDay(it) to 1800.0+it*10 }
+            val targets=(1..count).associate { month.atDay(it) to 1800.0 }
+            JetmealTheme {
+                Box(Modifier.width(390.dp).fillMaxSize()) {
+                    CalendarContent(month,values,targets,{}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("Отклонение от нормы").assertDoesNotExist()
+        compose.runOnIdle { count=6 }
+        compose.onNodeWithText("Отклонение от нормы").assertExists()
+        compose.onNodeWithText("Итоги месяца").assertExists()
+        compose.onNodeWithText("Дней с данными").assertExists()
+        compose.onNodeWithText("ккал").assertExists()
+    }
+
     @Test fun weeklyDetailRowsAreHiddenUntilRequested() {
         val monday=LocalDate.of(2026,10,5)
         val days=(0L..6L).map { offset ->
