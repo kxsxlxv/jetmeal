@@ -9,6 +9,7 @@ import com.kxsxlxv.jetmeal.R
 
 enum class JetMealSymbol(@DrawableRes internal val resource: Int) {
     Settings(R.drawable.symbol_settings),
+    Info(R.drawable.symbol_info),
     Back(R.drawable.symbol_arrow_back),
     Previous(R.drawable.symbol_chevron_left),
     Next(R.drawable.symbol_chevron_right),
