@@ -276,7 +276,7 @@ internal fun monthCalendarSizing(
     // Column padding (20), weekday labels (20), totals header (48), cards (91),
     // top-level gaps (8 each), and four/five inter-week gaps (4 each).
     val base=20.dp+20.dp+48.dp+91.dp +
-        (if(withChart) 4 else 3)*8.dp + (rows-1)*gap
+        8.dp*(if(withChart) 4 else 3) + gap*(rows-1)
     // The chart chrome consists of the 48dp info-button heading, a one-line
     // summary, date/percentage labels, vertical padding and internal gaps.
     // The drawing plot itself has a dedicated 36dp minimum.
