@@ -1,10 +1,13 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -156,6 +159,34 @@ class JetMealUiTest {
         compose.onNodeWithContentDescription(
             "31 октября 2026, Нет записей. Открыть день"
         ).assertIsDisplayed()
+    }
+
+    @Test fun scaleSwipeChangesTabsWhileDirectScaleChoiceStillWorks() {
+        var current by mutableStateOf(TimeScale.Day)
+        compose.setContent {
+            JetmealTheme {
+                Column {
+                    Button(onClick={current=TimeScale.Quarter}) {Text("К кварталу")}
+                    ScaleNavigationPager(current,{current=it},
+                        Modifier.fillMaxSize()) {scale ->
+                        Box(Modifier.fillMaxSize()) {Text("Контент: ${scale.label}")}
+                    }
+                }
+            }
+        }
+        val pager="Масштаб питания. Листайте влево или вправо, чтобы перейти между Днём, Неделей, Месяцем и 3 месяцами"
+        compose.onNodeWithText("Контент: День").assertIsDisplayed()
+        compose.onNodeWithContentDescription(pager).performTouchInput {swipeLeft()}
+        compose.waitForIdle()
+        compose.runOnIdle {assertEquals(TimeScale.Week,current)}
+        compose.onNodeWithText("Контент: Неделя").assertIsDisplayed()
+        compose.onNodeWithText("К кварталу").performClick()
+        compose.waitForIdle()
+        compose.runOnIdle {assertEquals(TimeScale.Quarter,current)}
+        compose.onNodeWithText("Контент: 3 месяца").assertIsDisplayed()
+        compose.onNodeWithContentDescription(pager).performTouchInput {swipeRight()}
+        compose.waitForIdle()
+        compose.runOnIdle {assertEquals(TimeScale.Month,current)}
     }
 
     @Test fun weekChartBarsAreClickableOnCompactScreensAndInfoIsOnDemand() {
