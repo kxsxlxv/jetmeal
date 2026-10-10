@@ -244,6 +244,11 @@ private sealed interface Editor {
     }
 }
 
+/** A week may briefly remain from the previously selected date while cached
+ * offline data are being projected. Do not paint it under the new period title. */
+internal fun weekMatchesPeriod(week: com.kxsxlxv.jetmeal.domain.WeekState?,
+    day: LocalDate): Boolean = week?.start==TimelinePeriods.start(TimeScale.Week,day)
+
 @Composable private fun PeriodPager(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
     val middle=5000
     val originIso=rememberSaveable { state.day.toString() }
@@ -278,7 +283,7 @@ private sealed interface Editor {
                 // the cached WeekState does. Never paint previous-week values under
                 // a new-week heading (or animate them backwards into fresh totals).
                 val weekIsStale = state.scale==TimeScale.Week && state.targets!=null &&
-                    state.week?.start!=TimelinePeriods.start(TimeScale.Week,date)
+                    !weekMatchesPeriod(state.week,date)
                 if(date!=TimelinePeriods.start(state.scale,state.day) ||
                     weekIsStale || (state.busy && state.week==null)) LoadingContent("Загружаем период…")
                 else Box(Modifier.widthIn(max=1000.dp).fillMaxSize()) { when(state.scale) {
