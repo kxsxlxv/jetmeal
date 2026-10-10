@@ -40,7 +40,8 @@ class FoodSearchPresentationTest {
     @Test fun gramsEntryShowsDynamicPortionEquivalentInsideInput() {
         val serving=FoodMeasure("m1","v1","serving","порция",274.0)
         assertEquals("= 1 порция",measureConversionHint(274.0,null,serving,"g"))
-        assertEquals("= 2 порция",measureConversionHint(548.0,null,serving,"g"))
+        assertEquals("= 2 порции",measureConversionHint(548.0,null,serving,"g"))
+        assertEquals("= 5 порций",measureConversionHint(1370.0,null,serving,"g"))
     }
 
     @Test fun approximateAndInvalidConversionsAreSafe() {
