@@ -9,6 +9,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -47,8 +52,10 @@ internal fun weeklyBudgetRail(eaten: Double, budget: Double): WeeklyBudgetRailSt
 internal fun WeeklyBudgetRail(week: WeekState) {
     val palette=nutritionColors()
     val state=weeklyBudgetRail(week.totalConsumed,week.baseBudget)
+    var visible by remember(week.start) { mutableStateOf(false) }
+    LaunchedEffect(week.start) { visible=true }
     val progress=animateFloatAsState(
-        targetValue=state.consumedFraction,
+        targetValue=if(visible) state.consumedFraction else 0f,
         animationSpec=tween(durationMillis=1100,easing=CubicBezierEasing(.25f,.1f,.18f,1f)),
         label="Заполнение недельного бюджета",
     ).value
