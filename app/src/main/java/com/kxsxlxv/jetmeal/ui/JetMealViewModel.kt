@@ -54,6 +54,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private val tools = repository?.let(::NutritionTools)
     private val writes = Mutex()
     private var refreshJob: Job? = null
+    private var cachedNavigationJob: Job? = null
+    private val recentSnapshots = ArrayDeque<OfflineSnapshot>()
+    private var snapshotOwner: String? = null
     private var searchJob: Job? = null
     private var retryJob: Job? = null
     private var catalogueJob: Job? = null
@@ -77,6 +80,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         val ownerId = status.session.user?.id
                         val reload = previous.authLoading || previous.authRecovering || authenticatedOwnerId != ownerId || status.isNew
                         if (authenticatedOwnerId != ownerId) {
+                            recentSnapshots.clear()
+                            snapshotOwner = ownerId
+                            cachedNavigationJob?.cancel()
                             catalogueJob?.cancel()
                             catalogueOwner = null
                         }
@@ -96,6 +102,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     }
                     is SessionStatus.NotAuthenticated -> {
                         authenticatedOwnerId = null
+                        snapshotOwner = null
+                        recentSnapshots.clear()
+                        cachedNavigationJob?.cancel()
                         retryJob?.cancel(); catalogueJob?.cancel()
                         catalogueOwner = null
                         refreshGeneration++; searchGeneration++
@@ -218,6 +227,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         retryJob?.cancel(); catalogueJob?.cancel()
         refreshGeneration++; searchGeneration++
         refreshJob?.cancel(); searchJob?.cancel()
+        cachedNavigationJob?.cancel()
+        recentSnapshots.clear(); snapshotOwner = null
         refreshInFlight = false
         mutable.update { it.copy(searching = false) }
         if ((offline?.status()?.remaining ?: 0) > 0) {
@@ -261,10 +272,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 }
                 today=newToday
                 val nav=mutable.value
-                val weekStart=nav.day.minusDays((nav.day.dayOfWeek.value-1).toLong())
-                val visibleStart=TimelinePeriods.start(nav.scale,nav.day)
-                val start=minOf(weekStart,visibleStart.minusDays(visibleStart.dayOfWeek.value-1L))
-                val end=maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(nav.scale,nav.day))
+                val (start,end) = fetchRange(nav)
                 val targets=repository.targets()
                 stage = ConnectionStage.TargetHistory
                 val history=repository.targetHistory()
@@ -278,6 +286,16 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val zero=repository.confirmedZeroDays(start,end)
                 stage = ConnectionStage.Cache
                 val snap=OfflineSnapshot(start,end,entries,targets,history,zero)
+                // Cache authenticated server snapshots for immediate date/scale navigation.
+                val owner = repository.client.auth.currentUserOrNull()?.id
+                if (owner != null && owner == authenticatedOwnerId) {
+                    if (snapshotOwner != owner) {
+                        recentSnapshots.clear()
+                        snapshotOwner = owner
+                    }
+                    recentSnapshots.addLast(snap)
+                    while (recentSnapshots.size > 4) recentSnapshots.removeFirst()
+                }
                 // A Keystore/file-system failure must not mislabel a perfectly
                 // successful Supabase download as a remote outage.
                 try {
@@ -357,6 +375,13 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         }
     }
 
+    /** The smallest date interval whose data must be present for the selected period. */
+    private fun requiredRange(nav: AppState): Pair<LocalDate,LocalDate> =
+        timelineRequiredRange(nav.scale,nav.day)
+
+    private fun fetchRange(nav: AppState): Pair<LocalDate,LocalDate> =
+        timelineFetchRange(nav.scale,nav.day)
+
     private fun weekTargets(snap:OfflineSnapshot):Map<LocalDate,Targets> {
         val dates=generateSequence(snap.start){it.plusDays(1)}.takeWhile {it<snap.end}
         return dates.mapNotNull {date ->
@@ -366,10 +391,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     }
 
     private fun validCacheFor(snap:OfflineSnapshot,nav:AppState):Boolean {
-        val weekStart=nav.day.minusDays((nav.day.dayOfWeek.value-1).toLong())
-        val visibleStart=TimelinePeriods.start(nav.scale,nav.day)
-        val start=minOf(weekStart,visibleStart.minusDays(visibleStart.dayOfWeek.value-1L))
-        val end=maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(nav.scale,nav.day))
+        val (start,end) = requiredRange(nav)
         return snap.start<=start && snap.end>=end
     }
 
@@ -404,6 +426,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val pendingStatus=try { offline?.status() }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null }
+        // A navigation may cancel this coroutine while encrypted offline data is read.
+        if (mutable.value.day != nav.day || mutable.value.scale != nav.scale) return
         mutable.update {it.copy(
             entries=all.filter {row->row.consumedAt.atZone(zone).toLocalDate()==nav.day},
             targets=snap.targets,week=week,monthCalories=totals,monthTargets=monthTargets,
@@ -503,14 +527,40 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         mutable.update { it.copy(picoocConnected = false, notice = "PICOOC отключён.") }
     }
     fun closeSettings() { mutable.update { it.copy(destination = destinationFor(it.scale)) }; saveNavigation() }
+    /** Preserve a loaded period when the date or selected scale changes.
+     * Foreground resume, pull-to-refresh and diary writes still fetch from Supabase. */
+    private fun navigate(updated: AppState) {
+        val owner = repository?.client?.auth?.currentUserOrNull()?.id
+        val cached = if(owner != null && snapshotOwner == owner)
+            recentSnapshots.lastOrNull { validCacheFor(it,updated) } else null
+        cachedNavigationJob?.cancel()
+        if(cached == null) {
+            mutable.value = updated.copy(week=null,monthCalories=emptyMap(),
+                monthTargets=emptyMap(),confirmedZeroDays=emptySet())
+            saveNavigation()
+            refresh()
+            return
+        }
+        ++refreshGeneration
+        refreshJob?.cancel()
+        refreshInFlight = false
+        mutable.value = updated.copy(busy=writeInFlight,refreshing=false)
+        saveNavigation()
+        val expectedDay=updated.day
+        val expectedScale=updated.scale
+        cachedNavigationJob=viewModelScope.launch {
+            if(mutable.value.day==expectedDay && mutable.value.scale==expectedScale)
+                displaySnapshot(cached,updated,false)
+        }
+    }
     fun setTimeScale(scale: TimeScale) {
-        mutable.update { it.copy(scale = scale, destination = destinationFor(scale), week = null) }
-        saveNavigation(); refresh()
+        if(mutable.value.scale==scale) return
+        navigate(mutable.value.copy(scale=scale, destination=destinationFor(scale)))
     }
     fun showPeriod(date: LocalDate) {
-        mutable.update { it.copy(day = date, month = YearMonth.from(date), entries = if(it.day == date) it.entries else emptyList(),
-            week = null, monthCalories = emptyMap(), monthTargets = emptyMap(), confirmedZeroDays = emptySet()) }
-        saveNavigation(); refresh()
+        if(mutable.value.day==date) return
+        navigate(mutable.value.copy(day=date,month=YearMonth.from(date),
+            entries=emptyList()))
     }
     fun movePeriod(offset: Int) = showPeriod(TimelinePeriods.move(mutable.value.scale, mutable.value.day, offset))
     fun resetPeriod() = showPeriod(LocalDate.now())
