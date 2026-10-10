@@ -1,19 +1,11 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 package com.kxsxlxv.jetmeal.ui
 
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -49,16 +41,9 @@ internal fun weeklyBudgetRail(eaten: Double, budget: Double): WeeklyBudgetRailSt
 }
 
 @Composable
-internal fun WeeklyBudgetRail(week: WeekState) {
+internal fun WeeklyBudgetRail(week: WeekState,fillFraction: ()->Float = { 1f }) {
     val palette=nutritionColors()
     val state=weeklyBudgetRail(week.totalConsumed,week.baseBudget)
-    var visible by remember(week.start) { mutableStateOf(false) }
-    LaunchedEffect(week.start) { visible=true }
-    val progress=animateFloatAsState(
-        targetValue=if(visible) state.consumedFraction else 0f,
-        animationSpec=tween(durationMillis=1100,easing=CubicBezierEasing(.25f,.1f,.18f,1f)),
-        label="Заполнение недельного бюджета",
-    ).value
     val remainingLabel=if(state.overBudget) "Сверх бюджета" else "До бюджета"
     Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.extraLarge,
         color=MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -93,6 +78,7 @@ internal fun WeeklyBudgetRail(week: WeekState) {
             }) {
                 val radius=CornerRadius(size.height/2,size.height/2)
                 drawRoundRect(color=scheme.surfaceContainerLow,cornerRadius=radius,size=size)
+                val progress=state.consumedFraction*fillFraction().coerceIn(0f,1f)
                 val filled=size.width*progress
                 if(filled>0f) {
                     drawRoundRect(
