@@ -2,6 +2,7 @@ package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
@@ -214,6 +215,25 @@ class JetMealUiTest {
         compose.onNodeWithText("Съедено").assertIsDisplayed()
         compose.onNodeWithText("До бюджета").assertIsDisplayed()
         compose.onNodeWithContentDescription("Съедено 8 400",substring=true).assertExists()
+    }
+
+    @Test fun monthDeviationChartRemainsVisibleInARealPhoneSizedViewport() {
+        val month=YearMonth.of(2026,10)
+        val dates=(4..9).map(month::atDay)
+        val values=dates.associateWith { 1950.0 }
+        val targets=dates.associateWith { 1800.0 }
+        compose.setContent {
+            JetmealTheme {
+                Box(Modifier.width(390.dp).height(580.dp)) {
+                    CalendarContent(month,values,targets,{}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("Отклонение от нормы").assertIsDisplayed()
+        compose.onNodeWithText("Итоги месяца").assertIsDisplayed()
+        compose.onNodeWithText("Дней с данными").assertIsDisplayed()
+        compose.onNodeWithContentDescription(
+            "31 октября 2026, Нет записей. Открыть день").assertIsDisplayed()
     }
 
     @Test fun sparseMonthsHideDeviationWhileSixDaysShowChart() {

@@ -256,6 +256,41 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
     else -> CalendarTone.Below
 }
 
+/** Reserve visible space for the month chart before sizing the squares.
+ * A chart with six valid completed days must never disappear merely because
+ * a viewport-specific height heuristic fails. All heights are in dp. */
+internal data class MonthCalendarSizing(val tile: androidx.compose.ui.unit.Dp,
+    val chartPlot: androidx.compose.ui.unit.Dp)
+
+internal fun monthCalendarSizing(
+    availableHeight: androidx.compose.ui.unit.Dp,
+    availableWidth: androidx.compose.ui.unit.Dp,
+    rows: Int,
+    withChart: Boolean,
+    sparseLabels: Boolean,
+): MonthCalendarSizing {
+    require(rows in 4..6)
+    val gap=4.dp
+    val horizontalPadding=12.dp
+    val byWidth=(availableWidth-horizontalPadding*2-gap*6)/7
+    // Column padding (20), weekday labels (20), totals header (48), cards (91),
+    // top-level gaps (8 each), and four/five inter-week gaps (4 each).
+    val base=20.dp+20.dp+48.dp+91.dp +
+        8.dp*(if(withChart) 4 else 3) + gap*(rows-1)
+    // The chart chrome consists of the 48dp info-button heading, a one-line
+    // summary, date/percentage labels, vertical padding and internal gaps.
+    // The drawing plot itself has a dedicated 36dp minimum.
+    val chartChrome=if(sparseLabels) 132.dp else 116.dp
+    val minPlot=36.dp
+    val reserve=base+if(withChart) chartChrome+minPlot else 0.dp
+    val byHeight=(availableHeight-reserve)/rows
+    val tile=minOf(byWidth,byHeight).coerceAtLeast(28.dp)
+    val plot=if(withChart)
+        (availableHeight-base-tile*rows-chartChrome).coerceIn(minPlot,100.dp)
+    else 0.dp
+    return MonthCalendarSizing(tile,plot)
+}
+
 @Composable internal fun CalendarContent(
     month: YearMonth, calories: Map<LocalDate,Double>, targets: Map<LocalDate,Double>,
     onMonth: (YearMonth)->Unit, onDay: (LocalDate)->Unit,
@@ -275,19 +310,13 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val gap = 4.dp
         val horizontalPadding = 12.dp
-        val tileByWidth = (maxWidth - horizontalPadding * 2 - gap * 6) / 7
-        val tileByHeight = (maxHeight - 190.dp - gap * (rows - 1)) / rows
-        val tile = minOf(tileByWidth, tileByHeight).coerceAtLeast(28.dp)
-        // Every element shares the non-scrollable viewport. Never shrink dates
-        // merely to make the optional analysis chart fit.
-        val chartRoom = maxHeight - (tile*rows + gap*(rows-1) +
-            20.dp + 16.dp + 48.dp + 96.dp + 50.dp)
-        // Sparse months add two rows of real percentages + dates below the
-        // plot; reserve that space rather than allowing the totals to overflow.
-        val neededChartRoom = if(monthPoints.size<=8) 190.dp else 169.dp
-        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= neededChartRoom
-        val chartPlotHeight = (chartRoom - if(monthPoints.size<=8) 135.dp else 117.dp)
-            .coerceIn(54.dp,112.dp)
+        // Eligibility depends on actual data, not available height. The
+        // squares adapt to the chart; the chart does not silently disappear.
+        val displayChart = showMonthDeviation(monthPoints)
+        val sizing=monthCalendarSizing(maxHeight,maxWidth,rows,
+            displayChart,sparseLabels=monthPoints.size<=8)
+        val tile=sizing.tile
+        val chartPlotHeight=sizing.chartPlot
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(gap,Alignment.CenterHorizontally),
