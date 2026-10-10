@@ -58,15 +58,38 @@ class MonthlyDeviationTest {
         assertEquals(-100.0,points[2].percent,1e-6)
     }
 
-    @Test fun adaptiveScaleEnlargesNormalDeviationsWithoutFlatteningByOneOutlier() {
-        val points=listOf(2.0,3.0,4.0,5.0,6.0,95.0)
-            .mapIndexed { index,pct -> MonthDeviation(month.atDay(index+1),pct) }
-        assertEquals(10.0,monthlyDeviationScale(points),0.0)
-        assertEquals("+95%",deviationLabel(points.last().percent))
+    @Test fun positiveOnlyMonthsUseTheFullHeightWithoutClipping() {
+        val points=listOf(40.2,16.3,1.0,7.3,7.5,4.1)
+            .mapIndexed { index,pct-> MonthDeviation(month.atDay(index+4),pct) }
+        val axis=monthlyDeviationAxis(points)
+        assertEquals(0.0,axis.minimum,0.0)
+        assertEquals(45.0,axis.maximum,0.0)
+        assertEquals(1f,axis.y(0.0),1e-6f)
+        assertEquals(0.0,axis.y(45.0).toDouble(),1e-6)
+        assertTrue(axis.y(40.2)<axis.y(16.3))
+        assertEquals(45.0,monthlyDeviationScale(points),0.0)
+    }
+
+    @Test fun negativeOnlyMonthsUseFullHeightAndMixedMonthsKeepZero() {
+        val downs=listOf(-3.0,-8.0,-26.2)
+            .mapIndexed { i,p ->MonthDeviation(month.atDay(i+1),p) }
+        val downAxis=monthlyDeviationAxis(downs)
+        assertEquals(0.0,downAxis.maximum,0.0)
+        assertEquals(-30.0,downAxis.minimum,0.0)
+        assertEquals(0f,downAxis.y(0.0),1e-6f)
+        val mixed=monthlyDeviationAxis(downs+MonthDeviation(month.atDay(6),20.8))
+        assertEquals(-30.0,mixed.minimum,0.0)
+        assertEquals(25.0,mixed.maximum,0.0)
+        assertTrue(mixed.y(20.8)<mixed.y(0.0))
+        assertTrue(mixed.y(0.0)<mixed.y(-26.2))
+    }
+
+    @Test fun zeroOnlyMonthsAndSignsRemainReadable() {
+        val axis=monthlyDeviationAxis(listOf(MonthDeviation(month.atDay(1),0.0)))
+        assertEquals(-10.0,axis.minimum,0.0)
+        assertEquals(10.0,axis.maximum,0.0)
+        assertEquals("+40,2%",deviationLabel(40.2))
         assertEquals("−5%",deviationLabel(-5.0))
-        val ordinary=listOf(-11.0,19.0,14.0,17.0,6.0,21.0)
-            .mapIndexed { index,pct -> MonthDeviation(month.atDay(index+1),pct) }
-        assertEquals(20.0,monthlyDeviationScale(ordinary),0.0)
     }
 
     @Test fun omitsTodayFutureMissingAndZeroTargetDays() {
