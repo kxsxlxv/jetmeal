@@ -31,6 +31,29 @@ class FoodSearchPresentationTest {
         assertEquals("21 вариант", variantCountLabel(21))
     }
 
+    @Test fun portionEntryShowsEquivalentGramsInsideInput() {
+        val serving=FoodMeasure("m1","v1","serving","порция",274.0)
+        assertEquals("= 274 г", measureConversionHint(1.0,serving,serving,"g"))
+        assertEquals("= 548 г", measureConversionHint(2.0,serving,serving,"g"))
+    }
+
+    @Test fun gramsEntryShowsDynamicPortionEquivalentInsideInput() {
+        val serving=FoodMeasure("m1","v1","serving","порция",274.0)
+        assertEquals("= 1 порция",measureConversionHint(274.0,null,serving,"g"))
+        assertEquals("= 2 порции",measureConversionHint(548.0,null,serving,"g"))
+        assertEquals("= 5 порций",measureConversionHint(1370.0,null,serving,"g"))
+    }
+
+    @Test fun approximateAndInvalidConversionsAreSafe() {
+        val serving=FoodMeasure("m1","v1","serving","порция",274.0,approximate=true)
+        assertEquals("≈ 274 г",measureConversionHint(1.0,serving,serving,"g"))
+        assertEquals("≈ 1 порция",measureConversionHint(274.0,null,serving,"g"))
+        assertNull(measureConversionHint(100.0,null,null,"g"))
+        assertNull(measureConversionHint(null,null,serving,"g"))
+        assertNull(measureConversionHint(0.0,null,serving,"g"))
+        assertNull(measureConversionHint(Double.POSITIVE_INFINITY,null,serving,"g"))
+    }
+
     @Test fun searchBrandIsNotDuplicatedOrMixedWithPhotoSource() {
         assertEquals("Ростикс",compactFoodBrand(food("1","1","Ростмастер","Ростикс","Ростикс")))
         assertNull(compactFoodBrand(food("2","2","Ростикс Чизбургер","Ростикс","Фото пользователя 07.10.2026")))
