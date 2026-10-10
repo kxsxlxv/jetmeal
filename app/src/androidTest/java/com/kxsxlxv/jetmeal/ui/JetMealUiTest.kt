@@ -135,8 +135,26 @@ class JetMealUiTest {
         val description = date.format(DateTimeFormatter.ofPattern("d MMMM yyyy", RussianLocale)) +
             ", ${number(2500.0)} ккал, Выше нормы" + (if (date == LocalDate.now()) ", сегодня" else "") + ". Открыть день"
         compose.onNodeWithContentDescription(description).assertIsDisplayed()
-            .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()
+            // Seven squares must fit even at 320dp; Compose expands the physical
+            // touch slop beyond the visual cell where space permits.
+            .assertWidthIsAtLeast(36.dp).performClick()
         compose.runOnIdle { assertEquals(date, opened) }
+    }
+
+    @Test fun monthShowsSevenWeekdaysAndLastDateWithoutVerticalScrolling() {
+        val month=YearMonth.of(2026,10)
+        compose.setContent {
+            JetmealTheme {
+                Box(Modifier.width(320.dp).fillMaxSize()) {
+                    CalendarContent(month,emptyMap(),emptyMap(),{}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("ПН").assertIsDisplayed()
+        compose.onNodeWithText("ВС").assertIsDisplayed()
+        compose.onNodeWithContentDescription(
+            "31 октября 2026, Нет записей. Открыть день"
+        ).assertIsDisplayed()
     }
 
     @Test fun daySummarySupportsExpandedWidthAndLargeFont() {

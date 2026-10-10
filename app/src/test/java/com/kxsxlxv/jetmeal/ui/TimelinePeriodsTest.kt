@@ -78,4 +78,22 @@ class TimelinePeriodsTest {
             TimelinePeriods.title(TimeScale.Week, LocalDate.of(2026, 12, 31), today),
         )
     }
+
+    @Test fun nearbyDayNavigationFitsPrefetchedRangeWithoutNewRequests() {
+        val (start,end)=timelineFetchRange(TimeScale.Day,LocalDate.of(2026,10,10))
+        val october20=timelineRequiredRange(TimeScale.Day,LocalDate.of(2026,10,20))
+        assertTrue(start<=october20.first && end>=october20.second)
+        val november2=timelineRequiredRange(TimeScale.Day,LocalDate.of(2026,11,2))
+        assertTrue(start<=november2.first && end>=november2.second)
+    }
+
+    @Test fun nextMonthStillRequiresRefreshRatherThanDisplayingPartialData() {
+        val (start,end)=timelineFetchRange(TimeScale.Day,LocalDate.of(2026,10,10))
+        val november20=timelineRequiredRange(TimeScale.Day,LocalDate.of(2026,11,20))
+        assertTrue(start>november20.first || end<november20.second)
+        assertEquals(LocalDate.of(2026,9,28),
+            timelineRequiredRange(TimeScale.Month,LocalDate.of(2026,10,10)).first)
+        assertEquals(LocalDate.of(2026,11,1),
+            timelineRequiredRange(TimeScale.Month,LocalDate.of(2026,10,10)).second)
+    }
 }
