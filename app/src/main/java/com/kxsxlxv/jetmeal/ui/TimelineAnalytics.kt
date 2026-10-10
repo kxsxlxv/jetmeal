@@ -271,7 +271,10 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         label="Цвет дня")
     val selection = date == selected
     val isToday = date == today
-    val description = "${date.format(DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale))}, ${actual?.let {if(confirmedZero) "0 ккал, подтверждённый нулевой день" else "${number(it)} ккал, ${CalendarAdherence.status(it,target)}"} ?: "Нет записей"}${if(isToday) ", сегодня" else ""}. Открыть день"
+    val description = "${date.format(DateTimeFormatter.ofPattern("d MMMM yyyy",RussianLocale))}, ${actual?.let {
+        if(confirmedZero) "0 ккал, подтверждённый нулевой день"
+        else "${number(it)} ккал, ${if(tone==CalendarTone.InProgress) "день ещё продолжается" else CalendarAdherence.status(it,target)}"
+    } ?: "Нет записей"}${if(isToday) ", сегодня" else ""}. Открыть день"
     Surface(onClick={onDay(date)},
         modifier=modifier.semantics(mergeDescendants=true) {contentDescription=description},
         shape=RoundedCornerShape(12.dp),
