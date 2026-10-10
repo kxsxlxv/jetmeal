@@ -115,10 +115,6 @@ fun DayContent(
                 }
             }
         }
-        item {
-            Text("Приёмы пищи", style = MaterialTheme.typography.titleLargeEmphasized,
-                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp).semantics { heading() })
-        }
         MealPeriod.entries.forEach { meal ->
             item(key = "meal-${meal.name}") {
                 val foods = entries.filter { it.meal == meal }.sortedBy { it.consumedAt }
