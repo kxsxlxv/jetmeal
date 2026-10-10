@@ -157,6 +157,40 @@ class JetMealUiTest {
         ).assertIsDisplayed()
     }
 
+    @Test fun weeklyDetailRowsAreHiddenUntilRequested() {
+        val monday=LocalDate.of(2026,10,5)
+        val days=(0L..6L).map { offset ->
+            BudgetDay(monday.plusDays(offset),if(offset<3L) 1200.0 else 0.0,
+                1800.0,if(offset<3L) DayLoggingStatus.Recorded else DayLoggingStatus.Missing)
+        }
+        val week=WeekState(monday,monday.plusDays(6),days,12600.0,3600.0,-900.0,
+            4,1800.0,0.0)
+        compose.setContent {
+            JetmealTheme {
+                WeekContent(week,{})
+            }
+        }
+        compose.onNodeWithText("Ритм недели").assertExists()
+        compose.onNodeWithText("Съедено").assertExists()
+        compose.onNodeWithText("Понедельник, 5 октября").assertDoesNotExist()
+        compose.onNodeWithText("Показать по дням").performScrollTo().performClick()
+        compose.onNodeWithText("Понедельник, 5 октября").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Скрыть подробности").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Понедельник, 5 октября").assertDoesNotExist()
+    }
+
+    @Test fun dayViewShowsMealNamesWithoutRedundantHeading() {
+        compose.setContent {
+            JetmealTheme {
+                DayContent(LocalDate.of(2026,10,6),listOf(entry),
+                    Targets(2000.0,100.0,60.0,250.0),null,{},{},{})
+            }
+        }
+        compose.onNodeWithText("Приёмы пищи").assertDoesNotExist()
+        compose.onNodeWithText("Утро").assertExists()
+    }
+
     @Test fun daySummarySupportsExpandedWidthAndLargeFont() {
         compose.setContent {
             val density = LocalDensity.current
