@@ -56,6 +56,6 @@ internal fun timelineFetchRange(scale: TimeScale,day: LocalDate): Pair<LocalDate
     val (start,end) = timelineRequiredRange(scale,day)
     if(scale != TimeScale.Day && scale != TimeScale.Week) return start to end
     val monthStart=day.withDayOfMonth(1)
-    return minOf(start,monthStart.minusDays(7)) to
-        maxOf(end,monthStart.plusMonths(1).plusDays(7))
+    return minOf(start,monthStart.minusDays(14)) to
+        maxOf(end,monthStart.plusMonths(1).plusDays(14))
 }
