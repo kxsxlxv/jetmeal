@@ -10,7 +10,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -56,7 +60,9 @@ internal fun MonthDeviationChart(
     val palette=nutritionColors()
     val scheme=MaterialTheme.colorScheme
     val snapshot=remember(points) {points.associateBy {it.date.dayOfMonth}}
-    val animated=animateFloatAsState(1f,
+    var revealed by remember(month) { mutableStateOf(false) }
+    LaunchedEffect(month) { revealed=true }
+    val animated=animateFloatAsState(if(revealed) 1f else 0f,
         animationSpec=tween(850,easing=CubicBezierEasing(.3f,0f,.15f,1f)),
         label="Появление отклонений").value
     Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.large,
