@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import kotlinx.coroutines.flow.collect
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -179,20 +180,32 @@ private sealed interface Editor {
     }
 }
 
-@Composable private fun NutritionTimeline(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
-    val scalePager=rememberPagerState(initialPage=state.scale.ordinal) { TimeScale.entries.size }
-    val activeScale by rememberUpdatedState(state.scale)
-    LaunchedEffect(scalePager) {
-        snapshotFlow { scalePager.settledPage }.collect { page ->
-            val requested=TimeScale.entries[page]
-            if(requested!=activeScale) model.setTimeScale(requested)
+/** Exactly four pages: swipes choose the time SCALE, never the date.
+ * The connected button group and drill-down routes remain synchronized. */
+@Composable internal fun ScaleNavigationPager(scale:TimeScale,
+    onSelect:(TimeScale)->Unit,modifier:Modifier=Modifier,
+    content:@Composable (TimeScale)->Unit) {
+    val pager=rememberPagerState(initialPage=scale.ordinal) {TimeScale.entries.size}
+    val selected by rememberUpdatedState(scale)
+    val onSelectLatest by rememberUpdatedState(onSelect)
+    LaunchedEffect(pager) {
+        snapshotFlow {pager.settledPage}.collect {page ->
+            val next=TimeScale.entries[page]
+            if(next!=selected) onSelectLatest(next)
         }
     }
-    // The existing segmented group and day drill-down can also select a scale.
-    LaunchedEffect(state.scale) {
-        if(scalePager.currentPage!=state.scale.ordinal)
-            scalePager.animateScrollToPage(state.scale.ordinal)
+    LaunchedEffect(scale) {
+        if(pager.currentPage!=scale.ordinal)
+            pager.animateScrollToPage(scale.ordinal)
     }
+    HorizontalPager(state=pager,modifier=modifier.semantics {
+        contentDescription="Масштаб питания. Листайте влево или вправо, чтобы перейти между Днём, Неделей, Месяцем и 3 месяцами"
+    },key={TimeScale.entries[it].name}) {page ->
+        content(TimeScale.entries[page])
+    }
+}
+
+@Composable private fun NutritionTimeline(state:AppState,model:JetMealViewModel,onAdd:(MealPeriod)->Unit,onEdit:(DiaryEntry)->Unit) {
     PullToRefreshBox(
         isRefreshing=state.refreshing,
         onRefresh=model::pullToRefresh,
@@ -211,12 +224,9 @@ private sealed interface Editor {
                     modifier=Modifier.size(48.dp),
                 ) { SymbolIcon(JetMealSymbol.Settings,"Настройки") }
             }
-            HorizontalPager(state=scalePager,modifier=Modifier.weight(1f).fillMaxWidth()
-                .semantics {contentDescription="Масштаб питания. Листайте влево или вправо, чтобы перейти между Днём, Неделей, Месяцем и 3 месяцами"},
-                key={TimeScale.entries[it].name}) { page ->
-                val scale=TimeScale.entries[page]
-                if(scale==state.scale)
-                    PeriodView(state,model,onAdd,onEdit)
+            ScaleNavigationPager(state.scale,model::setTimeScale,
+                Modifier.weight(1f).fillMaxWidth()) { scale ->
+                if(scale==state.scale) PeriodView(state,model,onAdd,onEdit)
                 else LoadingContent("Открываем ${scale.label.lowercase(RussianLocale)}…")
             }
         }
