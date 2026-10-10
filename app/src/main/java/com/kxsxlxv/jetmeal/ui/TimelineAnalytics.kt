@@ -113,7 +113,7 @@ internal object CalendarAdherence {
                 SymbolIcon(if(detailsExpanded) JetMealSymbol.ExpandLess else JetMealSymbol.ExpandMore,
                     null,Modifier.size(20.dp))
             }
-            val spatial=MaterialTheme.motionScheme.defaultSpatialSpec<Int>()
+            val spatial=MaterialTheme.motionScheme.defaultSpatialSpec<androidx.compose.ui.unit.IntSize>()
             val effects=MaterialTheme.motionScheme.fastEffectsSpec<Float>()
             AnimatedVisibility(visible=detailsExpanded,
                 enter=expandVertically(animationSpec=spatial) + fadeIn(animationSpec=effects),
