@@ -71,17 +71,23 @@ internal object CalendarAdherence {
     val compactChart=maxWidth<392.dp || fontScale>=1.3f
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(24.dp)) {
         item {
-            Text(number(week.effectiveTarget),style=MaterialTheme.typography.displayMediumEmphasized)
-            Text("ккал · ${if(today in week.start..week.end) "норма на сегодня" else if(today>week.end) "норма к концу недели" else "начальная дневная норма"}",color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            Text("Ритм недели",style=MaterialTheme.typography.titleLargeEmphasized,modifier=Modifier.semantics {heading()})
-            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("Ритм недели",style=MaterialTheme.typography.titleLargeEmphasized,
+                    modifier=Modifier.weight(1f).semantics {heading()})
+                ExplanationInfoButton(
+                    title="Ритм недели",
+                    explanation="Цветные столбцы показывают записанные калории за день. " +
+                        "Горизонтальная черта — рассчитанная норма именно на этот день. " +
+                        "Отсутствие записей не означает 0 ккал. " +
+                        "Нажмите на столбец, чтобы открыть дневник выбранной даты."
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.Bottom) {
                 week.days.forEach { day ->
                     val fill by animateFloatAsState((day.actual/maxValue).toFloat(),MaterialTheme.motionScheme.defaultSpatialSpec(),label="Съедено за день")
                     val mark=(day.target/maxValue).toFloat()
-                    val dayModifier=Modifier.weight(1f).let {if(compactChart) it else it.clickable(role=Role.Button,onClick={onDay(day.date)})}
+                    val dayModifier=Modifier.weight(1f).clickable(role=Role.Button,onClick={onDay(day.date)})
                     val known=day.status==DayLoggingStatus.Recorded || day.status==DayLoggingStatus.ConfirmedZero
                     Column(dayModifier.semantics(mergeDescendants=true) {
                         contentDescription="${day.date.format(DateTimeFormatter.ofPattern("d MMMM",RussianLocale))}, ${if(known) "${number(day.actual)} ккал" else if(day.status==DayLoggingStatus.Missing) "нет записей" else "день ещё не завершён"}, норма ${number(day.target)} ккал. Открыть день"
@@ -100,10 +106,6 @@ internal object CalendarAdherence {
                     }
                 }
             }
-            Text("Полосы — съедено · черта — дневная норма.",
-                style=MaterialTheme.typography.bodySmall,
-                color=MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier=Modifier.padding(top=12.dp))
             TextButton(onClick={detailsExpanded=!detailsExpanded},
                 modifier=Modifier.fillMaxWidth().semantics {
                     stateDescription=if(detailsExpanded) "Развёрнуто" else "Свёрнуто"
@@ -222,6 +224,20 @@ internal object CalendarAdherence {
     }
 }
 
+/** Reusable, accessible on-demand explanation instead of always-visible helper text. */
+@Composable internal fun ExplanationInfoButton(title: String, explanation: String) {
+    var opened by rememberSaveable(title) { mutableStateOf(false) }
+    IconButton(onClick={opened=true},modifier=Modifier.size(48.dp)) {
+        SymbolIcon(JetMealSymbol.Info,"Информация: $title",Modifier.size(22.dp))
+    }
+    if(opened) AlertDialog(
+        onDismissRequest={opened=false},
+        title={Text(title)},
+        text={Text(explanation)},
+        confirmButton={TextButton(onClick={opened=false}) {Text("Понятно")}}
+    )
+}
+
 /** Monday-first month grid, with either four, five or six complete week rows. */
 internal fun calendarWeekCount(month: YearMonth): Int =
     (month.atDay(1).dayOfWeek.value - 1 + month.lengthOfMonth() + 6) / 7
@@ -262,7 +278,7 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         val gap = 4.dp
         val horizontalPadding = 12.dp
         val tileByWidth = (maxWidth - horizontalPadding * 2 - gap * 6) / 7
-        val tileByHeight = (maxHeight - 174.dp - gap * (rows - 1)) / rows
+        val tileByHeight = (maxHeight - 190.dp - gap * (rows - 1)) / rows
         val tile = minOf(tileByWidth, tileByHeight).coerceAtLeast(28.dp)
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -293,28 +309,25 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
                     }
                 }
             }
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                CalendarLegendItem("В норме",palette.calories.container,Modifier.weight(1f))
-                CalendarLegendItem("Выше",palette.carbs.container,Modifier.weight(1f))
-                CalendarLegendItem("Ниже",palette.protein.container,Modifier.weight(1f))
-                CalendarLegendItem("Нет данных",MaterialTheme.colorScheme.surfaceContainerLow,Modifier.weight(1f))
+            // Statistics belong immediately below the grid, not pinned to the
+            // bottom through an expanding empty spacer.
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("Итоги месяца",style=MaterialTheme.typography.titleMediumEmphasized,
+                    modifier=Modifier.weight(1f).semantics {heading()})
+                ExplanationInfoButton(
+                    title="Цвета календаря",
+                    explanation="Зелёный — записано в пределах ±10% дневной нормы. " +
+                        "Персиковый — выше нормы, сиреневый — ниже. " +
+                        "Серый — нет данных или ещё не завершён сегодняшний день. " +
+                        "Подтверждённый нулевой день тоже отмечается нейтрально. " +
+                        "Обводка выделяет сегодняшний или выбранный день."
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 CalendarSummaryItem("Дней с данными",actual.size.toString(),Modifier.weight(1f))
                 CalendarSummaryItem("Съедено", "${number(actual.values.sum())} ккал",Modifier.weight(1f))
             }
         }
-    }
-}
-
-@Composable private fun CalendarLegendItem(label: String, tint: Color, modifier: Modifier) {
-    Row(modifier.height(20.dp),verticalAlignment=Alignment.CenterVertically,
-        horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-        Box(Modifier.size(9.dp).background(tint,RoundedCornerShape(3.dp)))
-        Text(label,style=MaterialTheme.typography.labelSmall,maxLines=1,
-            color=MaterialTheme.colorScheme.onSurfaceVariant,
-            softWrap=false)
     }
 }
 
