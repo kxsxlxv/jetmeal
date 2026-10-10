@@ -248,6 +248,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     fun pullToRefresh() = refresh(showPullIndicator = true)
     private fun refresh(showPullIndicator: Boolean) {
         if(repository?.client?.auth?.currentUserOrNull()==null) return
+        cachedNavigationJob?.cancel()
         val generation=++refreshGeneration
         refreshJob?.cancel()
         refreshJob=viewModelScope.launch {
