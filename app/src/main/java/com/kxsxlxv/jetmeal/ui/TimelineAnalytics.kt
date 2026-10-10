@@ -1,6 +1,11 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 package com.kxsxlxv.jetmeal.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -11,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -22,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,6 +66,7 @@ internal object CalendarAdherence {
     val maxValue=week.days.maxOf {maxOf(it.actual,it.target)}.coerceAtLeast(1.0)
     val today=LocalDate.now()
     val fontScale=LocalDensity.current.fontScale
+    var detailsExpanded by rememberSaveable(week.start.toString()) { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val compactChart=maxWidth<392.dp || fontScale>=1.3f
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(24.dp)) {
@@ -66,7 +74,6 @@ internal object CalendarAdherence {
             Text(number(week.effectiveTarget),style=MaterialTheme.typography.displayMediumEmphasized)
             Text("ккал · ${if(today in week.start..week.end) "норма на сегодня" else if(today>week.end) "норма к концу недели" else "начальная дневная норма"}",color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        item { WeekBudgetExplanation(week,dailyTargets) }
         item {
             Text("Ритм недели",style=MaterialTheme.typography.titleLargeEmphasized,modifier=Modifier.semantics {heading()})
             Spacer(Modifier.height(16.dp))
@@ -93,19 +100,50 @@ internal object CalendarAdherence {
                     }
                 }
             }
-            Text("Полосы — съедено, отметки — дневная норма, прочерк — нет данных. " + if(compactChart) "Даты и значения — в списке ниже." else "Нажмите на день, чтобы открыть дневник.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=12.dp))
-        }
-        if(compactChart) item {
-            Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
-                week.days.forEachIndexed {index,day->
-                    SegmentedListItem(onClick={onDay(day.date)},shapes=ListItemDefaults.segmentedShapes(index,7),
-                        modifier=Modifier.fillMaxWidth().heightIn(min=48.dp),
-                        supportingContent={Text("${if(day.status==DayLoggingStatus.Missing) "Нет записей" else if(day.status==DayLoggingStatus.Future || day.status==DayLoggingStatus.InProgress) "Ещё не завершён" else "${number(day.actual)} ккал"} · норма ${number(day.target)} ккал")}) {
-                        Text(day.date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM",RussianLocale)))
+            Text("Полосы — съедено · черта — дневная норма.",
+                style=MaterialTheme.typography.bodySmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier=Modifier.padding(top=12.dp))
+            TextButton(onClick={detailsExpanded=!detailsExpanded},
+                modifier=Modifier.fillMaxWidth().semantics {
+                    stateDescription=if(detailsExpanded) "Развёрнуто" else "Свёрнуто"
+                }) {
+                Text(if(detailsExpanded) "Скрыть подробности" else "Показать по дням")
+                Spacer(Modifier.width(6.dp))
+                SymbolIcon(if(detailsExpanded) JetMealSymbol.ExpandLess else JetMealSymbol.ExpandMore,
+                    null,Modifier.size(20.dp))
+            }
+            val spatial=MaterialTheme.motionScheme.defaultSpatialSpec<androidx.compose.ui.unit.IntSize>()
+            val effects=MaterialTheme.motionScheme.fastEffectsSpec<Float>()
+            AnimatedVisibility(visible=detailsExpanded,
+                enter=expandVertically(animationSpec=spatial) + fadeIn(animationSpec=effects),
+                exit=shrinkVertically(animationSpec=spatial) + fadeOut(animationSpec=effects)) {
+                Column(Modifier.fillMaxWidth().padding(top=4.dp),
+                    verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                    week.days.forEachIndexed { index,day ->
+                        val known=day.status==DayLoggingStatus.Recorded ||
+                            day.status==DayLoggingStatus.ConfirmedZero
+                        SegmentedListItem(onClick={onDay(day.date)},
+                            shapes=ListItemDefaults.segmentedShapes(index,7),
+                            modifier=Modifier.fillMaxWidth().heightIn(min=52.dp),
+                            supportingContent={
+                                Text(
+                                    (if(known) "${number(day.actual)} ккал" else when(day.status) {
+                                        DayLoggingStatus.Missing -> "Нет записей"
+                                        DayLoggingStatus.InProgress -> "День продолжается"
+                                        DayLoggingStatus.Future -> "Ещё не наступил"
+                                        else -> "Нет записей"
+                                    }) + " · норма ${number(day.target)} ккал")
+                            },
+                            trailingContent={SymbolIcon(JetMealSymbol.Next,null,Modifier.size(20.dp))}) {
+                            Text(day.date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM",RussianLocale))
+                                .replaceFirstChar{it.titlecase(RussianLocale)})
+                        }
                     }
                 }
             }
         }
+        item { WeekSummary(week,today) }
         if(week.missingCompletedDays.isNotEmpty()) item {
             Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -113,14 +151,6 @@ internal object CalendarAdherence {
                     Text("${week.missingCompletedDays.size} дней не включены в перераспределение. Это не нулевое питание; итог недели пока неполный.")
                     TextButton(onClick={onDay(week.missingCompletedDays.first())}) {Text("Открыть первый пропуск")}
                 }
-            }
-        }
-        item {
-            FlowRow(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                AnalyticMetric("Съедено",number(week.totalConsumed),"ккал")
-                AnalyticMetric("Бюджет недели",number(week.baseBudget),"ккал")
-                AnalyticMetric("Отклонение",signed(week.deviation),"ккал за завершённые дни")
-                if(today in week.start..week.end) AnalyticMetric("Дней осталось",week.remainingDays.toString(),"включая сегодня")
             }
         }
         if(abs(week.residual)>.5) item {
@@ -131,14 +161,64 @@ internal object CalendarAdherence {
                 }
             }
         }
+        item { WeekBudgetExplanation(week,dailyTargets) }
         item {Text("Белки, жиры и углеводы сохраняют заданные дневные цели.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
     }
     }
 }
 
-@Composable private fun AnalyticMetric(label:String,value:String,unit:String) {
-    Surface(shape=MaterialTheme.shapes.large,color=MaterialTheme.colorScheme.surfaceContainerHigh,modifier=Modifier.widthIn(min=140.dp)) {
-        Column(Modifier.padding(16.dp)) {Text(label,style=MaterialTheme.typography.labelLarge);Text(value,style=MaterialTheme.typography.headlineSmallEmphasized);Text(unit,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+/** Prominent consumed/budget comparison, then secondary compact metrics.
+ * No extra bars: the weekly rhythm immediately above already shows progress. */
+@Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now()) {
+    val palette=nutritionColors()
+    Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Text("Итоги недели",style=MaterialTheme.typography.titleLargeEmphasized,
+            modifier=Modifier.semantics {heading()})
+        Surface(modifier=Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.extraLarge,
+            color=palette.calories.container,contentColor=palette.calories.onContainer) {
+            Row(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=18.dp),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text("Съедено",style=MaterialTheme.typography.labelLarge)
+                    Text(number(week.totalConsumed),style=MaterialTheme.typography.headlineMediumEmphasized,
+                        maxLines=1)
+                    Text("ккал за неделю",style=MaterialTheme.typography.labelSmall)
+                }
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text("Бюджет недели",style=MaterialTheme.typography.labelLarge)
+                    Text(number(week.baseBudget),style=MaterialTheme.typography.titleLargeEmphasized,
+                        maxLines=1)
+                    Text("ккал",style=MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            WeekSummaryTile("Отклонение",signed(week.deviation),
+                "ккал · завершённые дни",Modifier.weight(1f))
+            if(today in week.start..week.end)
+                WeekSummaryTile("Дней осталось",week.remainingDays.toString(),
+                    "включая сегодня",Modifier.weight(1f))
+            else
+                WeekSummaryTile("Записано дней",
+                    week.days.count { it.status==DayLoggingStatus.Recorded ||
+                        it.status==DayLoggingStatus.ConfirmedZero }.toString(),
+                    "из 7",Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable private fun WeekSummaryTile(label:String,value:String,caption:String,modifier:Modifier) {
+    Surface(modifier=modifier,shape=MaterialTheme.shapes.large,
+        color=MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            Text(label,style=MaterialTheme.typography.labelMedium,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+            Text(value,style=MaterialTheme.typography.titleLargeEmphasized,maxLines=1)
+            Text(caption,style=MaterialTheme.typography.labelSmall,
+                color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+        }
     }
 }
 
