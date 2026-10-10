@@ -33,6 +33,17 @@ class MonthlyDeviationTest {
         assertEquals(-100.0,points[2].percent,1e-6)
     }
 
+    @Test fun adaptiveScaleEnlargesNormalDeviationsWithoutFlatteningByOneOutlier() {
+        val points=listOf(2.0,3.0,4.0,5.0,6.0,95.0)
+            .mapIndexed { index,pct -> MonthDeviation(month.atDay(index+1),pct) }
+        assertEquals(10.0,monthlyDeviationScale(points),0.0)
+        assertEquals("+95%",deviationLabel(points.last().percent))
+        assertEquals("−5%",deviationLabel(-5.0))
+        val ordinary=listOf(-11.0,19.0,14.0,17.0,6.0,21.0)
+            .mapIndexed { index,pct -> MonthDeviation(month.atDay(index+1),pct) }
+        assertEquals(20.0,monthlyDeviationScale(ordinary),0.0)
+    }
+
     @Test fun omitsTodayFutureMissingAndZeroTargetDays() {
         val consumed=mapOf(month.atDay(1) to 2000.0,
             month.atDay(2) to 1500.0,

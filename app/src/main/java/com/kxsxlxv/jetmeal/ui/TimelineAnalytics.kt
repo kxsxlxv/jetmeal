@@ -7,7 +7,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,6 +61,11 @@ internal object CalendarAdherence {
     fun marker(actual:Double,target:Double?):String = when(status(actual,target)) {"Близко к норме"->"≈"; "Выше нормы"->"↑"; "Ниже нормы"->"↓"; else->"·"}
 }
 
+/** Same bounded 1450ms motion as the Hero, without overshoot/rebound. */
+internal const val WeekFillDurationMillis = 1450
+internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMillis,
+    easing=CubicBezierEasing(.35f,0f,.15f,1f))
+
 @Composable internal fun WeekContent(week:WeekState?,onTargets:()->Unit,onDay:(LocalDate)->Unit={},
     dailyTargets: Map<LocalDate, com.kxsxlxv.jetmeal.domain.Targets> = emptyMap()) {
     if(week==null) { TargetsPrompt(onTargets); return }
@@ -67,6 +74,14 @@ internal object CalendarAdherence {
     val today=LocalDate.now()
     val fontScale=LocalDensity.current.fontScale
     var detailsExpanded by rememberSaveable(week.start.toString()) { mutableStateOf(false) }
+    // All seven bars and the budget rail read ONE clock in their Canvas draw
+    // phases. A week change replaces this Animatable before its first new frame.
+    val fillClock = remember(week.start) { Animatable(0f) }
+    LaunchedEffect(week.start) {
+        fillClock.snapTo(0f)
+        fillClock.animateTo(1f,animationSpec=weekFillMotion())
+    }
+    val fillFraction = remember(week.start) { { fillClock.value } }
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val compactChart=maxWidth<392.dp || fontScale>=1.3f
     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(24.dp)) {
@@ -85,7 +100,7 @@ internal object CalendarAdherence {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.Bottom) {
                 week.days.forEach { day ->
-                    val fill by animateFloatAsState((day.actual/maxValue).toFloat(),MaterialTheme.motionScheme.defaultSpatialSpec(),label="Съедено за день")
+                    val barFraction = (day.actual / maxValue).toFloat().coerceIn(0f, 1f)
                     val mark=(day.target/maxValue).toFloat()
                     val dayModifier=Modifier.weight(1f).clickable(role=Role.Button,onClick={onDay(day.date)})
                     val known=day.status==DayLoggingStatus.Recorded || day.status==DayLoggingStatus.ConfirmedZero
@@ -95,6 +110,7 @@ internal object CalendarAdherence {
                         if(!compactChart) Text(if(known) day.actual.roundToInt().toString() else "—",style=MaterialTheme.typography.labelSmall,maxLines=1)
                         Canvas(Modifier.fillMaxWidth().height(190.dp).padding(horizontal=4.dp,vertical=8.dp)) {
                             drawRoundRect(palette.calories.container,cornerRadius=CornerRadius(size.width/2),size=size)
+                            val fill=barFraction*fillFraction()
                             val height=(size.height*fill.coerceIn(0f,1f)).coerceAtLeast(if(fill>0) 4.dp.toPx() else 0f)
                             if(height>0 && known) drawRoundRect(Brush.verticalGradient(listOf(palette.calories.end,palette.calories.start)),topLeft=Offset(0f,size.height-height),size=Size(size.width,height),cornerRadius=CornerRadius(size.width/2))
                             val y=size.height*(1-mark)
@@ -145,7 +161,7 @@ internal object CalendarAdherence {
                 }
             }
         }
-        item { WeekSummary(week,today) }
+        item { WeekSummary(week,today,fillFraction) }
         if(week.missingCompletedDays.isNotEmpty()) item {
             Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -170,9 +186,10 @@ internal object CalendarAdherence {
 
 /** Budget rail is the primary weekly summary: one number pair and a target marker.
  * The detailed daily rhythm above remains the only 7-day chart. */
-@Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now()) {
+@Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now(),
+    fillFraction: ()->Float = { 1f }) {
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        WeeklyBudgetRail(week)
+        WeeklyBudgetRail(week,fillFraction)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             WeekSummaryTile("Отклонение",signed(week.deviation),
                 "ккал · завершённые дни",Modifier.weight(1f))
@@ -265,8 +282,12 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         // merely to make the optional analysis chart fit.
         val chartRoom = maxHeight - (tile*rows + gap*(rows-1) +
             20.dp + 16.dp + 48.dp + 96.dp + 50.dp)
-        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= 150.dp
-        val chartPlotHeight = (chartRoom - 101.dp).coerceIn(54.dp,112.dp)
+        // Sparse months add two rows of real percentages + dates below the
+        // plot; reserve that space rather than allowing the totals to overflow.
+        val neededChartRoom = if(monthPoints.size<=8) 190.dp else 169.dp
+        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= neededChartRoom
+        val chartPlotHeight = (chartRoom - if(monthPoints.size<=8) 135.dp else 117.dp)
+            .coerceIn(54.dp,112.dp)
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(gap,Alignment.CenterHorizontally),

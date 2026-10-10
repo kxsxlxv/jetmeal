@@ -8,6 +8,20 @@ import org.junit.Test
 class TimelinePeriodsTest {
     private val today = LocalDate.of(2026, 10, 6)
 
+    @Test fun staleWeekNeverMatchesNextPagerPage() {
+        val monday=LocalDate.of(2026,10,5)
+        val days=(0L..6L).map { index ->
+            com.kxsxlxv.jetmeal.domain.BudgetDay(monday.plusDays(index),
+                1000.0,1800.0)
+        }
+        val week=com.kxsxlxv.jetmeal.domain.WeekState(
+            monday,monday.plusDays(6),days,12600.0,7000.0,0.0,3,1800.0,0.0)
+        assertTrue(weekMatchesPeriod(week,monday.plusDays(3)))
+        assertTrue(!weekMatchesPeriod(week,monday.plusDays(7)))
+        assertTrue(!weekMatchesPeriod(null,monday))
+        assertEquals(1450,weekFillMotion().durationMillis)
+    }
+
     @Test fun weekUsesMondayThroughSundayAcrossNewYear() {
         val date = LocalDate.of(2027, 1, 1)
         assertEquals(LocalDate.of(2026, 12, 28), TimelinePeriods.start(TimeScale.Week, date))

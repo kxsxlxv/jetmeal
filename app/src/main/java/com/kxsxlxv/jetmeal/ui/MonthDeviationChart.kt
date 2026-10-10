@@ -30,7 +30,10 @@ import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.abs
-import kotlin.math.min
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Never infer a zero-calorie day from an absent entry, or treat today's partial
  * consumption as a completed result. Targets are per-day, not a fixed monthly mean. */
@@ -49,8 +52,22 @@ internal fun monthDeviations(month: YearMonth,consumed: Map<LocalDate,Double>,
 
 internal fun showMonthDeviation(points: List<MonthDeviation>): Boolean = points.size>=6
 
-/** A bounded sign chart centred on 0% with the goal-tolerance zone tinted green.
- * Values outside ±100% are visually clipped only, never changed in data/tooltips. */
+/** Robust, human-scale symmetric axis. A single unusual day should not flatten
+ * the other entries. Values outside the axis are visibly marked as truncated. */
+internal fun monthlyDeviationScale(points: List<MonthDeviation>): Double {
+    if(points.isEmpty()) return 10.0
+    val sorted=points.map { kotlin.math.abs(it.percent) }.filter {it.isFinite()}.sorted()
+    if(sorted.isEmpty()) return 10.0
+    val representative=sorted[floor((sorted.lastIndex)*.85).toInt()]
+    return max(10.0, ceil(representative/5.0)*5.0)
+}
+
+internal fun deviationLabel(percent:Double):String =
+    (if(percent>0) "+" else if(percent<0) "−" else "") +
+        number(kotlin.math.abs(percent),1) + "%"
+
+/** Show recorded dates equidistantly, with an explicitly adaptive percentage
+ * axis, not a 31-slot near-flat series whose only visible data are on the left. */
 @Composable
 internal fun MonthDeviationChart(
     month: YearMonth, points: List<MonthDeviation>, height: Dp,
@@ -59,11 +76,14 @@ internal fun MonthDeviationChart(
     if(!showMonthDeviation(points)) return
     val palette=nutritionColors()
     val scheme=MaterialTheme.colorScheme
-    val snapshot=remember(points) {points.associateBy {it.date.dayOfMonth}}
+    val sorted=remember(points) {points.sortedBy {it.date}}
+    val scale=remember(sorted) {monthlyDeviationScale(sorted)}
+    val clipped=sorted.count { kotlin.math.abs(it.percent)>scale }
+    val average=sorted.map {it.percent}.average()
     var revealed by remember(month) { mutableStateOf(false) }
     LaunchedEffect(month) { revealed=true }
     val animated=animateFloatAsState(if(revealed) 1f else 0f,
-        animationSpec=tween(850,easing=CubicBezierEasing(.3f,0f,.15f,1f)),
+        animationSpec=tween(1000,easing=CubicBezierEasing(.3f,0f,.15f,1f)),
         label="Появление отклонений").value
     Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.large,
         color=scheme.surfaceContainerLow) {
@@ -73,67 +93,105 @@ internal fun MonthDeviationChart(
                 Text("Отклонение от нормы",style=MaterialTheme.typography.titleSmallEmphasized,
                     modifier=Modifier.weight(1f))
                 ExplanationInfoButton("Отклонение за месяц",
-                    "Столбцы отражают отклонение от цели каждого завершённого дня. " +
-                    "Нулевой уровень — точная норма, зелёная полоса — пределы ±10%. " +
-                    "Персиковый цвет — превышение, сиреневый — недобор. " +
-                    "Дни без записей и незавершённый сегодняшний день не оцениваются. " +
-                    "Для читаемости высота столбцов ограничена ±100%, " +
-                    "но реальные значения не округляются в расчётах.")
+                    "Каждый столбец — один завершённый день с записями. " +
+                    "Даты без данных не показаны; расстояние между столбцами не отражает пропущенные дни. " +
+                    "Ноль — точная дневная норма; зелёная область — ±10%. " +
+                    "Персиковый — превышение, сиреневый — недобор. " +
+                    "Масштаб подбирается автоматически. Если отдельный день выходит за него, " +
+                    "на конце столбца появляется метка. Нажатие открывает запись за эту дату.")
             }
-            Canvas(Modifier.fillMaxWidth().height(height)
-                .pointerInput(month,points,onDay) {
-                    detectTapGestures { position ->
-                        val index=((position.x / size.width.toFloat())*month.lengthOfMonth())
-                            .toInt().coerceIn(0,month.lengthOfMonth()-1)
-                        val chosen=snapshot[index+1]
-                        if(chosen!=null) onDay(chosen.date)
-                    }
-                }.semantics {
-                    contentDescription="Отклонение от нормы по дням месяца. " +
-                        "${points.size} завершённых дней с данными. " +
-                        "Нажмите на цветной столбец, чтобы открыть дату."
-                }) {
-                val middle=size.height/2
-                val half=middle-5.dp.toPx()
-                val tolerance=half*.10f
-                drawRoundRect(color=palette.calories.container.copy(alpha=.48f),
-                    topLeft=Offset(0f,middle-tolerance),
-                    size=Size(size.width,tolerance*2),
-                    cornerRadius=CornerRadius(4.dp.toPx()))
-                drawLine(color=scheme.outline.copy(alpha=.65f),
-                    start=Offset(0f,middle),end=Offset(size.width,middle),
-                    strokeWidth=1.dp.toPx())
-                val slot=size.width/month.lengthOfMonth()
-                val barWidth=min(slot*.70f,8.dp.toPx())
-                points.forEach { point ->
-                    val centerX=slot*(point.date.dayOfMonth-.5f)
-                    val magnitude=(abs(point.percent).coerceAtMost(100.0)/100.0).toFloat()*
-                        half*animated
-                    if(magnitude>0f) {
-                        val top=if(point.percent>=0) middle-magnitude else middle
-                        val colors=if(point.percent>=0)
-                            listOf(palette.carbs.start,palette.carbs.end)
-                            else listOf(palette.protein.start,palette.protein.end)
-                        drawRoundRect(brush=Brush.verticalGradient(colors,
-                            startY=top,endY=top+magnitude),
-                            topLeft=Offset(centerX-barWidth/2,top),
-                            size=Size(barWidth,magnitude),
-                            cornerRadius=CornerRadius(barWidth/2))
-                    } else {
-                        drawCircle(palette.calories.start,radius=2.dp.toPx(),
-                            center=Offset(centerX,middle))
+            Text("${sorted.size} дней с данными · среднее ${deviationLabel(average)}" +
+                if(clipped>0) " · за шкалой: $clipped" else "",
+                style=MaterialTheme.typography.labelSmall,
+                color=scheme.onSurfaceVariant,maxLines=1)
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                Column(Modifier.width(43.dp).height(height),
+                    verticalArrangement=Arrangement.SpaceBetween,
+                    horizontalAlignment=Alignment.End) {
+                    Text("+${number(scale)}%",style=MaterialTheme.typography.labelSmall,
+                        color=scheme.onSurfaceVariant,maxLines=1)
+                    Text("0%",style=MaterialTheme.typography.labelSmall,
+                        color=scheme.onSurfaceVariant,maxLines=1)
+                    Text("−${number(scale)}%",style=MaterialTheme.typography.labelSmall,
+                        color=scheme.onSurfaceVariant,maxLines=1)
+                }
+                Canvas(Modifier.weight(1f).height(height)
+                    .pointerInput(sorted,onDay) {
+                        detectTapGestures { position ->
+                            val index=((position.x / size.width.toFloat())*sorted.size)
+                                .toInt().coerceIn(0,sorted.lastIndex)
+                            onDay(sorted[index].date)
+                        }
+                    }.semantics {
+                        contentDescription="Отклонение от дневной нормы за ${sorted.size} завершённых дней. " +
+                            "Среднее ${deviationLabel(average)}. Масштаб ±${number(scale)}%. " +
+                            "Нажмите на столбец, чтобы открыть день."
+                    }) {
+                    val middle=size.height/2f
+                    val half=(middle-3.dp.toPx()).coerceAtLeast(1f)
+                    val tolerance=half*(10.0/scale).toFloat().coerceAtMost(1f)
+                    drawRoundRect(color=palette.calories.container.copy(alpha=.6f),
+                        topLeft=Offset(0f,middle-tolerance),
+                        size=Size(size.width,tolerance*2),
+                        cornerRadius=CornerRadius(4.dp.toPx()))
+                    drawLine(color=scheme.outline.copy(alpha=.65f),
+                        start=Offset(0f,middle),end=Offset(size.width,middle),
+                        strokeWidth=1.dp.toPx())
+                    val slot=size.width/sorted.size
+                    val barWidth=(slot*.52f).coerceIn(5.dp.toPx(),16.dp.toPx())
+                    sorted.forEachIndexed { index,point ->
+                        val centerX=slot*(index+.5f)
+                        val rawMagnitude=(kotlin.math.abs(point.percent)/scale).toFloat()
+                        val outOfRange=rawMagnitude>1f
+                        val magnitude=(rawMagnitude.coerceAtMost(1f)*half*animated)
+                            .coerceAtLeast(if(point.percent!=0.0) 2.dp.toPx()*animated else 0f)
+                        if(magnitude>0f) {
+                            val top=if(point.percent>=0) middle-magnitude else middle
+                            val colors=if(point.percent>=0)
+                                listOf(palette.carbs.start,palette.carbs.end)
+                                else listOf(palette.protein.start,palette.protein.end)
+                            drawRoundRect(brush=Brush.verticalGradient(colors,
+                                startY=top,endY=top+magnitude),
+                                topLeft=Offset(centerX-barWidth/2,top),
+                                size=Size(barWidth,magnitude),
+                                cornerRadius=CornerRadius(barWidth/2))
+                            if(outOfRange && animated>.98f) {
+                                val edge=if(point.percent>0) middle-half else middle+half
+                                drawCircle(scheme.onSurface,radius=2.3.dp.toPx(),
+                                    center=Offset(centerX,edge))
+                            }
+                        } else if(animated>.98f) {
+                            drawCircle(palette.calories.start,radius=2.dp.toPx(),
+                                center=Offset(centerX,middle))
+                        }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
-                Text("1",style=MaterialTheme.typography.labelSmall,
-                    color=scheme.onSurfaceVariant)
-                Text("10",style=MaterialTheme.typography.labelSmall,
-                    color=scheme.onSurfaceVariant)
-                Text("20",style=MaterialTheme.typography.labelSmall,
-                    color=scheme.onSurfaceVariant)
-                Text(month.lengthOfMonth().toString(),style=MaterialTheme.typography.labelSmall,
-                    color=scheme.onSurfaceVariant)
+            if(sorted.size<=8) {
+                // Few recorded days: show the REAL percentage and date for every
+                // column, so the chart communicates more than color and height.
+                Row(Modifier.fillMaxWidth().padding(start=49.dp)) {
+                    sorted.forEach { point ->
+                        Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally) {
+                            Text(deviationLabel(point.percent),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=scheme.onSurface,maxLines=1)
+                            Text(point.date.dayOfMonth.toString(),
+                                style=MaterialTheme.typography.labelSmall,
+                                color=scheme.onSurfaceVariant,maxLines=1)
+                        }
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().padding(start=49.dp),
+                    horizontalArrangement=Arrangement.SpaceBetween) {
+                    listOf(sorted.first(),sorted[sorted.lastIndex/2],sorted.last()).forEach { point ->
+                        Text(point.date.dayOfMonth.toString(),
+                            style=MaterialTheme.typography.labelSmall,
+                            color=scheme.onSurfaceVariant,maxLines=1)
+                    }
+                }
             }
         }
     }
