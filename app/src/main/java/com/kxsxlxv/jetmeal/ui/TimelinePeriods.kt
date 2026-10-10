@@ -41,3 +41,21 @@ object TimelinePeriods {
         return text.replaceFirstChar { it.titlecase(RussianLocale) }
     }
 }
+
+/** Interval needed to render a period, including the Monday-based budget week. */
+internal fun timelineRequiredRange(scale: TimeScale, day: LocalDate): Pair<LocalDate,LocalDate> {
+    val weekStart = day.minusDays(day.dayOfWeek.value - 1L)
+    val start = TimelinePeriods.start(scale,day)
+    return minOf(weekStart,start.minusDays(start.dayOfWeek.value - 1L)) to
+        maxOf(weekStart.plusDays(7),TimelinePeriods.endExclusive(scale,day))
+}
+
+/** Read a little more than one calendar month for day/week modes so swipes are local.
+ * The wider fetch only happens on real refresh; reuse uses timelineRequiredRange. */
+internal fun timelineFetchRange(scale: TimeScale,day: LocalDate): Pair<LocalDate,LocalDate> {
+    val (start,end) = timelineRequiredRange(scale,day)
+    if(scale != TimeScale.Day && scale != TimeScale.Week) return start to end
+    val monthStart=day.withDayOfMonth(1)
+    return minOf(start,monthStart.minusDays(7)) to
+        maxOf(end,monthStart.plusMonths(1).plusDays(7))
+}
