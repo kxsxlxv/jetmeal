@@ -2,6 +2,7 @@ package com.kxsxlxv.jetmeal.ui
 
 import java.time.LocalDate
 import java.time.YearMonth
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -18,6 +19,30 @@ class MonthlyDeviationTest {
         assertTrue(showMonthDeviation(six))
         assertEquals(6,six.size)
         assertEquals(month.atDay(1),six.first().date)
+    }
+
+    @Test fun chartIsKeptVisibleInCompactFiveAndSixRowMonths() {
+        for (rows in 4..6) {
+            for (height in listOf(580.dp,620.dp,700.dp)) {
+                val sizing=monthCalendarSizing(height,390.dp,rows,true,true)
+                val baseline=20.dp+20.dp+48.dp+91.dp+4*8.dp+(rows-1)*4.dp+132.dp
+                val occupied=baseline+sizing.chartPlot+sizing.tile*rows
+                assertTrue("No-scroll $rows row month at $height occupies $occupied",
+                    occupied<=height)
+                assertTrue(sizing.chartPlot>=36.dp)
+            }
+        }
+        val six=monthCalendarSizing(600.dp,390.dp,6,true,true)
+        assertTrue("Calendar days remain square with readable side",six.tile>=28.dp)
+    }
+
+    @Test fun chartVisibilityMustNotDependOnHeightAfterSixKnownDays() {
+        val days=(1..6).map {MonthDeviation(month.atDay(it),it.toDouble())}
+        assertTrue(showMonthDeviation(days))
+        val small=monthCalendarSizing(580.dp,390.dp,5,true,true)
+        assertTrue(small.chartPlot>0.dp)
+        val wider=monthCalendarSizing(740.dp,390.dp,5,true,true)
+        assertTrue(wider.chartPlot>=small.chartPlot)
     }
 
     @Test fun usesDynamicDailyTargetsAndKeepsSignedMagnitude() {
