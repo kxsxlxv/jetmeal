@@ -265,8 +265,8 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         // merely to make the optional analysis chart fit.
         val chartRoom = maxHeight - (tile*rows + gap*(rows-1) +
             20.dp + 16.dp + 48.dp + 96.dp + 50.dp)
-        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= 110.dp
-        val chartPlotHeight = (chartRoom - 67.dp).coerceIn(48.dp,100.dp)
+        val displayChart = showMonthDeviation(monthPoints) && chartRoom >= 150.dp
+        val chartPlotHeight = (chartRoom - 101.dp).coerceIn(54.dp,112.dp)
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(gap,Alignment.CenterHorizontally),
