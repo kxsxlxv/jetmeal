@@ -25,7 +25,7 @@ class MonthlyDeviationTest {
         for (rows in 4..6) {
             for (height in listOf(580.dp,620.dp,700.dp)) {
                 val sizing=monthCalendarSizing(height,390.dp,rows,true,true)
-                val baseline=20.dp+20.dp+48.dp+91.dp+4*8.dp+(rows-1)*4.dp+132.dp
+                val baseline=20.dp+20.dp+48.dp+91.dp+8.dp*4+4.dp*(rows-1)+132.dp
                 val occupied=baseline+sizing.chartPlot+sizing.tile*rows
                 assertTrue("No-scroll $rows row month at $height occupies $occupied",
                     occupied<=height)
