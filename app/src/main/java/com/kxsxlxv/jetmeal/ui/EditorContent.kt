@@ -3,6 +3,8 @@
 
 package com.kxsxlxv.jetmeal.ui
 
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
@@ -178,6 +180,19 @@ internal fun measureSymbol(measure: FoodMeasure): JetMealSymbol = when(measure.k
     else -> JetMealSymbol.Serving
 }
 
+/** Show the base-unit equivalent while entering a portion, and the portion equivalent
+ * while entering grams/ml. This hint is informational and never changes saved amounts. */
+internal fun measureConversionHint(
+    input: Double?, selected: FoodMeasure?, reference: FoodMeasure?, unit: String,
+): String? {
+    val value = input?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+    val measure = selected ?: reference ?: return null
+    val converted = if (selected != null) value * measure.baseAmount else value / measure.baseAmount
+    if (!converted.isFinite() || converted <= 0.0 || converted > 1_000_000.0) return null
+    val equivalentUnit = if (selected != null) unitLabel(unit) else measure.label
+    return "${if (measure.approximate) "≈" else "="} ${number(converted, 1)} $equivalentUnit"
+}
+
 @Composable
 internal fun AmountContent(name: String, unit: String, amount: Double, basisAmount: Double, nutrition: Nutrition,
     estimated: Boolean, busy: Boolean, error: String?, onSave: (Double) -> Unit, onDelete: (() -> Unit)?,
@@ -196,6 +211,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             (enteredMeasureBaseAmount==null || kotlin.math.abs(it.baseAmount-enteredMeasureBaseAmount)<.002) }
             ?: measures.firstOrNull { it.key==saved }
             ?: measures.firstOrNull { it.isDefault }
+            ?: measures.firstOrNull()
     }
     var chosenId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
         mutableStateOf(first?.id)
@@ -210,6 +226,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     val entered = text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
     val measured = if(entered!=null && chosen!=null) runCatching {ChosenMeasure(chosen,entered)}.getOrNull() else null
     val quantity=if(measured!=null) measured.baseAmount else entered
+    val equivalent = measureConversionHint(entered,chosen,first,unit)
     val scaled = quantity?.takeIf {it>0 && it<=1000000}?.let {
         runCatching { QuantityScaling.scale(basisAmount, nutrition, it) }.getOrNull() }
     LaunchedEffect(busy, pending, error, successNotice) {
@@ -220,14 +237,11 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
             onSuccess()
         }
     }
+    // Installed inside the sheet content to take precedence over the sheet's Back
+    // dismiss callback. A system back gesture returns to the food choice.
+    BackHandler(enabled = onBack != null && !busy) { onBack?.invoke() }
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp).verticalScroll(rememberScrollState())
         .imePadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        onBack?.let {
-            TextButton(onClick = it, enabled = !busy) {
-                SymbolIcon(JetMealSymbol.Back, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp)); Text("К выбору еды")
-            }
-        }
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
         if(measures.isNotEmpty()) {
             // Expressive connected toggle-button group: pictograms, not a second heading
@@ -293,7 +307,13 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                 enabled=!busy && entered!=null && entered>minimum,
                 modifier=Modifier.size(56.dp)) { Text("−") }
             TextField(text, { text = it },
-                label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") }, singleLine = true,
+                label = { Text("Количество (${chosen?.label ?: unitLabel(unit)})") },
+                suffix = { equivalent?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1)
+                } },
+                singleLine = true,
                 shape = TextFieldDefaults.roundedShape, colors = TextFieldDefaults.tonalColors(),
                 enabled = !busy, isError = scaled == null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -304,12 +324,6 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         }
         if(scaled==null) Text("Введите количество больше нуля",
             style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
-        if(chosen!=null && quantity!=null) {
-            Text("${if(chosen.approximate) "≈ " else ""}${number(quantity,1)} ${unitLabel(unit)} " +
-                "(${number(entered ?: 0.0,1)} ${chosen.label})",
-                style=MaterialTheme.typography.bodySmall,
-                color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         scaled?.let {
             val palette = nutritionColors()
             Surface(shape = MaterialTheme.shapes.extraLarge,
