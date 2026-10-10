@@ -6,6 +6,11 @@ import java.time.format.DateTimeFormatter
 
 enum class TimeScale(val label: String) { Day("День"), Week("Неделя"), Month("Месяц"), Quarter("3 месяца") }
 
+/** Horizontal gestures move between time scales. The finite ordered list
+ * never wraps from Quarter back to Day, while date arrows keep their own job. */
+internal fun adjacentTimeScale(current: TimeScale, step: Int): TimeScale =
+    TimeScale.entries[(current.ordinal + step).coerceIn(0,TimeScale.entries.lastIndex)]
+
 /** Presentation calendar navigation only; all nutrition arithmetic stays in the existing domain. */
 object TimelinePeriods {
     fun start(scale: TimeScale, date: LocalDate): LocalDate = when(scale) {
