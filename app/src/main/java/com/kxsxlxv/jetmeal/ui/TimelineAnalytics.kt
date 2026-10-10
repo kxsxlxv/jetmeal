@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kxsxlxv.jetmeal.domain.WeekState
 import com.kxsxlxv.jetmeal.domain.DayLoggingStatus
 import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
@@ -173,6 +174,7 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
         .associateWith { 0.0 }).filterKeys { YearMonth.from(it) == month }
     val rows = calendarWeekCount(month)
     val palette = nutritionColors()
+    val enlargedText = LocalDensity.current.fontScale >= 1.4f
     val weekdays = listOf("ПН","ВТ","СР","ЧТ","ПТ","СБ","ВС")
     // The month is intentionally a single non-scrollable viewport. The side length
     // of every date is constrained by both display width and usable screen height.
@@ -205,6 +207,7 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
                                 date, actual[date], targets[date], selectedDate, onDay,
                                 Modifier.size(tile), confirmedZero = date in confirmedZeroDays,
                                 palette = palette,
+                                showCalories = !enlargedText,
                             )
                         }
                     }
@@ -251,6 +254,7 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
     date: LocalDate, actual: Double?, target: Double?, selected: LocalDate?,
     onDay: (LocalDate)->Unit, modifier: Modifier, confirmedZero: Boolean = false,
     palette: com.kxsxlxv.jetmeal.ui.theme.NutritionColors,
+    showCalories: Boolean,
 ) {
     val scheme = MaterialTheme.colorScheme
     val today = LocalDate.now()
@@ -278,12 +282,15 @@ internal fun calendarTone(date: LocalDate, actual: Double?, target: Double?,
             horizontalAlignment=Alignment.CenterHorizontally,
             verticalArrangement=Arrangement.Center) {
             Text(date.dayOfMonth.toString(),style=MaterialTheme.typography.titleMediumEmphasized,
-                maxLines=1)
-            Text(when {
+                fontSize=16.sp,lineHeight=18.sp,maxLines=1)
+            // At accessibility font scales the semantic description still contains
+            // calories; prioritize readable date numbers over clipped tiny text.
+            if(showCalories) Text(when {
                 actual==null -> "·"
                 confirmedZero -> "0 ✓"
                 else -> actual.roundToInt().toString()
-            },style=MaterialTheme.typography.labelSmall,maxLines=1,
+            },style=MaterialTheme.typography.labelSmall,
+                fontSize=10.sp,lineHeight=12.sp,maxLines=1,
                 color=if(actual==null) scheme.onSurfaceVariant else scheme.onSurface)
         }
     }
