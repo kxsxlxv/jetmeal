@@ -206,7 +206,7 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
         WeeklyBudgetRail(week,fillFraction,weeklyNutrition,weeklyTargets)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             WeekSummaryTile("Отклонение",signed(visibleDeviation),
-                if (closed) "ккал · учтённые 7 дней" else "ккал · завершённые дни",
+                if (closed) "ккал · учтённые дни" else "ккал · завершённые дни",
                 Modifier.weight(1f))
             if(today in week.start..week.end)
                 WeekSummaryTile("Дней осталось",week.remainingDays.toString(),
