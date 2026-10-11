@@ -9,6 +9,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import com.kxsxlxv.jetmeal.domain.DiaryEntry
@@ -122,5 +124,28 @@ class DayRedesignTest {
         compose.onNodeWithText("NaN", substring = true).assertDoesNotExist()
         compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
     }
+
+    @Test fun rightHeroTogglesBetweenGoalBarsAndDistributionWithoutChangingLeftRing() {
+        val food = entry("macro", "Йогурт", MealPeriod.Morning, "2020-10-06T09:00:00Z", 220.0)
+        compose.setContent {
+            JetmealTheme {
+                Surface { DayContent(date, listOf(food), Targets(2000.0, 100.0, 60.0, 200.0),
+                    null, {}, {}, {}) }
+            }
+        }
+        val toggle = compose.onNodeWithTag("macro-hero-toggle")
+        toggle.assertIsDisplayed()
+        toggle.assert(SemanticsMatcher.expectValue(
+            SemanticsProperties.StateDescription, "Прогресс к целям БЖУ"))
+        compose.onNodeWithContentDescription("Калории:", substring = true).assertIsDisplayed()
+        toggle.performClick()
+        toggle.assert(SemanticsMatcher.expectValue(
+            SemanticsProperties.StateDescription, "Распределение БЖУ"))
+        compose.onNodeWithContentDescription("Калории:", substring = true).assertIsDisplayed()
+        toggle.performClick()
+        toggle.assert(SemanticsMatcher.expectValue(
+            SemanticsProperties.StateDescription, "Прогресс к целям БЖУ"))
+    }
+
 
 }
