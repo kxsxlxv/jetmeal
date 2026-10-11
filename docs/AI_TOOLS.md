@@ -57,6 +57,31 @@ are conservative (e.g. explicitly sourced restaurant portions), and
 estimated measures (sugar spoons, medium/large eggs) must indicate they are
 approximate. The egg UI presents only **Среднее** and **Большое**.
 
+## Shared reference and personal catalogue (2026-10-11)
+
+Search results combine immutable, read-only global reference variants with
+the authenticated user's personal food variants. A personal item with the same
+normalized name takes precedence in the Android UI; users do not directly edit
+shared entries. Reference IDs are UUIDs and use the same `food_variant_id`
+and `measure_id` request fields as private variants. Before logging, the
+server resolves a reference variant and optional measure into a new owner-bound
+food/variant/measure **in the same transaction**; only the selected item is
+materialized. It records audit events for the adopted food and variant, then
+stores the normal private diary FKs and immutable nutritional snapshots.
+
+This behavior is shared by both the typed online log and the stable-UUID
+offline mutation RPC. Replayed offline requests cannot create duplicate
+entries; a measure from a different variant is rejected. Editing an existing
+diary row still uses only its owner-bound variant. Reference tables are
+SELECT-only for authenticated nonanonymous users, with no client mutation
+permission. Personal catalogues retain their existing owner-scoped RLS.
+
+Chicken eggs expose two size-specific measures (44 g edible for Medium,
+50 g for Large). Other natural-unit foods expose item-specific approximate
+piece weights; gram input is always supported. Clients must show `≈` for
+approximate conversions and send the measure ID and entered count to the
+server, not only a locally calculated gram equivalent.
+
 ## Identity and authorization
 
 Tools operate as the intended authenticated Supabase user and preserve RLS.
