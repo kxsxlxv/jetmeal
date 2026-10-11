@@ -170,17 +170,17 @@ internal fun MacroDistributionDonut(
                         val iconSize = 11.dp.toPx()
                         val iconGap = 2.dp.toPx()
                         val withIcon = icons[index] != null && textWidth + iconSize + iconGap < availablePx
-                        val groupWidth = textWidth + if (withIcon) iconSize + iconGap else 0f
+                        // Center the PERCENTAGE itself precisely on the sector midpoint;
+                        // the optional icon sits beside it, never shifting that center.
                         val degreesPerPx = 180f / (PI.toFloat() * radius)
-                        val textOffset = -groupWidth / 2f + if (withIcon) iconSize + iconGap else 0f
-                        val textStart = mid + direction * textOffset * degreesPerPx
+                        val textStart = mid - direction * textWidth / 2f * degreesPerPx
                         textPath.rewind()
                         textPath.addArc(bounds, textStart, direction * textWidth * degreesPerPx)
                         val metrics = paint.fontMetrics
                         val centeredBaseline = -(metrics.ascent + metrics.descent) / 2f
                         nativeCanvas.drawTextOnPath(label, textPath, 0f, centeredBaseline, paint)
                         if (withIcon) {
-                            val iconAngle = mid - direction * (groupWidth / 2f - iconSize / 2f) * degreesPerPx
+                            val iconAngle = mid - direction * (textWidth / 2f + iconGap + iconSize / 2f) * degreesPerPx
                             val radians = Math.toRadians(iconAngle.toDouble())
                             val x = centerPoint.x + radius * cos(radians).toFloat()
                             val y = centerPoint.y + radius * sin(radians).toFloat()
