@@ -79,4 +79,29 @@ class SafeNetworkEventListenerTest {
         assertTrue(formatted.contains("http=200"))
         assertFalse(formatted.contains("cause="))
     }
+
+    @Test fun interruptedBodyAfterHttp200KeepsProtocolAndBodyStage() {
+        val trace = NetworkTrace(route=NetworkRoute.Diary,phase=NetworkPhase.Body,
+            elapsedMs=10021,cause=NetworkCause.Timeout,status=200,
+            protocol=NetworkProtocol.H2,headersMs=73,bodyMs=10000,
+            bodyStarted=true,bodyCompleted=false,ioType="SocketTimeoutException")
+        val formatted = trace.safeLine()
+        assertTrue(formatted.contains("phase=Body"))
+        assertTrue(formatted.contains("http=200"))
+        assertTrue(formatted.contains("protocol=H2"))
+        assertTrue(formatted.contains("headersMs=73"))
+        assertTrue(formatted.contains("bodyComplete=false"))
+        assertTrue(formatted.contains("ioType=SocketTimeoutException"))
+        assertFalse(formatted.contains("result=recovered"))
+    }
+
+    @Test fun unsafeIoTypeIsNeverPersisted() {
+        val trace = NetworkTrace(NetworkRoute.Profile,NetworkPhase.Body,100,
+            ioType="private_token=secret",bodyBytes=42,bodyStarted=true,bodyCompleted=true)
+        val formatted = trace.safeLine()
+        assertTrue(formatted.contains("bodyBytes=42"))
+        assertTrue(formatted.contains("bodyComplete=true"))
+        assertFalse(formatted.contains("private_token"))
+    }
+
 }
