@@ -175,25 +175,49 @@ class SupabaseRepository(val client: SupabaseClient) {
         return entries
     }
 
-    /** Paginate the personal catalogue; never silently truncate search or usage ranking. */
+    /** Keep private overrides first; shared references are read-only templates.
+     *  Their IDs are resolved to owned variants by the server on the first log,
+     *  including from the persistent offline outbox. */
     suspend fun catalogue(): List<FoodCandidate> {
-        val foods = activeRows("foods").associateBy { it.string("id") }
-        val measures = activeRows("food_measures").groupBy { it.string("food_variant_id") }
-        return activeRows("food_variants").mapNotNull { variant ->
-            val food = foods[variant.string("food_id")] ?: return@mapNotNull null
-            FoodCandidate(variant.string("id"), food.string("id"), food.string("name"),
-                food.optional("brand"), food.optional("source"), variant.number("serving_amount"),
-                variant.string("serving_unit"), nutrition(variant),
-                variant["is_estimated"]?.jsonPrimitive?.boolean ?: false,
-                measures=measures[variant.string("id")].orEmpty().map { measure ->
-                    FoodMeasure(measure.string("id"), measure.string("food_variant_id"),
-                        measure.string("measure_key"),measure.string("label"),
-                        measure.number("base_amount"),
-                        measure["is_approximate"]?.jsonPrimitive?.boolean ?: false,
-                        measure["is_default"]?.jsonPrimitive?.boolean ?: false)
-                })
+        val ownFoods = activeRows("foods").associateBy { it.string("id") }
+        val ownMeasures = activeRows("food_measures").groupBy { it.string("food_variant_id") }
+        val personal = activeRows("food_variants").mapNotNull { variant ->
+            val food = ownFoods[variant.string("food_id")] ?: return@mapNotNull null
+            candidateFromRows(variant, food, ownMeasures[variant.string("id")].orEmpty())
         }
+        val existingNames = personal.map { normalizeFoodName(it.name) }.toSet()
+
+        val sharedFoods = activeRows("reference_foods").associateBy { it.string("id") }
+        val sharedMeasures = activeRows("reference_food_measures")
+            .groupBy { it.string("food_variant_id") }
+        val references = activeRows("reference_food_variants").mapNotNull { variant ->
+            val food = sharedFoods[variant.string("food_id")] ?: return@mapNotNull null
+            // A personal correction or a previously imported reference wins.
+            if (normalizeFoodName(food.string("name")) in existingNames) return@mapNotNull null
+            candidateFromRows(variant, food, sharedMeasures[variant.string("id")].orEmpty())
+        }
+        return personal + references
     }
+
+    private fun normalizeFoodName(name: String) =
+        name.trim().lowercase(java.util.Locale.ROOT).replace('ё', 'е')
+            .replace(Regex("\\s+"), " ")
+
+    private fun candidateFromRows(
+        variant: JsonObject, food: JsonObject, measures: List<JsonObject>
+    ) = FoodCandidate(
+        variant.string("id"), food.string("id"), food.string("name"),
+        food.optional("brand"), food.optional("source"), variant.number("serving_amount"),
+        variant.string("serving_unit"), nutrition(variant),
+        variant["is_estimated"]?.jsonPrimitive?.boolean ?: false,
+        measures = measures.map { measure ->
+            FoodMeasure(measure.string("id"), measure.string("food_variant_id"),
+                measure.string("measure_key"), measure.string("label"),
+                measure.number("base_amount"),
+                measure["is_approximate"]?.jsonPrimitive?.boolean ?: false,
+                measure["is_default"]?.jsonPrimitive?.boolean ?: false)
+        }
+    )
 
     suspend fun usage(): List<JsonObject> {
         val result = mutableListOf<JsonObject>()
