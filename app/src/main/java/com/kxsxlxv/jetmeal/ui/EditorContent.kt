@@ -223,6 +223,15 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     var chosenId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
         mutableStateOf(first?.id)
     }
+    // Egg measures are sizes of ONE item, not competing quantity units.
+    // The user selects grams/pieces, then size, then count.
+    val eggSizes = measures.filter { it.key == "egg_medium" || it.key == "egg_large" }
+        .takeIf { sizes -> sizes.size == 2 &&
+            sizes.any { it.key == "egg_medium" } && sizes.any { it.key == "egg_large" } }
+        ?.sortedBy { if (it.key == "egg_medium") 0 else 1 }
+    var preferredEggId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
+        mutableStateOf(first?.id)
+    }
     val chosen=measures.firstOrNull {it.id==chosenId}
     val initial=if(chosen!=null) {
         if(chosen.key==enteredMeasureKey && enteredMeasureQuantity!=null) enteredMeasureQuantity
@@ -250,9 +259,56 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp).verticalScroll(rememberScrollState())
         .imePadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
-        if(measures.isNotEmpty()) {
-            // Expressive connected toggle-button group: pictograms, not a second heading
-            // or redundant weight/portion labels. Spoken descriptions remain accessible.
+        if (eggSizes != null) {
+            Row(Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+                verticalAlignment = Alignment.CenterVertically) {
+                ToggleButton(checked=chosen==null,
+                    onCheckedChange={
+                        text=decimalInput(quantity ?: amount)
+                        chosenId=null
+                    }, shapes=ButtonGroupDefaults.connectedLeadingButtonShapes(),
+                    enabled=!busy,modifier=Modifier.weight(1f).heightIn(min=48.dp)
+                        .semantics { role=Role.RadioButton; contentDescription="В граммах" }) {
+                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(unitLabel(unit))
+                }
+                ToggleButton(checked=chosen!=null,
+                    onCheckedChange={
+                        val size=eggSizes.firstOrNull { it.id==preferredEggId }
+                            ?: eggSizes.first { it.key=="egg_large" }
+                        text=decimalInput((quantity ?: amount)/size.baseAmount)
+                        chosenId=size.id
+                        preferredEggId=size.id
+                    }, shapes=ButtonGroupDefaults.connectedTrailingButtonShapes(),
+                    enabled=!busy,modifier=Modifier.weight(1f).heightIn(min=48.dp)
+                        .semantics { role=Role.RadioButton; contentDescription="В штуках" }) {
+                    SymbolIcon(JetMealSymbol.Serving,null,Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("шт.")
+                }
+            }
+            if (chosen != null) {
+                Text("Размер яйца",style=MaterialTheme.typography.titleSmall)
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    eggSizes.forEach { size ->
+                        FilterChip(selected=chosen.id==size.id,
+                            onClick={
+                                // Changing M ↔ L preserves number of eggs, not grams.
+                                preferredEggId=size.id
+                                chosenId=size.id
+                            },
+                            label={Text(size.label)},
+                            enabled=!busy,
+                            modifier=Modifier.weight(1f).heightIn(min=48.dp))
+                    }
+                }
+                Text("Масса съедобной части одного яйца ориентировочная",
+                    style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else if(measures.isNotEmpty()) {
             val count = measures.size + 1
             Row(Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
@@ -266,11 +322,12 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                     enabled=!busy,
                     modifier=Modifier.weight(1f).heightIn(min=48.dp)
                         .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" }) {
-                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(22.dp))
+                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(unitLabel(unit))
                 }
                 measures.forEachIndexed { index, measure ->
                     val symbol = measureSymbol(measure)
-                    val repeated = measures.count { measureSymbol(it) == symbol } > 1
                     ToggleButton(checked=chosen?.id==measure.id,
                         onCheckedChange={
                             val current=quantity ?: amount
@@ -282,18 +339,16 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                         enabled=!busy,
                         modifier=Modifier.weight(1f).heightIn(min=48.dp)
                             .semantics { role=Role.RadioButton; contentDescription=measure.label }) {
-                        SymbolIcon(symbol,null,Modifier.size(22.dp))
-                        if(repeated) {
-                            Spacer(Modifier.width(6.dp))
-                            Text(when(measure.key) {
-                                "egg_medium" -> "M"
-                                "egg_large" -> "L"
-                                else -> measure.label
-                            },style=MaterialTheme.typography.labelMedium)
-                        }
+                        SymbolIcon(symbol,null,Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(measure.label,maxLines=1)
                     }
                 }
             }
+            if (chosen?.approximate==true)
+                Text("Вес одной ${chosen.label} приблизительный: уточните в граммах при необходимости",
+                    style=MaterialTheme.typography.labelSmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (estimated) Text("Примерная пищевая ценность", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.tertiary)
