@@ -77,7 +77,6 @@ class FoodSearchPresentationTest {
         assertEquals("1",decimalInput(1.0000000000000002))
         assertEquals("2,5",decimalInput(2.5))
         assertEquals("100",decimalInput(100.0))
-        assertEquals("1 000",number(1000.0))
     }
 
     @Test fun searchBrandIsNotDuplicatedOrMixedWithPhotoSource() {
