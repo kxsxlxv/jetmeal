@@ -254,7 +254,13 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         amount, chosen, editing=onDelete != null,
         recordedMeasureKey=enteredMeasureKey, recordedMeasureQuantity=enteredMeasureQuantity
     )
-    var text by rememberSaveable(name, amount, measurePreferenceKey) { mutableStateOf(decimalInput(initial)) }
+    val preserveRecorded = onDelete != null && (
+        chosen == null ||
+        (chosen.key == enteredMeasureKey && enteredMeasureQuantity != null)
+    )
+    var text by rememberSaveable(name, amount, measurePreferenceKey) {
+        mutableStateOf(if (preserveRecorded) recordedDecimalInput(initial) else decimalInput(initial))
+    }
     var pending by remember { mutableStateOf(false) }
     val entered = text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
     val measured = if(entered!=null && chosen!=null) runCatching {ChosenMeasure(chosen,entered)}.getOrNull() else null
