@@ -268,14 +268,15 @@ internal fun monthCalendarSizing(
     rows: Int,
     withChart: Boolean,
     sparseLabels: Boolean,
+    summaryHeight: androidx.compose.ui.unit.Dp = 80.dp,
 ): MonthCalendarSizing {
     require(rows in 4..6)
     val gap=4.dp
     val horizontalPadding=12.dp
     val byWidth=(availableWidth-horizontalPadding*2-gap*6)/7
-    // Column padding (20), weekday labels (20), totals header (48), cards (91),
-    // top-level gaps (8 each), and four/five inter-week gaps (4 each).
-    val base=20.dp+20.dp+48.dp+91.dp +
+    // Column padding (20), weekday labels (20), totals header (48),
+    // responsive summary cards, gaps (8 each), and inter-week gaps (4 each).
+    val base=20.dp+20.dp+48.dp+summaryHeight +
         8.dp*(if(withChart) 4 else 3) + gap*(rows-1)
     // The chart chrome consists of the 48dp info-button heading, a one-line
     // summary, date/percentage labels, vertical padding and internal gaps.
@@ -314,8 +315,10 @@ internal fun monthCalendarSizing(
         // Eligibility depends on actual data, not available height. The
         // squares adapt to the chart; the chart does not silently disappear.
         val displayChart = showMonthDeviation(monthPoints)
+        val summaryHeight=if(enlargedText) 104.dp else 80.dp
         val sizing=monthCalendarSizing(maxHeight,maxWidth,rows,
-            displayChart,sparseLabels=monthPoints.size<=8)
+            displayChart,sparseLabels=monthPoints.size<=8,
+            summaryHeight=summaryHeight)
         val tile=sizing.tile
         val chartPlotHeight=sizing.chartPlot
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 10.dp),
@@ -367,34 +370,37 @@ internal fun monthCalendarSizing(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 CalendarSummaryItem("Дней с данными",actual.size.toString(),
-                    "из ${month.lengthOfMonth()}",Modifier.weight(1f))
+                    "из ${month.lengthOfMonth()}",Modifier.weight(1f),height=summaryHeight)
                 CalendarSummaryItem("Съедено",number(actual.values.sum()),"ккал",Modifier.weight(1f),
-                    emphasized=true)
+                    emphasized=true,height=summaryHeight)
             }
         }
     }
 }
 
-@Composable private fun CalendarSummaryItem(label: String,value: String,unit: String,
-    modifier: Modifier,emphasized: Boolean=false) {
+@Composable internal fun CalendarSummaryItem(label: String,value: String,unit: String,
+    modifier: Modifier,emphasized: Boolean=false,height: androidx.compose.ui.unit.Dp=80.dp) {
     val palette=nutritionColors()
-    Surface(modifier=modifier.height(91.dp),
+    Surface(modifier=modifier.height(height),
         color=if(emphasized) palette.calories.container
             else MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor=if(emphasized) palette.calories.onContainer
             else MaterialTheme.colorScheme.onSurface,
         shape=MaterialTheme.shapes.large) {
-        Column(Modifier.fillMaxSize().padding(horizontal=14.dp,vertical=10.dp),
-            verticalArrangement=Arrangement.SpaceBetween) {
+        // Keep both metric rows together and vertically centered. Using
+        // SpaceBetween pushed their labels and values to opposite card edges.
+        Column(Modifier.fillMaxSize().padding(horizontal=14.dp,vertical=9.dp),
+            verticalArrangement=Arrangement.spacedBy(4.dp,Alignment.CenterVertically)) {
             Text(label,style=MaterialTheme.typography.labelMedium,maxLines=1,
                 color=if(emphasized) palette.calories.onContainer
                     else MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment=Alignment.Bottom,
-                horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+            Row(horizontalArrangement=Arrangement.spacedBy(5.dp),
+                verticalAlignment=Alignment.CenterVertically) {
                 Text(value,style=MaterialTheme.typography.headlineSmallEmphasized,
-                    maxLines=1,modifier=Modifier.weight(1f,fill=false))
+                    maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier=Modifier.weight(1f,fill=false).alignByBaseline())
                 Text(unit,style=MaterialTheme.typography.labelSmall,maxLines=1,
-                    modifier=Modifier.padding(bottom=3.dp))
+                    modifier=Modifier.alignByBaseline())
             }
         }
     }
