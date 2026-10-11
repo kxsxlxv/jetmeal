@@ -446,7 +446,10 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // Explicit retry is safe because server requests are idempotent.
                 if ((offline?.status()?.blocked ?: 0) > 0) offline?.retryBlocked()
                 val result=offline?.sync()
-                if(result != null && result.synced > 0) recentSnapshots.clear()
+                if(result != null && result.synced > 0) {
+                    recentSnapshots.clear()
+                    catalogueOwner = null
+                }
                 updateWidgetFromLocalCache()
                 widgetCoordinator?.requestSync()
                 if(result!=null && result.blocked>0)
@@ -638,6 +641,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         // The server has accepted the change: do not re-display a pre-write
         // snapshot from memory after the optimistic outbox item disappears.
         if (result != null && pending == 0) recentSnapshots.clear()
+        // Logging a shared reference can create a new private variant and
+        // owner-scoped measures. Re-warm the catalogue before later edits.
+        if ((result?.synced ?: 0) > 0) catalogueOwner = null
         mutable.update {
             it.copy(
                 notice=if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
