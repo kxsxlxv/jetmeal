@@ -10,6 +10,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
@@ -49,13 +51,15 @@ internal fun WeeklyMacroSplit(
     }
     val palette = nutritionColors()
     val colors = listOf(palette.protein, palette.fat, palette.carbs)
+    val icons = listOf(JetMealSymbol.Protein, JetMealSymbol.Fat, JetMealSymbol.Carbs)
+    val names = listOf("Белки", "Жиры", "Углеводы")
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val separator = MaterialTheme.colorScheme.surfaceContainerHigh
 
     Column(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = 32.dp)
             .clickable(role = Role.Button) {
                 mode = if (mode == WeeklyMacroMode.Composition)
                     WeeklyMacroMode.Targets else WeeklyMacroMode.Composition
@@ -68,13 +72,6 @@ internal fun WeeklyMacroSplit(
             },
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("БЖУ за неделю", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(if (mode == WeeklyMacroMode.Composition) "Состав ↔" else "К цели ↔",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         Crossfade(targetState = mode, animationSpec = tween(220),
             label = "weekly-macro-mode") { selected ->
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -116,9 +113,16 @@ internal fun WeeklyMacroSplit(
                     (0..2).forEach { index ->
                         val value = if (selected == WeeklyMacroMode.Composition) percents[index]
                             else targetPercents[index]
-                        val prefix = listOf("Б", "Ж", "У")[index]
-                        Text("$prefix $value%", style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold, color = colors[index].onContainer)
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Icon(painter = painterResource(icons[index].resource),
+                                contentDescription = names[index],
+                                tint = colors[index].onContainer,
+                                modifier = Modifier.size(15.dp))
+                            Text("$value%", style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors[index].onContainer)
+                        }
                     }
                 }
             }
