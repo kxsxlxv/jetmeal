@@ -141,7 +141,9 @@ internal fun MacroDistributionDonut(
                 if (drawnSweep > .001f) {
                     drawArc(
                         brush = Brush.linearGradient(
-                            listOf(sector.colors.start, sector.colors.end),
+                            0f to sector.colors.container,
+                            .42f to sector.colors.start,
+                            1f to sector.colors.end,
                             start = Offset(origin.x, origin.y),
                             end = Offset(origin.x + arcSize.width, origin.y + arcSize.height),
                         ),
