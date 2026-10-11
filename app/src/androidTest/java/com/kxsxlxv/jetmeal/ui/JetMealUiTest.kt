@@ -2,6 +2,7 @@ package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -213,6 +214,34 @@ class JetMealUiTest {
         compose.onNodeWithText("Понятно").performClick()
         compose.onNodeWithText("Горизонтальная черта",substring=true).assertDoesNotExist()
         compose.onNodeWithText("ккал · норма на сегодня").assertDoesNotExist()
+    }
+
+    @Test fun monthSummaryNumbersAreCenteredOnTheSameBaseline() {
+        compose.setContent {
+            JetmealTheme {
+                Row(Modifier.width(360.dp)) {
+                    CalendarSummaryItem("Дней с данными","8","из 31",
+                        Modifier.weight(1f))
+                    CalendarSummaryItem("Съедено","16 477","ккал",
+                        Modifier.weight(1f),emphasized=true)
+                }
+            }
+        }
+        val leftLabel=compose.onNodeWithText("Дней с данными").fetchSemanticsNode()
+        val rightLabel=compose.onNodeWithText("Съедено").fetchSemanticsNode()
+        val leftNumber=compose.onNodeWithText("8").fetchSemanticsNode()
+        val rightNumber=compose.onNodeWithText("16 477").fetchSemanticsNode()
+        assertTrue("Headings must share a row",
+            kotlin.math.abs(leftLabel.boundsInRoot.center.y -
+                rightLabel.boundsInRoot.center.y)<3f)
+        assertTrue("Values must share a row",
+            kotlin.math.abs(leftNumber.boundsInRoot.center.y -
+                rightNumber.boundsInRoot.center.y)<3f)
+        val maxGap=with(compose.density) { 60.dp.toPx() }
+        assertTrue("Label and value must be visually grouped",
+            leftNumber.boundsInRoot.center.y-leftLabel.boundsInRoot.center.y < maxGap)
+        compose.onNodeWithText("из 31").assertIsDisplayed()
+        compose.onNodeWithText("ккал").assertIsDisplayed()
     }
 
     @Test fun monthSummaryFollowsCalendarAndExplanationIsOptional() {
