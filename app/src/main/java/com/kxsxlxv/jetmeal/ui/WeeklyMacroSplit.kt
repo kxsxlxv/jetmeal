@@ -80,8 +80,9 @@ internal fun WeeklyMacroSplit(
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Canvas(Modifier.fillMaxWidth().height(12.dp)) {
                     val capsule = Path().apply {
+                        val radius = CornerRadius(size.height / 2f)
                         addRoundRect(RoundRect(0f, 0f, size.width, size.height,
-                            CornerRadius(size.height / 2f)))
+                            radius, radius, radius, radius))
                     }
                     val animation = fillFraction().coerceIn(0f, 1f)
                     clipPath(capsule) {
