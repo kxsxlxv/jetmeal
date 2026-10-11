@@ -46,26 +46,27 @@ internal fun WeeklyBudgetRail(week: WeekState,fillFraction: ()->Float = { 1f },
     weeklyNutrition: Nutrition = Nutrition.Zero, weeklyTargets: Nutrition = Nutrition.Zero) {
     val palette=nutritionColors()
     val state=weeklyBudgetRail(week.totalConsumed,week.baseBudget)
-    val remainingLabel=if(state.overBudget) "Сверх бюджета" else "До бюджета"
+    val delta = state.eaten - state.budget
+    val deltaText = if(abs(delta)<.5) "0" else signed(delta)
     Surface(Modifier.fillMaxWidth(),shape=MaterialTheme.shapes.extraLarge,
         color=MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=18.dp),
             verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
-                horizontalArrangement=Arrangement.spacedBy(14.dp)) {
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
-                    Text("Съедено · ккал",style=MaterialTheme.typography.labelLarge,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                Text("Съедено",style=MaterialTheme.typography.labelLarge,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
+                    horizontalArrangement=Arrangement.spacedBy(3.dp)) {
                     Text(number(state.eaten),style=MaterialTheme.typography.headlineSmallEmphasized,
                         maxLines=1)
-                }
-                Column(Modifier.weight(1f),horizontalAlignment=Alignment.End,
-                    verticalArrangement=Arrangement.spacedBy(3.dp)) {
-                    Text("$remainingLabel · ккал",style=MaterialTheme.typography.labelLarge,
+                    Text("/",style=MaterialTheme.typography.titleMedium,
                         color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(number(abs(state.remaining)),style=MaterialTheme.typography.headlineSmallEmphasized,
-                        maxLines=1,color=if(state.overBudget) palette.carbs.onContainer
-                            else MaterialTheme.colorScheme.onSurface)
+                    Text(number(state.budget),style=MaterialTheme.typography.titleMediumEmphasized,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                    Spacer(Modifier.weight(1f))
+                    Text(deltaText,style=MaterialTheme.typography.titleMediumEmphasized,
+                        color=if(state.overBudget) palette.carbs.onContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
                 }
             }
             val scheme=MaterialTheme.colorScheme
@@ -99,8 +100,7 @@ internal fun WeeklyBudgetRail(week: WeekState,fillFraction: ()->Float = { 1f },
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
                 Text("0",style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("│ Бюджет ${number(state.budget)} ккал",
-                    style=MaterialTheme.typography.labelSmall,
+                Text("ккал",style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             WeeklyMacroSplit(week.start, weeklyNutrition, weeklyTargets, fillFraction)
