@@ -24,6 +24,7 @@ data class AppState(
     val scale: TimeScale = TimeScale.Day,
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
     val monthCalories: Map<LocalDate, Double> = emptyMap(), val monthTargets: Map<LocalDate, Double> = emptyMap(),
+    val weekNutrition: Nutrition = Nutrition.Zero,
     val confirmedZeroDays: Set<LocalDate> = emptySet(),
     val targetVersions: List<TargetVersion> = emptyList(),
     val weightMeasurements: List<WeightMeasurement> = emptyList(),
@@ -420,6 +421,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             WeekBudget.calculate(asOf,it,totals,zero,
                 asOfDayCompleted=asOf<today,dailyTargets=dailyTargets)
         }
+        val weekNutrition=all.filter { entry ->
+            entry.consumedAt.atZone(zone).toLocalDate() in weekStart..weekStart.plusDays(6)
+        }.fold(Nutrition.Zero) { sum, entry -> sum + entry.nutrition }
         val monthTargets=if(snap.targets==null) emptyMap() else knownTotals.keys.associateWith {
             WeekBudget.calculate(it,targetFor(it) ?: snap.targets,totals,zero,
                 dailyTargets=dailyTargets).effectiveTarget
@@ -432,6 +436,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         mutable.update {it.copy(
             entries=all.filter {row->row.consumedAt.atZone(zone).toLocalDate()==nav.day},
             targets=snap.targets,week=week,monthCalories=totals,monthTargets=monthTargets,
+            weekNutrition=weekNutrition,
             confirmedZeroDays=zero,targetVersions=snap.history,budgetTargets=dailyTargets,
             cachedOffline=cached,connectionWarning=if(cached) it.connectionWarning else null,
             pendingWrites=pendingStatus?.remaining ?: 0,
