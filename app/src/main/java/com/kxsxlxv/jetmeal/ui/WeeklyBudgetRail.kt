@@ -52,22 +52,18 @@ internal fun WeeklyBudgetRail(week: WeekState,fillFraction: ()->Float = { 1f },
         color=MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=18.dp),
             verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(3.dp)) {
-                Text("Съедено",style=MaterialTheme.typography.labelLarge,
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(3.dp)) {
+                Text(number(state.eaten),style=MaterialTheme.typography.headlineSmallEmphasized,
+                    maxLines=1)
+                Text("/",style=MaterialTheme.typography.titleMedium,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
-                    horizontalArrangement=Arrangement.spacedBy(3.dp)) {
-                    Text(number(state.eaten),style=MaterialTheme.typography.headlineSmallEmphasized,
-                        maxLines=1)
-                    Text("/",style=MaterialTheme.typography.titleMedium,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(number(state.budget),style=MaterialTheme.typography.titleMediumEmphasized,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-                    Spacer(Modifier.weight(1f))
-                    Text(deltaText,style=MaterialTheme.typography.titleMediumEmphasized,
-                        color=if(state.overBudget) palette.carbs.onContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
-                }
+                Text(number(state.budget),style=MaterialTheme.typography.titleMediumEmphasized,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
+                Spacer(Modifier.weight(1f))
+                Text(deltaText,style=MaterialTheme.typography.titleMediumEmphasized,
+                    color=if(state.overBudget) palette.carbs.onContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1)
             }
             val scheme=MaterialTheme.colorScheme
             Canvas(Modifier.fillMaxWidth().height(24.dp).semantics {
