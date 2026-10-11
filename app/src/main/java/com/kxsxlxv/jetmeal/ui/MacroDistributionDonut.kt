@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -91,10 +92,13 @@ internal fun MacroDistributionDonut(
     )
     val density = LocalDensity.current
     val context = LocalContext.current
+    val resources = LocalResources.current
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
-    val icons = remember(context) {
+    // LocalResources triggers recomposition for configuration-dependent drawables
+    // (locale, night mode, density), unlike LocalContext.getDrawable().
+    val icons = remember(resources, context.theme) {
         listOf(JetMealSymbol.Protein, JetMealSymbol.Fat, JetMealSymbol.Carbs).map {
-            context.getDrawable(it.resource)?.mutate()
+            resources.getDrawable(it.resource, context.theme).mutate()
         }
     }
     val paint = remember(density.density, density.fontScale) {
