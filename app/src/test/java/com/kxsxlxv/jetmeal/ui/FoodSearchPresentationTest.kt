@@ -54,6 +54,32 @@ class FoodSearchPresentationTest {
         assertNull(measureConversionHint(Double.POSITIVE_INFINITY,null,serving,"g"))
     }
 
+    @Test fun oneCountableItemIsDefaultRegardlessOfGramBasis() {
+        val banana = FoodMeasure("banana-piece","banana","piece","шт.",118.0,isDefault=true)
+        val egg = FoodMeasure("medium","egg","egg_medium","Среднее",44.0)
+        val sugar = FoodMeasure("spoon","sugar","tsp","ч. л.",4.0)
+        assertEquals(1.0, initialMeasureQuantity(100.0,banana,editing=false),0.0)
+        assertEquals(1.0, initialMeasureQuantity(50.0,egg,editing=false),0.0)
+        assertEquals(1.0, initialMeasureQuantity(100.0,sugar,editing=false),0.0)
+        assertEquals(100.0, initialMeasureQuantity(100.0,null,editing=false),0.0)
+    }
+
+    @Test fun existingDiaryKeepsTheRecordedCountWhenEditing() {
+        val egg = FoodMeasure("medium","egg","egg_medium","Среднее",44.0)
+        assertEquals(3.0, initialMeasureQuantity(132.0,egg,editing=true,
+            recordedMeasureKey="egg_medium",recordedMeasureQuantity=3.0),0.0)
+        assertEquals(2.0, initialMeasureQuantity(88.0,egg,editing=true),0.00001)
+    }
+
+    @Test fun conversionsHaveReadablePrecisionWithoutChangingManualTyping() {
+        assertEquals("0,85",decimalInput(100.0/118.0))
+        assertEquals("1,14",decimalInput(50.0/44.0))
+        assertEquals("1",decimalInput(1.0000000000000002))
+        assertEquals("2,5",decimalInput(2.5))
+        assertEquals("100",decimalInput(100.0))
+        assertEquals("1 000",number(1000.0))
+    }
+
     @Test fun searchBrandIsNotDuplicatedOrMixedWithPhotoSource() {
         assertEquals("Ростикс",compactFoodBrand(food("1","1","Ростмастер","Ростикс","Ростикс")))
         assertNull(compactFoodBrand(food("2","2","Ростикс Чизбургер","Ростикс","Фото пользователя 07.10.2026")))
