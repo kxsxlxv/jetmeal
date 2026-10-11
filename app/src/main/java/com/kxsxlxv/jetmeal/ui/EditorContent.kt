@@ -235,6 +235,8 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     val chosen=measures.firstOrNull {it.id==chosenId}
     val initial=if(chosen!=null) {
         if(chosen.key==enteredMeasureKey && enteredMeasureQuantity!=null) enteredMeasureQuantity
+        else if(onDelete==null && enteredMeasureKey==null &&
+            chosen.key in setOf("piece","egg_medium","egg_large","serving")) 1.0
         else amount/chosen.baseAmount
     } else amount
     var text by rememberSaveable(name, amount, measurePreferenceKey) { mutableStateOf(decimalInput(initial)) }
