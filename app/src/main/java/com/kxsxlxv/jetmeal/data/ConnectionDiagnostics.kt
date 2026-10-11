@@ -20,7 +20,7 @@ import java.time.Instant
 import javax.net.ssl.SSLException
 
 internal enum class ConnectionOperation { Auth, SignIn, Diary, Catalogue, Mutation, Widget }
-internal enum class ConnectionStage { Session, Profile, Targets, TargetHistory, Entries, ZeroDays, Cache, Presentation, WidgetUpdate }
+internal enum class ConnectionStage { Session, Profile, Targets, TargetHistory, Entries, ZeroDays, Catalogue, Weights, Cache, Presentation, WidgetUpdate }
 internal enum class ConnectionAuthState { Authenticated, NotAuthenticated, Recovering, SignOutRequested }
 internal enum class ConnectionFailureKind { Dns, Tls, Timeout, Transport, RateLimit, Service, AuthRejected, Permission, Unknown }
 
@@ -140,6 +140,11 @@ internal class ConnectionDiagnostics(context: Context) {
     // Only a successful request of the same route can claim recovery.
     // A healthy widget request must not hide continuing diary failures.
     private val failedRoutes = mutableSetOf<NetworkRoute>()
+
+    /** A safe, non-personal record for idempotent GET replays. Never include a URL or exception message. */
+    fun readRetry(stage: ConnectionStage, attempt: Int, kind: ConnectionFailureKind) {
+        record("operation=ReadRetry stage=$stage attempt=$attempt kind=$kind")
+    }
 
     fun failure(operation: ConnectionOperation, error: Throwable, stage: ConnectionStage? = null) {
         val failure = if (operation == ConnectionOperation.Auth) authFailures.resolve(error) else ConnectionFailure.from(error)
