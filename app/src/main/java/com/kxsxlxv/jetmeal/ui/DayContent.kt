@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -217,6 +218,19 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
     val displayed = animatedHealthProgressFrame(animationKey, targetProgress)
     var macroMode by rememberSaveable(animationKey.toString()) { mutableStateOf(MacroHeroMode.Bars) }
     val percentages = macroEnergyPercentages(macroEnergyShares(total))
+    // Bars get their own motion clock: returning from the donut must replay
+    // their progress without restarting the calorie dial on the left.
+    val macroBarsClock = remember(animationKey) { Animatable(0f) }
+    val macroTapInteraction = remember { MutableInteractionSource() }
+    LaunchedEffect(animationKey, macroMode, targetProgress) {
+        if (macroMode == MacroHeroMode.Bars) {
+            macroBarsClock.snapTo(0f)
+            macroBarsClock.animateTo(1f, tween(
+                durationMillis = 1450,
+                easing = CubicBezierEasing(.35f, 0f, .15f, 1f),
+            ))
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val gap = 6.dp
@@ -248,7 +262,11 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     .weight(1.08f)
                     .fillMaxHeight()
                     .testTag("macro-hero-toggle")
-                    .clickable(role = Role.Button) {
+                    .clickable(
+                        interactionSource = macroTapInteraction,
+                        indication = null, // Only this Hero panel omits the square/ripple overlay.
+                        role = Role.Button,
+                    ) {
                         macroMode = if (macroMode == MacroHeroMode.Bars)
                             MacroHeroMode.Distribution else MacroHeroMode.Bars
                     }
@@ -279,7 +297,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Белки",
                     actual = total.protein,
                     target = targets.protein,
-                    progress = { displayed.value.protein },
+                    progress = { targetProgress.protein * macroBarsClock.value },
                     colors = palette.protein,
                     symbol = JetMealSymbol.Protein,
                     modifier = Modifier.weight(1f),
@@ -288,7 +306,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Жиры",
                     actual = total.fat,
                     target = targets.fat,
-                    progress = { displayed.value.fat },
+                    progress = { targetProgress.fat * macroBarsClock.value },
                     colors = palette.fat,
                     symbol = JetMealSymbol.Fat,
                     modifier = Modifier.weight(1f),
@@ -297,7 +315,7 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     label = "Углеводы",
                     actual = total.carbs,
                     target = targets.carbs,
-                    progress = { displayed.value.carbs },
+                    progress = { targetProgress.carbs * macroBarsClock.value },
                     colors = palette.carbs,
                     symbol = JetMealSymbol.Carbs,
                     modifier = Modifier.weight(1f),
