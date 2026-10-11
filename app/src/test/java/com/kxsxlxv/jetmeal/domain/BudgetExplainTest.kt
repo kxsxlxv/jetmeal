@@ -47,4 +47,38 @@ class BudgetExplainTest {
         assertEquals(2900.0+(-200.0)*6,explanation.undistributed,.00001)
         assertEquals(2100.0,explanation.causes.single().baseline,.00001)
     }
+    @Test fun closedWeekIncludesSundayAndReconcilesWithFullBudget() {
+        val sunday = monday.plusDays(6)
+        val consumed = (0L..5L).associate { monday.plusDays(it) to
+            (if (it == 0L) 2960.0 else 2000.0) } + (sunday to 1624.6)
+        val week = WeekBudget.calculate(sunday, targets, consumed,
+            asOfDayCompleted = true, dailyTargets = daily())
+        // The allowance calculation before Sunday ends deliberately has only 6 days.
+        assertEquals(960.0, week.deviation, .00001)
+        assertEquals(760.0, week.residual, .00001)
+        // A CLOSED week, in contrast, includes the seventh day's consumption.
+        val report = BudgetExplain.completedWeek(week, daily())
+        assertTrue(report.allDaysRecorded)
+        assertEquals(7, report.recordedDays)
+        assertEquals(7, report.causes.size)
+        assertEquals(sunday, report.causes.last().date)
+        assertEquals(-375.4, report.causes.last().difference!!, .00001)
+        assertEquals(584.6, report.recordedDifference, .00001)
+        assertEquals(week.totalConsumed - week.baseBudget, report.recordedDifference, .00001)
+    }
+
+    @Test fun missingSundayIsStillUnknownInClosedWeek() {
+        val sunday = monday.plusDays(6)
+        val consumed = (0L..5L).associate { monday.plusDays(it) to 2000.0 }
+        val week = WeekBudget.calculate(sunday, targets, consumed,
+            asOfDayCompleted = true, dailyTargets = daily())
+        val report = BudgetExplain.completedWeek(week, daily())
+        assertFalse(report.allDaysRecorded)
+        assertEquals(6, report.recordedDays)
+        assertEquals(sunday, report.causes.last().date)
+        assertNull(report.causes.last().consumed)
+        assertNull(report.causes.last().difference)
+    }
+
+
 }
