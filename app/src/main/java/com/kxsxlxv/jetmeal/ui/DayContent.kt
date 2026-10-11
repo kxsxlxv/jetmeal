@@ -7,6 +7,8 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -16,6 +18,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kxsxlxv.jetmeal.domain.*
@@ -199,6 +203,8 @@ internal fun animatedHealthProgressFrame(
     return frame
 }
 
+internal enum class MacroHeroMode { Bars, Distribution }
+
 @Composable
 private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targets, effective: Double) {
     val palette = nutritionColors()
@@ -209,6 +215,8 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
         carbs = ringFraction(total.carbs, targets.carbs).coerceIn(0f, 1f),
     )
     val displayed = animatedHealthProgressFrame(animationKey, targetProgress)
+    var macroMode by rememberSaveable(animationKey.toString()) { mutableStateOf(MacroHeroMode.Bars) }
+    val percentages = macroEnergyPercentages(macroEnergyShares(total))
 
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val gap = 6.dp
@@ -235,10 +243,36 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     modifier = Modifier.size(dialSize),
                 )
             }
-            Column(
+            Box(
                 Modifier
                     .weight(1.08f)
-                    .fillMaxHeight(),
+                    .fillMaxHeight()
+                    .testTag("macro-hero-toggle")
+                    .clickable(role = Role.Button) {
+                        macroMode = if (macroMode == MacroHeroMode.Bars)
+                            MacroHeroMode.Distribution else MacroHeroMode.Bars
+                    }
+                    .semantics {
+                        stateDescription = if (macroMode == MacroHeroMode.Bars)
+                            "Прогресс к целям БЖУ" else "Распределение БЖУ"
+                        contentDescription = "Переключить вид БЖУ. " +
+                            "Белки ${percentages[0]}%, жиры ${percentages[1]}%, углеводы ${percentages[2]}%"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                AnimatedContent(
+                    targetState = macroMode,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(260)) togetherWith
+                            fadeOut(animationSpec = tween(200))
+                    },
+                    label = "macro-hero-mode",
+                    modifier = Modifier.fillMaxSize(),
+                ) { mode ->
+                    if (mode == MacroHeroMode.Bars) {
+            Column(
+                Modifier
+                    .fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 MacroHealthCard(
@@ -268,6 +302,13 @@ private fun DailyRings(animationKey: LocalDate, total: Nutrition, targets: Targe
                     symbol = JetMealSymbol.Carbs,
                     modifier = Modifier.weight(1f),
                 )
+            }
+                    } else {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            MacroDistributionDonut(total, diameter = dialSize)
+                        }
+                    }
+                }
             }
         }
     }
