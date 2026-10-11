@@ -163,7 +163,13 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
                 }
             }
         }
-        item { WeekSummary(week,today,fillFraction,weeklyNutrition) }
+        val weeklyMacroTargets = Nutrition(
+            calories = 0.0,
+            protein = (0L..6L).sumOf { dailyTargets[week.start.plusDays(it)]?.protein ?: 0.0 },
+            fat = (0L..6L).sumOf { dailyTargets[week.start.plusDays(it)]?.fat ?: 0.0 },
+            carbs = (0L..6L).sumOf { dailyTargets[week.start.plusDays(it)]?.carbs ?: 0.0 },
+        )
+        item { WeekSummary(week,today,fillFraction,weeklyNutrition,weeklyMacroTargets) }
         if(week.missingCompletedDays.isNotEmpty()) item {
             Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -189,9 +195,10 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
 /** Budget rail is the primary weekly summary: one number pair and a target marker.
  * The detailed daily rhythm above remains the only 7-day chart. */
 @Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now(),
-    fillFraction: ()->Float = { 1f }, weeklyNutrition: Nutrition = Nutrition.Zero) {
+    fillFraction: ()->Float = { 1f }, weeklyNutrition: Nutrition = Nutrition.Zero,
+    weeklyTargets: Nutrition = Nutrition.Zero) {
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        WeeklyBudgetRail(week,fillFraction,weeklyNutrition)
+        WeeklyBudgetRail(week,fillFraction,weeklyNutrition,weeklyTargets)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             WeekSummaryTile("Отклонение",signed(week.deviation),
                 "ккал · завершённые дни",Modifier.weight(1f))
