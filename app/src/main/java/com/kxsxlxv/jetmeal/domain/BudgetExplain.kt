@@ -24,8 +24,37 @@ data class BudgetExplanation(
     val hasLimit: Boolean,
 )
 
+/** Historic weeks are reports, not "today's allowance" forecasts.
+ * Include Sunday after the week closes; never count missing days as zero. */
+data class CompletedWeekReport(
+    val causes: List<DailyBudgetCause>,
+    val recordedDays: Int,
+    val recordedDifference: Double,
+    val allDaysRecorded: Boolean,
+)
+
 /** Explain the same input that WeekBudget uses; never infer unknown days as fasting. */
 object BudgetExplain {
+    fun completedWeek(week: WeekState, dailyTargets: Map<LocalDate, Targets>): CompletedWeekReport {
+        val causes = week.days.map { day ->
+            val baseline = dailyTargets[day.date]?.calories ?: week.baseDailyCalories
+            val known = day.status == DayLoggingStatus.Recorded ||
+                day.status == DayLoggingStatus.ConfirmedZero
+            DailyBudgetCause(
+                date = day.date,
+                consumed = if (known) day.actual else null,
+                baseline = baseline,
+                difference = if (known) day.actual - baseline else null,
+            )
+        }
+        return CompletedWeekReport(
+            causes = causes,
+            recordedDays = causes.count { it.consumed != null },
+            recordedDifference = causes.sumOf { it.difference ?: 0.0 },
+            allDaysRecorded = causes.all { it.consumed != null },
+        )
+    }
+
     fun calculate(week: WeekState, dailyTargets: Map<LocalDate, Targets>): BudgetExplanation {
         val current = week.days.first { day ->
             day.date == week.start.plusDays((7 - week.remainingDays).toLong())
