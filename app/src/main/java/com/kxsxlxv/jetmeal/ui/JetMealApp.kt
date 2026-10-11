@@ -300,7 +300,7 @@ internal fun weekMatchesPeriod(week: com.kxsxlxv.jetmeal.domain.WeekState?,
                         confirmedZero=state.day in state.confirmedZeroDays,
                         onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
                     TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate,
-                        dailyTargets=state.budgetTargets)
+                        dailyTargets=state.budgetTargets,weeklyNutrition=state.weekNutrition)
                     TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),
                         state.monthCalories,state.monthTargets,model::setMonth,model::openDate,
                         selectedDate=state.day,confirmedZeroDays=state.confirmedZeroDays)
