@@ -19,6 +19,7 @@ import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
 class JetMealApplication : Application() {
@@ -42,13 +43,20 @@ class JetMealApplication : Application() {
             SupabaseRepository(createSupabaseClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_KEY) {
                 httpEngine = OkHttp.create {
                     config {
+                        // OkHttp's 10s default read timeout caused partial HTTP 200 responses
+                        // to fail after headers had already reached the device.
+                        // Keep the transport limit above Supabase/Ktor's request deadline.
+                        connectTimeout(10, TimeUnit.SECONDS)
+                        readTimeout(25, TimeUnit.SECONDS)
+                        writeTimeout(25, TimeUnit.SECONDS)
+                        callTimeout(30, TimeUnit.SECONDS)
                         eventListenerFactory(SafeNetworkListenerFactory(connectionDiagnostics))
                     }
                 }
                 defaultLoggingFactory = { SafeSupabaseLogger(connectionDiagnostics) }
                 protectSessionRefresh(connectionDiagnostics::captureAuthFailure)
-                // Bound Auth/refresh and other HTTP calls; Postgrest has its own override below.
-                requestTimeout = 15.seconds
+                // Total request deadline is shorter than OkHttp's read/call deadlines.
+                requestTimeout = 25.seconds
                 install(Auth) {
                     // This same client serves headless WorkManager widgets. SDK Android hooks
                     // reset status to Initializing in background and wait for an Activity to
@@ -62,8 +70,8 @@ class JetMealApplication : Application() {
                     ))
                 }
                 install(Postgrest) {
-                    timeout = 15.seconds
-                    // Foreground requests return promptly; the user can explicitly retry.
+                    timeout = 25.seconds
+                    // Retry only explicit, idempotent reads in the repository; never replay writes here.
                     maxRetries = 0
                 }
             }).also {

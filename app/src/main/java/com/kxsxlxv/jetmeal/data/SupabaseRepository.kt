@@ -23,6 +23,13 @@ class SupabaseRepository(val client: SupabaseClient) {
     private val searchCacheLock = Any()
     private var searchCache: Pair<String, List<FoodCandidate>>? = null
     private var searchEpoch = 0
+
+    /** Retry SELECTs only: writes can commit before an HTTP response is lost. */
+    private suspend fun <T> read(stage: ConnectionStage, block: suspend () -> T): T =
+        retryTransientRead(stage, onRetry = { retriedStage, attempt, kind ->
+            diagnostics?.readRetry(retriedStage, attempt, kind)
+        }, block = block)
+
     fun invalidateSearch() = synchronized(searchCacheLock) { searchEpoch++; searchCache = null }
 
     suspend fun rankedCatalogue(): List<FoodCandidate> = searchMutex.withLock {
@@ -51,8 +58,10 @@ class SupabaseRepository(val client: SupabaseClient) {
 
     suspend fun syncTimezone(zone: ZoneId) {
         val userId = requireNotNull(client.auth.currentUserOrNull()).id
-        val profile = client.from("profiles").select { filter { eq("id", userId) } }
-            .decodeList<JsonObject>().single()
+        val profile = read(ConnectionStage.Profile) {
+            client.from("profiles").select { filter { eq("id", userId) } }
+                .decodeList<JsonObject>().single()
+        }
         if (profile.string("timezone") != zone.id) {
             client.from("profiles").update(buildJsonObject { put("timezone", zone.id) }) {
                 filter { eq("id", userId) }
@@ -60,16 +69,20 @@ class SupabaseRepository(val client: SupabaseClient) {
         }
     }
 
-    suspend fun timezone(): ZoneId = ZoneId.of(client.from("profiles").select()
-        .decodeList<JsonObject>().single().string("timezone"))
+    suspend fun timezone(): ZoneId = read(ConnectionStage.Profile) {
+        ZoneId.of(client.from("profiles").select()
+            .decodeList<JsonObject>().single().string("timezone"))
+    }
 
-    suspend fun targets(): Targets? = client.from("nutrition_targets").select()
-        .decodeList<JsonObject>().singleOrNull()?.let {
-            Targets(it.number("daily_calories_kcal"), it.number("daily_protein_g"),
-                it.number("daily_fat_g"), it.number("daily_carbs_g"), it.number("adjustment_limit_ratio"))
-        }
+    suspend fun targets(): Targets? = read(ConnectionStage.Targets) {
+        client.from("nutrition_targets").select()
+            .decodeList<JsonObject>().singleOrNull()?.let {
+                Targets(it.number("daily_calories_kcal"), it.number("daily_protein_g"),
+                    it.number("daily_fat_g"), it.number("daily_carbs_g"), it.number("adjustment_limit_ratio"))
+            }
+    }
 
-    suspend fun targetHistory(): List<TargetVersion> =
+    suspend fun targetHistory(): List<TargetVersion> = read(ConnectionStage.TargetHistory) {
         client.from("nutrition_target_history").select {
             order("effective_date", Order.ASCENDING)
         }.decodeList<JsonObject>().map {
@@ -78,13 +91,15 @@ class SupabaseRepository(val client: SupabaseClient) {
                     it.number("daily_fat_g"), it.number("daily_carbs_g"),
                     it.number("adjustment_limit_ratio")))
         }
+    }
 
-    suspend fun weightGoal(): WeightGoal? =
+    suspend fun weightGoal(): WeightGoal? = read(ConnectionStage.Weights) {
         client.from("weight_goals").select().decodeList<JsonObject>().singleOrNull()?.let {
             WeightGoal(LocalDate.parse(it.string("start_date")),
                 LocalDate.parse(it.string("target_date")),
-                it.number("start_weight_kg"),it.number("target_weight_kg"))
+                it.number("start_weight_kg"), it.number("target_weight_kg"))
         }
+    }
 
     suspend fun setWeightGoal(startKg: Double,targetKg: Double,deadline: LocalDate) {
         require(startKg.isFinite() && startKg in 20.0..500.0)
@@ -101,7 +116,8 @@ class SupabaseRepository(val client: SupabaseClient) {
         val collected = mutableListOf<WeightMeasurement>()
         var offset = 0L
         do {
-            val page = client.from("weight_measurements").select {
+            val page = read(ConnectionStage.Weights) {
+                client.from("weight_measurements").select {
                 filter { and {
                     gte("measured_at", start.atStartOfDay(zone).toInstant().toString())
                     lt("measured_at", endExclusive.atStartOfDay(zone).toInstant().toString())
@@ -109,6 +125,7 @@ class SupabaseRepository(val client: SupabaseClient) {
                 order("measured_at", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
             }.decodeList<JsonObject>()
+            }
             collected += page.map {
                 WeightMeasurement(it.string("id"), Instant.parse(it.string("measured_at")),
                     it.number("weight_kg"), it["body_fat_percent"]?.jsonPrimitive?.doubleOrNull,
@@ -133,7 +150,8 @@ class SupabaseRepository(val client: SupabaseClient) {
     }
 
     suspend fun confirmedZeroDays(start: LocalDate, endExclusive: LocalDate): Set<LocalDate> {
-        val rows = client.from("zero_calorie_days").select(columns = Columns.list("local_date")) {
+        val rows = read(ConnectionStage.ZeroDays) {
+            client.from("zero_calorie_days").select(columns = Columns.list("local_date")) {
             filter {
                 and {
                     gte("local_date", start.toString())
@@ -141,6 +159,7 @@ class SupabaseRepository(val client: SupabaseClient) {
                 }
             }
         }.decodeList<JsonObject>()
+        }
         return rows.mapTo(mutableSetOf()) { LocalDate.parse(it.string("local_date")) }
     }
 
@@ -155,7 +174,8 @@ class SupabaseRepository(val client: SupabaseClient) {
         val entries = mutableListOf<DiaryEntry>()
         var offset = 0L
         do {
-            val page = client.from("diary_entries").select {
+            val page = read(ConnectionStage.Entries) {
+                client.from("diary_entries").select {
                 filter {
                     exact("deleted_at", null)
                     // Supabase Kotlin 3.8 serializes only the first top-level value for a
@@ -169,6 +189,7 @@ class SupabaseRepository(val client: SupabaseClient) {
                 order("id", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
             }.decodeList<JsonObject>()
+            }
             entries += page.map(::diaryEntry)
             offset += page.size
         } while (page.size == PAGE_SIZE)
@@ -223,11 +244,13 @@ class SupabaseRepository(val client: SupabaseClient) {
         val result = mutableListOf<JsonObject>()
         var offset = 0L
         do {
-            val page = client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "consumed_at")) {
+            val page = read(ConnectionStage.Catalogue) {
+                client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "consumed_at")) {
                 filter { exact("deleted_at", null) }
                 order("id", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
             }.decodeList<JsonObject>()
+            }
             result += page
             offset += page.size
         } while (page.size == PAGE_SIZE)
@@ -238,11 +261,13 @@ class SupabaseRepository(val client: SupabaseClient) {
         val result = mutableListOf<JsonObject>()
         var offset = 0L
         do {
-            val page = client.from(table).select {
+            val page = read(ConnectionStage.Catalogue) {
+                client.from(table).select {
                 filter { exact("archived_at", null) }
                 order("id", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
             }.decodeList<JsonObject>()
+            }
             result += page
             offset += page.size
         } while (page.size == PAGE_SIZE)
