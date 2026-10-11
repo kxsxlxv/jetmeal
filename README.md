@@ -262,6 +262,38 @@ the existing typed `jetmeal_log_food`, `jetmeal_update_log` and offline
 `measure_quantity` on the server. Measures and user-entered snapshots live
 in the encrypted offline cache and persistent outbox.
 
+## Shared reference and personal foods (2026-10-11)
+
+JetMeal now reads two catalogues: authenticated users can read the same
+read-only `reference_foods` / `reference_food_variants` /
+`reference_food_measures`, while existing owner-scoped `foods`,
+`food_variants` and `food_measures` remain private, editable and protected
+by RLS. Personal foods win on matching normalized names. The reference begins
+with 426 attributed, Russian-language staple products; no FatSecret dump is
+redistributed. The reference database is *not* copied to each account at sign-in.
+
+An item selected from the shared catalogue is copied to that user's private
+food/variant only at first log, in the same transaction as the diary operation.
+The server resolves its reference measure to the newly created private measure.
+This works through both `jetmeal_log_food` and idempotent offline
+`jetmeal_sync_mutation`; future diary changes use ordinary private IDs.
+No external client needs privileged Supabase credentials.
+
+For eggs, amount input separates **граммы / шт.** and **Среднее / Большое**:
+select size first, then enter the count. Changing size keeps the count;
+switching grams/pieces preserves edible weight. Plain cooked eggs get the
+same approximate 44/50-g options. Many fruits and suitable vegetables now
+offer **шт.** based on explicitly defined per-food approximate edible weights,
+plus the existing exact gram option; there is no global grams-per-piece rule.
+
+A new database can load the global reference with
+`supabase/seeds/import_tempo_reference.sql` after the additive reference
+schema migrations. The source and attribution contract are documented in
+[`docs/FOOD_CATALOG_SOURCES.md`](docs/FOOD_CATALOG_SOURCES.md). The SQL tests
+`supabase/tests/reference_catalogue.sql` and
+`supabase/tests/reference_egg_sizes.sql` cover reference-to-private adoption,
+quantity conversion, replay protection and owner isolation.
+
 ## Current product decisions
 
 - Food calculation from weight-loss goals is outside JetMeal. The app stores already-decided calorie and macro targets.
