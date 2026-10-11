@@ -27,7 +27,8 @@ import javax.net.ssl.SSLPeerUnverifiedException
  * cookies, credentials or tokens, even in debug builds.
  */
 internal enum class NetworkRoute { Auth, Profile, Diary, Catalogue, Mutation, Other }
-internal enum class NetworkPhase { Queued, Dns, Tcp, Tls, Request, Waiting, Response }
+internal enum class NetworkPhase { Queued, Dns, Tcp, Tls, Request, Waiting, Response, Body }
+internal enum class NetworkProtocol { H1, H2, Other }
 internal enum class NetworkCause {
     UnknownHost, ConnectionRefused, NoRoute, TlsHandshake, TlsCertificate,
     Tls, Timeout, PrematureClose, Protocol, Io, Unknown
@@ -73,6 +74,13 @@ internal data class NetworkTrace(
     val tlsMs: Long? = null,
     val requestId: String? = null,
     val connectionReused: Boolean = false,
+    val protocol: NetworkProtocol? = null,
+    val headersMs: Long? = null,
+    val bodyMs: Long? = null,
+    val bodyBytes: Long? = null,
+    val bodyStarted: Boolean = false,
+    val bodyCompleted: Boolean = false,
+    val ioType: String? = null,
 ) {
     /** Allowlisted fields only. No free-form exception text is accepted. */
     fun safeLine(): String = buildString {
@@ -90,6 +98,12 @@ internal data class NetworkTrace(
         tcpMs?.let { append(" tcpMs=").append(it.coerceAtLeast(0)) }
         tlsMs?.let { append(" tlsMs=").append(it.coerceAtLeast(0)) }
         if (connectionReused) append(" reused=true")
+        protocol?.let { append(" protocol=").append(it) }
+        headersMs?.let { append(" headersMs=").append(it.coerceAtLeast(0)) }
+        bodyMs?.let { append(" bodyMs=").append(it.coerceAtLeast(0)) }
+        bodyBytes?.let { append(" bodyBytes=").append(it.coerceAtLeast(0)) }
+        if (bodyStarted) append(" bodyComplete=").append(bodyCompleted)
+        ioType?.takeIf { Regex("[A-Za-z0-9_]{1,64}").matches(it) }?.let { append(" ioType=").append(it) }
         ConnectionFailure.safeRequestId(requestId)?.let { append(" request=").append(it) }
     }
 }
@@ -116,6 +130,14 @@ internal class SafeNetworkEventListener(
     private var requestId: String? = null
     private var reused = false
     private var connected = false
+    private var protocol: NetworkProtocol? = null
+    private var requestHeadersAt: Long? = null
+    private var headersMs: Long? = null
+    private var bodyStartedAt: Long? = null
+    private var bodyMs: Long? = null
+    private var bodyBytes: Long? = null
+    private var bodyStarted = false
+    private var bodyCompleted = false
 
     private fun duration(start: Long?): Long? = start?.let { ((nanoTime() - it) / 1_000_000L).coerceAtLeast(0L) }
 
@@ -150,21 +172,40 @@ internal class SafeNetworkEventListener(
     @Synchronized override fun connectionAcquired(call: Call, connection: okhttp3.Connection) {
         reused = !connected
     }
-    @Synchronized override fun requestHeadersStart(call: Call) { phase = NetworkPhase.Request }
+    @Synchronized override fun requestHeadersStart(call: Call) {
+        phase = NetworkPhase.Request
+        requestHeadersAt = nanoTime()
+    }
     @Synchronized override fun requestBodyStart(call: Call) { phase = NetworkPhase.Request }
     @Synchronized override fun responseHeadersStart(call: Call) { phase = NetworkPhase.Waiting }
     @Synchronized override fun responseHeadersEnd(call: Call, response: Response) {
         phase = NetworkPhase.Response
         status = response.code
+        headersMs = duration(requestHeadersAt)
+        protocol = when (response.protocol) {
+            Protocol.HTTP_1_0, Protocol.HTTP_1_1 -> NetworkProtocol.H1
+            Protocol.HTTP_2, Protocol.H2_PRIOR_KNOWLEDGE -> NetworkProtocol.H2
+            else -> NetworkProtocol.Other
+        }
         requestId = ConnectionFailure.safeRequestId(response.header("sb-request-id"))
     }
-    @Synchronized override fun responseBodyStart(call: Call) { phase = NetworkPhase.Response }
+    @Synchronized override fun responseBodyStart(call: Call) {
+        phase = NetworkPhase.Body
+        bodyStarted = true
+        bodyStartedAt = nanoTime()
+    }
+    @Synchronized override fun responseBodyEnd(call: Call, byteCount: Long) {
+        phase = NetworkPhase.Response
+        bodyMs = duration(bodyStartedAt)
+        bodyBytes = byteCount
+        bodyCompleted = true
+    }
 
     @Synchronized override fun callFailed(call: Call, ioe: IOException) {
         if (phase == NetworkPhase.Dns) dnsMs = duration(dnsStart)
         if (phase == NetworkPhase.Tcp) tcpMs = duration(tcpStart)
         if (phase == NetworkPhase.Tls) tlsMs = duration(tlsStart)
-        runCatching { diagnostics.networkTrace(snapshot(networkCause(ioe))) }
+        runCatching { diagnostics.networkTrace(snapshot(networkCause(ioe), ioe.javaClass.simpleName)) }
         // Telemetry must never change the outcome of the user's original request.
     }
 
@@ -172,7 +213,7 @@ internal class SafeNetworkEventListener(
         runCatching { diagnostics.networkTrace(snapshot(null)) }
     }
 
-    private fun snapshot(cause: NetworkCause?): NetworkTrace = NetworkTrace(
+    private fun snapshot(cause: NetworkCause?, ioType: String? = null): NetworkTrace = NetworkTrace(
         route = route,
         phase = phase,
         elapsedMs = duration(startedAt) ?: 0L,
@@ -183,6 +224,13 @@ internal class SafeNetworkEventListener(
         tlsMs = tlsMs,
         requestId = requestId,
         connectionReused = reused,
+        protocol = protocol,
+        headersMs = headersMs,
+        bodyMs = bodyMs ?: if (bodyStarted) duration(bodyStartedAt) else null,
+        bodyBytes = bodyBytes,
+        bodyStarted = bodyStarted,
+        bodyCompleted = bodyCompleted,
+        ioType = ioType,
     )
 }
 
