@@ -10,7 +10,17 @@ internal fun number(value: Double, decimals: Int = 0): String = NumberFormat.get
     minimumFractionDigits = 0
 }.format(value)
 internal fun signed(value: Double): String = (if (value > 0) "+" else "") + number(value)
-internal fun decimalInput(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else value.toString().replace('.', ',')
+/** Human-sized decimal input. Never serialize a binary floating-point tail
+ * into a text field after a grams/portion conversion.
+ * The formatted value is the value shown and saved, not a hidden full-precision copy. */
+internal fun decimalInput(value: Double): String {
+    require(value.isFinite())
+    return java.math.BigDecimal.valueOf(value)
+        .setScale(2, java.math.RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
+        .replace('.', ',')
+}
 internal fun unitLabel(unit: String): String = when(unit) {
     "g" -> "г"; "ml" -> "мл"; "piece", "pcs" -> "шт."; "serving", "portion" -> "порц."; "kg" -> "кг"; "l" -> "л"; else -> unit
 }
