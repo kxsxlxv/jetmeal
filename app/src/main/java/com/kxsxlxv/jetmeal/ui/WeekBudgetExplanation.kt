@@ -17,6 +17,12 @@ import kotlin.math.abs
 /** Explains each input to the current Monday–Sunday redistribution. */
 @Composable
 internal fun WeekBudgetExplanation(week: WeekState, dailyTargets: Map<LocalDate,Targets>) {
+    // Once the week ends, the Sunday value belongs in the final sum. The
+    // forward-looking daily allowance explanation is no longer meaningful.
+    if (week.end < LocalDate.now()) {
+        CompletedWeekExplanation(week, dailyTargets)
+        return
+    }
     val info=remember(week,dailyTargets) {BudgetExplain.calculate(week,dailyTargets)}
     var expanded by remember(week.start) { mutableStateOf(false) }
     Surface(shape=MaterialTheme.shapes.extraLarge,color=MaterialTheme.colorScheme.surfaceContainerHigh) {
@@ -79,6 +85,53 @@ internal fun WeekBudgetExplanation(week: WeekState, dailyTargets: Map<LocalDate,
                     "число оставшихся дней = ${number(info.theoretical)} ккал до ограничения.",
                     color=MaterialTheme.colorScheme.onSurfaceVariant,
                     style=MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+/** A closed week is a seven-day accounting statement, not a forecast for Sunday. */
+@Composable
+private fun CompletedWeekExplanation(week: WeekState, dailyTargets: Map<LocalDate, Targets>) {
+    val report = remember(week, dailyTargets) { BudgetExplain.completedWeek(week, dailyTargets) }
+    var expanded by remember(week.start) { mutableStateOf(false) }
+    Surface(shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Откуда взялся итог", style = MaterialTheme.typography.titleLargeEmphasized)
+            Text(
+                if (report.allDaysRecorded)
+                    "Учтены все 7 дней, включая воскресенье. Итоговое отклонение: " +
+                        "${signed(report.recordedDifference)} ккал."
+                else
+                    "Учтено ${report.recordedDays} из 7 дней. Отклонение записанных дней: " +
+                        "${signed(report.recordedDifference)} ккал. Пропуски не считаются нулевым питанием.",
+                style = MaterialTheme.typography.bodyMedium)
+            Text("Отклонение завершённой недели не переносится в следующую неделю.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Свернуть расчёт" else "Показать расчёт по дням")
+            }
+            if (expanded) {
+                HorizontalDivider()
+                report.causes.forEach { cause ->
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(cause.date.format(DateTimeFormatter.ofPattern("EE, d MMM", RussianLocale)),
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            if (cause.consumed == null) "Нет данных"
+                            else "${number(cause.consumed)} − ${number(cause.baseline)} = " +
+                                signed(requireNotNull(cause.difference)),
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text("Итог: сумма отклонений записанных дней = " +
+                    "${signed(report.recordedDifference)} ккал.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }
