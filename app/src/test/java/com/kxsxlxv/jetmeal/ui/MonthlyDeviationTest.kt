@@ -25,7 +25,7 @@ class MonthlyDeviationTest {
         for (rows in 4..6) {
             for (height in listOf(580.dp,620.dp,700.dp)) {
                 val sizing=monthCalendarSizing(height,390.dp,rows,true,true)
-                val baseline=20.dp+20.dp+48.dp+91.dp+8.dp*4+4.dp*(rows-1)+116.dp
+                val baseline=20.dp+20.dp+48.dp+80.dp+8.dp*4+4.dp*(rows-1)+116.dp
                 val occupied=baseline+sizing.chartPlot+sizing.tile*rows
                 assertTrue("No-scroll $rows row month at $height occupies $occupied",
                     occupied<=height)
@@ -34,6 +34,16 @@ class MonthlyDeviationTest {
         }
         val six=monthCalendarSizing(600.dp,390.dp,6,true,true)
         assertTrue("Calendar days remain square with readable side",six.tile>=28.dp)
+    }
+
+    @Test fun largeFontMonthlyCardsReserveTheirActualHeight() {
+        val regular=monthCalendarSizing(700.dp,390.dp,5,true,false)
+        val enlarged=monthCalendarSizing(700.dp,390.dp,5,true,false,
+            summaryHeight=104.dp)
+        assertTrue("Larger text must reserve additional space",
+            enlarged.tile<=regular.tile)
+        assertTrue("The optional chart remains visible",
+            enlarged.chartPlot>0.dp)
     }
 
     @Test fun chartVisibilityMustNotDependOnHeightAfterSixKnownDays() {
