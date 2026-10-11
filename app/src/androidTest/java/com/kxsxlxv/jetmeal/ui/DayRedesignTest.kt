@@ -1,6 +1,7 @@
 package com.kxsxlxv.jetmeal.ui
 
 import androidx.compose.material3.Surface
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
