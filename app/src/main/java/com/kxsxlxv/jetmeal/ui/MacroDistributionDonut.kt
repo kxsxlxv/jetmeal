@@ -136,7 +136,8 @@ internal fun MacroDistributionDonut(
                     return@forEachIndexed
                 }
                 val start = cursor + gap / 2f
-                val drawnSweep = (visibleSweep * reveal).coerceAtMost(visibleSweep)
+                // One continuous 1450ms sweep, revealing protein, fat and carbs in order.
+                val drawnSweep = (360f * reveal - (start + 90f)).coerceIn(0f, visibleSweep)
                 if (drawnSweep > .001f) {
                     drawArc(
                         brush = Brush.linearGradient(
@@ -153,7 +154,7 @@ internal fun MacroDistributionDonut(
                     )
                 }
                 // Do not display a label until the entire central group has been revealed.
-                if (reveal >= .98f && sector.percent > 0) {
+                if (drawnSweep >= visibleSweep * .98f && sector.percent > 0) {
                     val mid = cursor + fullSweep / 2f
                     val normalizedMid = ((mid % 360f) + 360f) % 360f
                     val direction = if (normalizedMid > 0f && normalizedMid < 180f) -1f else 1f
