@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kxsxlxv.jetmeal.domain.WeekState
+import com.kxsxlxv.jetmeal.domain.Nutrition
 import com.kxsxlxv.jetmeal.domain.DayLoggingStatus
 import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import java.time.LocalDate
@@ -67,7 +68,8 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
     easing=CubicBezierEasing(.35f,0f,.15f,1f))
 
 @Composable internal fun WeekContent(week:WeekState?,onTargets:()->Unit,onDay:(LocalDate)->Unit={},
-    dailyTargets: Map<LocalDate, com.kxsxlxv.jetmeal.domain.Targets> = emptyMap()) {
+    dailyTargets: Map<LocalDate, com.kxsxlxv.jetmeal.domain.Targets> = emptyMap(),
+    weeklyNutrition: Nutrition = Nutrition.Zero) {
     if(week==null) { TargetsPrompt(onTargets); return }
     val palette=nutritionColors()
     val maxValue=week.days.maxOf {maxOf(it.actual,it.target)}.coerceAtLeast(1.0)
@@ -161,7 +163,7 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
                 }
             }
         }
-        item { WeekSummary(week,today,fillFraction) }
+        item { WeekSummary(week,today,fillFraction,weeklyNutrition) }
         if(week.missingCompletedDays.isNotEmpty()) item {
             Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -187,9 +189,9 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
 /** Budget rail is the primary weekly summary: one number pair and a target marker.
  * The detailed daily rhythm above remains the only 7-day chart. */
 @Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now(),
-    fillFraction: ()->Float = { 1f }) {
+    fillFraction: ()->Float = { 1f }, weeklyNutrition: Nutrition = Nutrition.Zero) {
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-        WeeklyBudgetRail(week,fillFraction)
+        WeeklyBudgetRail(week,fillFraction,weeklyNutrition)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             WeekSummaryTile("Отклонение",signed(week.deviation),
                 "ккал · завершённые дни",Modifier.weight(1f))
