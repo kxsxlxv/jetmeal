@@ -3,6 +3,8 @@ package com.kxsxlxv.jetmeal.ui
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performClick
 import com.kxsxlxv.jetmeal.domain.ChosenMeasure
 import com.kxsxlxv.jetmeal.domain.FoodMeasure
@@ -39,6 +41,64 @@ class FoodMeasureUiTest {
             assertNotNull(saved)
             assertEquals(109.0,saved!!.baseAmount,.001)
             assertEquals("piece",saved!!.measure.key)
+        }
+    }
+
+    @Test fun bananaBeginsAtOnePieceAndTwoPiecesUse236Grams() {
+        val piece=FoodMeasure("banana-piece","banana","piece","шт.",118.0,
+            approximate=true,isDefault=true)
+        var saved: ChosenMeasure?=null
+        compose.setContent {
+            JetmealTheme { Surface {
+                AmountContent(name="Банан",unit="g",amount=100.0,basisAmount=100.0,
+                    nutrition=Nutrition(89.0,1.1,0.3,23.0),
+                    estimated=true,busy=false,error=null,onSave={},onDelete=null,
+                    onSuccess={},onBack=null,measures=listOf(piece),
+                    measurePreferenceKey="banana-default-piece-ui-test",
+                    onMeasuredSave={ _,selection -> saved=selection })
+            } }
+        }
+        compose.onNodeWithText("≈ 118 г").assertExists()
+        compose.onNodeWithText("105 ккал").assertExists()
+        compose.onNodeWithText("Количество (шт.)").performTextReplacement("2")
+        compose.onNodeWithText("≈ 236 г").assertExists()
+        compose.onNodeWithText("210 ккал").assertExists()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertNotNull(saved)
+            assertEquals(2.0,saved!!.quantity,0.0)
+            assertEquals(236.0,saved!!.baseAmount,0.001)
+        }
+    }
+
+    @Test fun eggSizeChangesCountWithoutDividingByInitialGramBasis() {
+        val sizes=listOf(
+            FoodMeasure("medium","egg","egg_medium","Среднее",44.0,approximate=true),
+            FoodMeasure("large","egg","egg_large","Большое",50.0,
+                approximate=true,isDefault=true))
+        var saved: ChosenMeasure?=null
+        compose.setContent {
+            JetmealTheme { Surface {
+                AmountContent(name="Яйцо варёное",unit="g",amount=50.0,basisAmount=100.0,
+                    nutrition=Nutrition(155.0,12.6,10.6,1.1),
+                    estimated=true,busy=false,error=null,onSave={},onDelete=null,
+                    onSuccess={},onBack=null,measures=sizes,
+                    measurePreferenceKey="egg-size-count-ui-test",
+                    onMeasuredSave={ _,selection -> saved=selection })
+            } }
+        }
+        compose.onNodeWithText("Размер яйца").assertExists()
+        compose.onNodeWithText("≈ 50 г").assertExists()
+        compose.onNodeWithText("Количество (шт.)").performTextReplacement("3")
+        compose.onNodeWithText("≈ 150 г").assertExists()
+        compose.onNodeWithText("Среднее").performClick()
+        compose.onNodeWithText("≈ 132 г").assertExists()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertNotNull(saved)
+            assertEquals(3.0,saved!!.quantity,0.0)
+            assertEquals(132.0,saved!!.baseAmount,0.001)
+            assertEquals("egg_medium",saved!!.measure.key)
         }
     }
 
