@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kxsxlxv.jetmeal.domain.WeekState
 import com.kxsxlxv.jetmeal.domain.Nutrition
+import com.kxsxlxv.jetmeal.domain.BudgetExplain
 import com.kxsxlxv.jetmeal.domain.DayLoggingStatus
 import com.kxsxlxv.jetmeal.ui.theme.nutritionColors
 import java.time.LocalDate
@@ -169,7 +170,7 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
             fat = (0L..6L).sumOf { dailyTargets[week.start.plusDays(it)]?.fat ?: 0.0 },
             carbs = (0L..6L).sumOf { dailyTargets[week.start.plusDays(it)]?.carbs ?: 0.0 },
         )
-        item { WeekSummary(week,today,fillFraction,weeklyNutrition,weeklyMacroTargets) }
+        item { WeekSummary(week,today,fillFraction,weeklyNutrition,weeklyMacroTargets,dailyTargets) }
         if(week.missingCompletedDays.isNotEmpty()) item {
             Surface(color=MaterialTheme.colorScheme.surfaceContainerHigh,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -179,7 +180,7 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
                 }
             }
         }
-        if(abs(week.residual)>.5) item {
+        if(today <= week.end && abs(week.residual)>.5) item {
             Surface(color=MaterialTheme.colorScheme.tertiaryContainer,shape=MaterialTheme.shapes.large) {
                 Column(Modifier.padding(18.dp)) {
                     Text("За пределами коррекции",style=MaterialTheme.typography.titleMediumEmphasized)
@@ -196,12 +197,17 @@ internal fun weekFillMotion() = tween<Float>(durationMillis=WeekFillDurationMill
  * The detailed daily rhythm above remains the only 7-day chart. */
 @Composable internal fun WeekSummary(week:WeekState,today:LocalDate=LocalDate.now(),
     fillFraction: ()->Float = { 1f }, weeklyNutrition: Nutrition = Nutrition.Zero,
-    weeklyTargets: Nutrition = Nutrition.Zero) {
+    weeklyTargets: Nutrition = Nutrition.Zero,
+    dailyTargets: Map<LocalDate, com.kxsxlxv.jetmeal.domain.Targets> = emptyMap()) {
+    val closed = today > week.end
+    val finalReport = if (closed) BudgetExplain.completedWeek(week, dailyTargets) else null
+    val visibleDeviation = finalReport?.recordedDifference ?: week.deviation
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp)) {
         WeeklyBudgetRail(week,fillFraction,weeklyNutrition,weeklyTargets)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            WeekSummaryTile("Отклонение",signed(week.deviation),
-                "ккал · завершённые дни",Modifier.weight(1f))
+            WeekSummaryTile("Отклонение",signed(visibleDeviation),
+                if (closed) "ккал · учтённые 7 дней" else "ккал · завершённые дни",
+                Modifier.weight(1f))
             if(today in week.start..week.end)
                 WeekSummaryTile("Дней осталось",week.remainingDays.toString(),
                     "включая сегодня",Modifier.weight(1f))
