@@ -71,7 +71,7 @@ private data class MacroDonutSector(
 
 /**
  * Same diameter, centerline radius and 23dp stroke as CalorieHealthDial.
- * Percentages follow the arc, centered as a group with their original small icon.
+ * Percentages follow the arc, centered on each sector's midpoint.
  * For tiny slices, prioritize a legible percentage over the icon; for slices too
  * narrow even for that, TalkBack exposes the complete values on the toggle.
  */
@@ -197,7 +197,15 @@ internal fun MacroDistributionDonut(
                                 (x - iconSize / 2).toInt(), (y - iconSize / 2).toInt(),
                                 (x + iconSize / 2).toInt(), (y + iconSize / 2).toInt(),
                             )
+                            // Rotate the vector icon to the same circle tangent as the
+                            // percentage text rather than leaving it screen-horizontal.
+                            val saveCount = nativeCanvas.save()
+                            nativeCanvas.rotate(
+                                iconAngle + if (direction > 0f) 90f else -90f,
+                                x, y,
+                            )
                             drawable.draw(nativeCanvas)
+                            nativeCanvas.restoreToCount(saveCount)
                         }
                     }
                     paint.textSize = originalSize
