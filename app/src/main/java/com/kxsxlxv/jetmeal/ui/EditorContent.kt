@@ -348,7 +348,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                 }
             }
             if (chosen?.approximate==true)
-                Text("Вес одной ${chosen.label} приблизительный: уточните в граммах при необходимости",
+                Text("≈ ${number(chosen.baseAmount, 1)} ${unitLabel(unit)} за ${chosen.label}; можно уточнить в граммах",
                     style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -372,7 +372,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                 modifier=Modifier.size(48.dp)) { Text("−") }
             TextField(text, { text = it },
                 label = {
-                    Text("Количество (${chosen?.label ?: unitLabel(unit)})",
+                    Text("Количество (${if (eggSizes != null && chosen != null) "шт." else chosen?.label ?: unitLabel(unit)})",
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1, softWrap = false,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
