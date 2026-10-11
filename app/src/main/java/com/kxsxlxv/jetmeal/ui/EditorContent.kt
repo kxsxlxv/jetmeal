@@ -200,6 +200,23 @@ internal fun measureConversionHint(
     return "${if (measure.approximate) "≈" else "="} ${number(converted, 1)} $equivalentUnit"
 }
 
+/** Opening a new food with a measure starts at ONE measure regardless of
+ * the nutrient-basis weight (e.g. 100 g banana is not 0.847457... pieces).
+ * Editing uses the saved entered count, or falls back to the stored gram basis. */
+internal fun initialMeasureQuantity(
+    amount: Double,
+    measure: FoodMeasure?,
+    editing: Boolean,
+    recordedMeasureKey: String? = null,
+    recordedMeasureQuantity: Double? = null,
+): Double = when {
+    measure == null -> amount
+    editing && measure.key == recordedMeasureKey && recordedMeasureQuantity != null ->
+        recordedMeasureQuantity
+    !editing -> 1.0
+    else -> amount / measure.baseAmount
+}
+
 @Composable
 internal fun AmountContent(name: String, unit: String, amount: Double, basisAmount: Double, nutrition: Nutrition,
     estimated: Boolean, busy: Boolean, error: String?, onSave: (Double) -> Unit, onDelete: (() -> Unit)?,
@@ -233,12 +250,9 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         mutableStateOf(first?.id)
     }
     val chosen=measures.firstOrNull {it.id==chosenId}
-    val initial=if(chosen!=null) {
-        if(chosen.key==enteredMeasureKey && enteredMeasureQuantity!=null) enteredMeasureQuantity
-        else if(onDelete==null && enteredMeasureKey==null &&
-            chosen.key in setOf("piece","egg_medium","egg_large","serving")) 1.0
-        else amount/chosen.baseAmount
-    } else amount
+    val initial=initialMeasureQuantity(
+        amount, chosen, editing=onDelete != null, enteredMeasureKey, enteredMeasureQuantity
+    )
     var text by rememberSaveable(name, amount, measurePreferenceKey) { mutableStateOf(decimalInput(initial)) }
     var pending by remember { mutableStateOf(false) }
     val entered = text.replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 }
