@@ -21,6 +21,12 @@ internal fun decimalInput(value: Double): String {
         .toPlainString()
         .replace('.', ',')
 }
+/** Previously recorded explicit input must not lose precision on opening edit. */
+internal fun recordedDecimalInput(value: Double): String {
+    require(value.isFinite())
+    return java.math.BigDecimal.valueOf(value)
+        .stripTrailingZeros().toPlainString().replace('.', ',')
+}
 internal fun unitLabel(unit: String): String = when(unit) {
     "g" -> "г"; "ml" -> "мл"; "piece", "pcs" -> "шт."; "serving", "portion" -> "порц."; "kg" -> "кг"; "l" -> "л"; else -> unit
 }
