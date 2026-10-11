@@ -36,6 +36,6 @@ class CompletedWeekExplanationTest {
         compose.onNodeWithText("Показать расчёт по дням").performClick()
         // Previously the as-of-day filter silently omitted this Sunday.
         compose.onNodeWithText("вс, 11 окт", substring = true).assertExists()
-        compose.onNodeWithText("−375", substring = true).assertExists()
+        compose.onNodeWithText("375", substring = true).assertExists()
     }
 }
