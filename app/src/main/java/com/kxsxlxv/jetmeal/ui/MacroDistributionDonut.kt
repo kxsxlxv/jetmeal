@@ -62,12 +62,10 @@ internal fun macroEnergyPercentages(shares: MacroEnergyShares): List<Int> {
     return roundedDown
 }
 
-/** An experimental arrangement with fixed category positions, independent of shares.
- * To roll it back, change MacroDistributionDonut's default layout to Proportional.
- * Y-center angles (Android Canvas coordinates): B=-150° (upper-left),
- * J=-30° (upper-right), U=90° (bottom). Each slot is exactly 120°.
+/** ProportionalOrdered is the current primary layout: P → F → C clockwise from 12.
+ * FixedY is intentionally retained for experimentation and quick rollback.
  */
-internal enum class MacroDonutLayout { FixedY, Proportional }
+internal enum class MacroDonutLayout { ProportionalOrdered, FixedY }
 
 internal data class MacroDonutArc(
     val startAngle: Float,
@@ -94,6 +92,44 @@ internal fun macroDonutArcs(
     }
 }
 
+/** A single motion clock drives the ordered clockwise sweep and label fades.
+ * The last 18% of the clock is reserved for labels, including a tiny last slice.
+ * Angles are measured clockwise from the x-axis (Android Canvas conventions).
+ */
+internal const val MacroDonutArcEnd = .82f
+internal const val MacroDonutLabelFadeWindow = .14f
+
+internal data class MacroDonutFrame(
+    val startAngle: Float,
+    val drawnSweep: Float,
+    val labelAlpha: Float,
+)
+
+private fun smoothMacroFade(t: Float): Float {
+    val x = t.coerceIn(0f, 1f)
+    return x * x * (3f - 2f * x)
+}
+
+/** Pure geometry: the sweep head is shared across P → F → C.
+ * The small seam is deducted only from the END of each colored arc,
+ * so the protein stroke always begins at precisely -90 degrees.
+ */
+internal fun orderedDonutFrame(arc: MacroDonutArc, progress: Float): MacroDonutFrame {
+    require(arc.sweepAngle.isFinite() && arc.sweepAngle >= 0f)
+    require(arc.startAngle.isFinite() && progress.isFinite())
+    if (arc.sweepAngle <= 0f) return MacroDonutFrame(arc.startAngle, 0f, 0f)
+
+    val clock = progress.coerceIn(0f, 1f)
+    val sweepHead = 360f * (clock / MacroDonutArcEnd).coerceIn(0f, 1f)
+    val sectorStart = arc.startAngle + 90f // protein -90° maps to zero travel
+    val seam = minOf(2.5f, arc.sweepAngle * .20f)
+    val coloredSweep = arc.sweepAngle - seam
+    val drawnSweep = (sweepHead - sectorStart).coerceIn(0f, coloredSweep)
+    val completionTime = MacroDonutArcEnd * (sectorStart + arc.sweepAngle) / 360f
+    val alpha = smoothMacroFade((clock - completionTime) / MacroDonutLabelFadeWindow)
+    return MacroDonutFrame(arc.startAngle, drawnSweep, alpha)
+}
+
 private data class MacroDonutSector(
     val fraction: Double,
     val percent: Int,
@@ -103,17 +139,17 @@ private data class MacroDonutSector(
 
 /**
  * Same diameter, centerline radius and 23dp stroke as CalorieHealthDial.
- * In FixedY mode, macro categories occupy three equal, immovable 120-degree
- * positions. Their *labels* represent actual energy shares (4/9/4 kcal per g);
- * the colored arc lengths intentionally do not. Previous proportional layout
- * is preserved for a one-line rollback.
- * Percentages follow the arc at each category's fixed angle.
+ * Primary ProportionalOrdered layout: protein starts at 12 o'clock, followed
+ * clockwise by fat and carbs. Arc lengths represent true 4/9/4 kcal energy
+ * shares. A single clockwise reveal animates their progress in order, then
+ * curved labels fade in when their respective sectors finish.
+ * The experimental FixedY layout is kept intact as an optional alternative.
  */
 @Composable
 internal fun MacroDistributionDonut(
     nutrition: Nutrition,
     diameter: Dp,
-    layout: MacroDonutLayout = MacroDonutLayout.FixedY,
+    layout: MacroDonutLayout = MacroDonutLayout.ProportionalOrdered,
     modifier: Modifier = Modifier,
 ) {
     val palette = nutritionColors()
@@ -177,19 +213,20 @@ internal fun MacroDistributionDonut(
                 val visibleSweep = (fullSweep - gap).coerceAtLeast(0f)
                 if (visibleSweep <= 0f) return@forEachIndexed
 
-                val reveal = clock.value.coerceIn(0f, 1f)
-                // FixedY: grow all THREE sectors together from their own centers,
-                // keeping the Y silhouette steady through the entire 1450ms motion.
-                // Proportional: preserve the original single sequential sweep.
-                val start: Float
-                val drawnSweep: Float
-                if (layout == MacroDonutLayout.FixedY) {
-                    drawnSweep = visibleSweep * reveal
-                    start = arc.centerAngle - drawnSweep / 2f
-                } else {
-                    start = arc.startAngle + gap / 2f
-                    drawnSweep = (360f * reveal - (start + 90f)).coerceIn(0f, visibleSweep)
+                val frame = when (layout) {
+                    MacroDonutLayout.ProportionalOrdered -> orderedDonutFrame(arc, reveal)
+                    MacroDonutLayout.FixedY -> {
+                        // Preserve the earlier three-way center-out animation.
+                        val sweep = visibleSweep * reveal
+                        MacroDonutFrame(
+                            startAngle = arc.centerAngle - sweep / 2f,
+                            drawnSweep = sweep,
+                            labelAlpha = smoothMacroFade((reveal - .72f) / .24f),
+                        )
+                    }
                 }
+                val start = frame.startAngle
+                val drawnSweep = frame.drawnSweep
                 if (drawnSweep > .001f) {
                     drawArc(
                         brush = Brush.linearGradient(
@@ -207,11 +244,10 @@ internal fun MacroDistributionDonut(
                         style = Stroke(stroke, cap = StrokeCap.Butt),
                     )
                 }
-                // Labels fade in only during the final 25% of the Y arc
-                // reveal. The earlier proportional mode retains its label timing.
-                val labelReveal = if (layout == MacroDonutLayout.FixedY)
-                    ((reveal - .72f) / .24f).coerceIn(0f, 1f)
-                else if (drawnSweep >= visibleSweep * .98f) 1f else 0f
+                // Each ordered-sector label fades AFTER its own arc completes.
+                // A separate tail of the shared clock lets even a tiny last
+                // sector's label fade smoothly, rather than appearing in one frame.
+                val labelReveal = frame.labelAlpha
                 if (labelReveal > 0f) {
                     val mid = arc.centerAngle
                     val normalizedMid = ((mid % 360f) + 360f) % 360f
