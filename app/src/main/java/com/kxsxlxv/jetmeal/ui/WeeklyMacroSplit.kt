@@ -4,6 +4,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
@@ -143,12 +144,17 @@ internal fun WeeklyMacroSplit(
     val icons = listOf(JetMealSymbol.Protein, JetMealSymbol.Fat, JetMealSymbol.Carbs)
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val separator = MaterialTheme.colorScheme.surfaceContainerHigh
+    val interactionSource = remember { MutableInteractionSource() }
 
     Column(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 32.dp)
-            .clickable(role = Role.Button) {
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null, // Only the weekly BJU mode toggle: keep global touch feedback unchanged.
+                role = Role.Button,
+            ) {
                 mode = if (mode == WeeklyMacroMode.Composition)
                     WeeklyMacroMode.Targets else WeeklyMacroMode.Composition
             }
