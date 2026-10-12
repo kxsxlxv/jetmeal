@@ -34,58 +34,84 @@ import kotlin.math.roundToInt
 
 internal enum class WeeklyMacroMode { Composition, Targets }
 
-/** Labels must be anchored to their sector centers, not spaced across the full row.
- * When a narrow sector causes overlapping labels, move the smaller sector's
- * label to the next lane rather than moving it away from its sector. */
-internal data class MacroLegendPosition(val left: Int, val lane: Int)
+/** Compact, single-line legend for a proportional macro rail.
+ * Prefer icon + percentage; show just percentage when a sector is too narrow.
+ * Only for exceptionally crowded distributions fall back to an icon, or hide
+ * an impossible label (its exact percentage remains in TalkBack semantics).
+ */
+internal enum class MacroLegendStyle { Full, PercentOnly, IconOnly, Hidden }
+internal data class MacroLegendWidths(val full: Int, val percent: Int, val icon: Int) {
+    init { require(full >= 0 && percent >= 0 && icon >= 0) }
+    fun forStyle(style: MacroLegendStyle): Int = when (style) {
+        MacroLegendStyle.Full -> full
+        MacroLegendStyle.PercentOnly -> percent
+        MacroLegendStyle.IconOnly -> icon
+        MacroLegendStyle.Hidden -> 0
+    }
+}
+internal data class MacroLegendPlacement(val left: Int, val style: MacroLegendStyle)
 
-internal fun macroLegendPositions(
+/** This pure solver uses exactly the same segment fractions as the Canvas.
+ * All labels occupy ONE line; cramped labels degrade instead of adding a row.
+ */
+internal fun macroLegendLayout(
     width: Int,
     fractions: List<Double>,
-    visibleIndices: List<Int>,
-    labelWidths: List<Int>,
+    labelWidths: List<MacroLegendWidths>,
     minGap: Int = 4,
-): List<MacroLegendPosition> {
-    require(width > 0 && fractions.isNotEmpty() && fractions.all { it.isFinite() && it >= 0.0 })
-    require(visibleIndices.size == labelWidths.size && labelWidths.all { it >= 0 })
-    require(visibleIndices.all { it in fractions.indices } && visibleIndices.distinct().size == visibleIndices.size)
-    require(minGap >= 0)
+    sectorInset: Int = 4,
+): List<MacroLegendPlacement> {
+    require(width > 0 && fractions.isNotEmpty() && fractions.size == labelWidths.size)
+    require(fractions.all { it.isFinite() && it >= 0.0 })
+    require(minGap >= 0 && sectorInset >= 0)
 
     val total = fractions.sum()
-    val shares = if (total > 0.0) fractions.map { it / total }
-        else List(fractions.size) { 1.0 / fractions.size }
-    var start = 0.0
-    val centers = shares.map { share ->
-        val center = start + share / 2
-        start += share
-        center
+    if (total <= 0.0) return fractions.map { MacroLegendPlacement(0, MacroLegendStyle.Hidden) }
+    val shares = fractions.map { it / total }
+    var previous = 0.0
+    val centers = shares.map { fraction ->
+        val midpoint = previous + fraction / 2.0
+        previous += fraction
+        midpoint
     }
-    val lefts = visibleIndices.mapIndexed { position, sector ->
-        val labelWidth = labelWidths[position]
-        (centers[sector] * width - labelWidth / 2.0).roundToInt()
+    val styles = shares.indices.map { i ->
+        when {
+            shares[i] <= 0.0 -> MacroLegendStyle.Hidden
+            labelWidths[i].full + sectorInset * 2 <= width * shares[i] ->
+                MacroLegendStyle.Full
+            else -> MacroLegendStyle.PercentOnly
+        }
+    }.toMutableList()
+
+    fun left(i: Int): Int {
+        val labelWidth = labelWidths[i].forStyle(styles[i])
+        return (width * centers[i] - labelWidth / 2.0).roundToInt()
             .coerceIn(0, (width - labelWidth).coerceAtLeast(0))
     }
-
-    val lanes = IntArray(visibleIndices.size)
-    val laneContents = mutableListOf<MutableList<Int>>()
-    // Larger sectors retain the main row, while cramped small ones are staggered.
-    val priority = visibleIndices.indices.sortedWith(
-        compareByDescending<Int> { shares[visibleIndices[it]] }.thenBy { it }
-    )
-    priority.forEach { i ->
-        val availableLane = laneContents.indexOfFirst { others ->
-            others.none { j ->
-                lefts[i] < lefts[j] + labelWidths[j] + minGap &&
-                    lefts[j] < lefts[i] + labelWidths[i] + minGap
-            }
+    fun overlappingPair(): Pair<Int, Int>? {
+        val visible = shares.indices.filter { styles[it] != MacroLegendStyle.Hidden }
+        return visible.zipWithNext().firstOrNull { (first, second) ->
+            left(first) + labelWidths[first].forStyle(styles[first]) + minGap > left(second)
         }
-        val lane = if (availableLane >= 0) availableLane else laneContents.size.also {
-            laneContents.add(mutableListOf())
-        }
-        laneContents[lane].add(i)
-        lanes[i] = lane
     }
-    return visibleIndices.indices.map { MacroLegendPosition(lefts[it], lanes[it]) }
+    fun downgrade(style: MacroLegendStyle) = when (style) {
+        MacroLegendStyle.Full -> MacroLegendStyle.PercentOnly
+        MacroLegendStyle.PercentOnly -> MacroLegendStyle.IconOnly
+        MacroLegendStyle.IconOnly -> MacroLegendStyle.Hidden
+        MacroLegendStyle.Hidden -> MacroLegendStyle.Hidden
+    }
+
+    // At most 3 downgrades per macro. Smaller sectors yield first;
+    // a large sector never steals space from a smaller one's percentage.
+    repeat(fractions.size * 3) {
+        val conflict = overlappingPair() ?: return@repeat
+        val (first, second) = conflict
+        val victim = if (shares[first] < shares[second]) first
+            else if (shares[second] < shares[first]) second
+            else second
+        styles[victim] = downgrade(styles[victim])
+    }
+    return shares.indices.map { i -> MacroLegendPlacement(left(i), styles[i]) }
 }
 
 /** One rail with two meanings. No three extra full-width bars or new cards. */
@@ -109,7 +135,6 @@ internal fun WeeklyMacroSplit(
     val palette = nutritionColors()
     val colors = listOf(palette.protein, palette.fat, palette.carbs)
     val icons = listOf(JetMealSymbol.Protein, JetMealSymbol.Fat, JetMealSymbol.Carbs)
-    val names = listOf("Белки", "Жиры", "Углеводы")
     val track = MaterialTheme.colorScheme.surfaceContainerHighest
     val separator = MaterialTheme.colorScheme.surfaceContainerHigh
 
@@ -168,54 +193,65 @@ internal fun WeeklyMacroSplit(
                 }
                 val slotShares = if (selected == WeeklyMacroMode.Composition)
                     parts else listOf(1.0 / 3, 1.0 / 3, 1.0 / 3)
-                val visible = if (selected == WeeklyMacroMode.Composition && parts.sum() > 0.0)
-                    (0..2).filter { parts[it] > 0.0 } else (0..2).toList()
+                val visible = if (slotShares.sum() > 0.0)
+                    (0..2).filter { slotShares[it] > 0.0 } else emptyList()
                 Layout(
                     modifier = Modifier.fillMaxWidth(),
                     content = {
                         visible.forEach { index ->
                             val value = if (selected == WeeklyMacroMode.Composition)
                                 percents[index] else targetPercents[index]
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                            ) {
-                                Icon(
-                                    painter = painterResource(icons[index].resource),
-                                    contentDescription = names[index],
-                                    tint = colors[index].onContainer,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                Text(
-                                    "$value%",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = colors[index].onContainer,
-                                    maxLines = 1,
-                                )
+                            val labelColor = colors[index].onContainer
+                            // 3 presentations are measured. Only the chosen one is placed.
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Icon(painter = painterResource(icons[index].resource),
+                                    contentDescription = null,
+                                    tint = labelColor, modifier = Modifier.size(15.dp))
+                                Text("$value%", style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold, color = labelColor, maxLines = 1)
                             }
+                            Text("$value%", style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold, color = labelColor, maxLines = 1)
+                            Icon(painter = painterResource(icons[index].resource),
+                                contentDescription = null,
+                                tint = labelColor, modifier = Modifier.size(15.dp))
                         }
                     },
                 ) { measurables, constraints ->
-                    val labels = measurables.map {
+                    val variants = measurables.map {
                         it.measure(constraints.copy(minWidth = 0, minHeight = 0))
+                    }.chunked(3)
+                    val widthsBySector = (0..2).map { index ->
+                        val position = visible.indexOf(index)
+                        if (position < 0) MacroLegendWidths(0, 0, 0)
+                        else MacroLegendWidths(
+                            variants[position][0].width,
+                            variants[position][1].width,
+                            variants[position][2].width,
+                        )
                     }
-                    val positions = macroLegendPositions(
+                    val positions = macroLegendLayout(
                         width = constraints.maxWidth,
                         fractions = slotShares,
-                        visibleIndices = visible,
-                        labelWidths = labels.map { it.width },
+                        labelWidths = widthsBySector,
                         minGap = 4.dp.roundToPx(),
+                        sectorInset = 2.dp.roundToPx(),
                     )
-                    val laneHeight = labels.maxOfOrNull { it.height } ?: 0
-                    val laneGap = 3.dp.roundToPx()
-                    val lastLane = positions.maxOfOrNull { it.lane } ?: 0
-                    layout(constraints.maxWidth, laneHeight * (lastLane + 1) + laneGap * lastLane) {
-                        labels.forEachIndexed { index, label ->
-                            label.place(
-                                positions[index].left,
-                                positions[index].lane * (laneHeight + laneGap),
-                            )
+                    val height = variants.flatMap { it }.maxOfOrNull { it.height } ?: 0
+                    layout(constraints.maxWidth, height) {
+                        visible.forEachIndexed { indexInLayout, sector ->
+                            val position = positions[sector]
+                            val variantIndex = when (position.style) {
+                                MacroLegendStyle.Full -> 0
+                                MacroLegendStyle.PercentOnly -> 1
+                                MacroLegendStyle.IconOnly -> 2
+                                MacroLegendStyle.Hidden -> -1
+                            }
+                            if (variantIndex >= 0) {
+                                val label = variants[indexInLayout][variantIndex]
+                                label.place(position.left, (height - label.height) / 2)
+                            }
                         }
                     }
                 }
