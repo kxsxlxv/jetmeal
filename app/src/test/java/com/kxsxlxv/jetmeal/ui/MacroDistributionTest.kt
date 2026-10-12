@@ -39,4 +39,34 @@ class MacroDistributionTest {
         assertEquals(100, values.sum())
         assertTrue(values.all { it >= 0 })
     }
+
+    @Test fun fixedYCategoryCentersAreStableAndExactlyOneHundredTwentyDegreesApart() {
+        val balanced = macroDonutArcs(listOf(.34, .33, .33), MacroDonutLayout.FixedY)
+        val stronglyUnbalanced = macroDonutArcs(listOf(.95, .01, .04), MacroDonutLayout.FixedY)
+        assertEquals(balanced, stronglyUnbalanced)
+        assertEquals(listOf(-150f, -30f, 90f), balanced.map { it.centerAngle })
+        assertEquals(listOf(-210f, -90f, 30f), balanced.map { it.startAngle })
+        assertTrue(balanced.all { it.sweepAngle == 120f })
+        for (i in 0..1) {
+            assertEquals(balanced[i].startAngle + 120f, balanced[i + 1].startAngle, 0.00001f)
+        }
+    }
+
+    @Test fun oldProportionalSectorsRemainAvailableForQuickRollback() {
+        val arcs = macroDonutArcs(listOf(.5, .25, .25), MacroDonutLayout.Proportional)
+        assertEquals(listOf(180f, 90f, 90f), arcs.map { it.sweepAngle })
+        assertEquals(listOf(-90f, 90f, 180f), arcs.map { it.startAngle })
+        assertEquals(listOf(0f, 135f, 225f), arcs.map { it.centerAngle })
+    }
+
+    @Test fun aSingleMacroKeepsItsAssignedYPosition() {
+        val arcs = macroDonutArcs(listOf(1.0, 0.0, 0.0), MacroDonutLayout.FixedY)
+        assertEquals(-150f, arcs[0].centerAngle, .0001f)
+        assertEquals(-30f, arcs[1].centerAngle, .0001f)
+        assertEquals(90f, arcs[2].centerAngle, .0001f)
+        val percent = macroEnergyPercentages(
+            macroEnergyShares(Nutrition(100.0, 25.0, 0.0, 0.0)))
+        assertEquals(listOf(100, 0, 0), percent)
+    }
+
 }
