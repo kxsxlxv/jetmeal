@@ -53,10 +53,78 @@ class MacroDistributionTest {
     }
 
     @Test fun oldProportionalSectorsRemainAvailableForQuickRollback() {
-        val arcs = macroDonutArcs(listOf(.5, .25, .25), MacroDonutLayout.Proportional)
+        val arcs = macroDonutArcs(listOf(.5, .25, .25), MacroDonutLayout.ProportionalOrdered)
         assertEquals(listOf(180f, 90f, 90f), arcs.map { it.sweepAngle })
         assertEquals(listOf(-90f, 90f, 180f), arcs.map { it.startAngle })
         assertEquals(listOf(0f, 135f, 225f), arcs.map { it.centerAngle })
+    }
+
+
+    @Test fun proteinAlwaysStartsAtTwelveThenFatAndCarbsFollowClockwise() {
+        val input = listOf(.76, .06, .18)
+        val arcs = macroDonutArcs(input, MacroDonutLayout.ProportionalOrdered)
+        assertEquals(-90f, arcs[0].startAngle, .0001f)
+        assertEquals(273.6f, arcs[0].sweepAngle, .001f)
+        assertEquals(21.6f, arcs[1].sweepAngle, .001f)
+        assertEquals(64.8f, arcs[2].sweepAngle, .001f)
+        assertEquals(arcs[0].startAngle + arcs[0].sweepAngle,
+            arcs[1].startAngle, .0001f)
+        assertEquals(arcs[1].startAngle + arcs[1].sweepAngle,
+            arcs[2].startAngle, .0001f)
+        assertEquals(360f, arcs.sumOf { it.sweepAngle.toDouble() }.toFloat(), .001f)
+    }
+
+    @Test fun oneClockFillsEachSectorSequentiallyAndPreservesTwelveOClockStart() {
+        val arcs = macroDonutArcs(listOf(.5, .3, .2), MacroDonutLayout.ProportionalOrdered)
+        val initial = arcs.map { orderedDonutFrame(it, 0f) }
+        assertEquals(-90f, initial[0].startAngle, .0001f)
+        assertTrue(initial.all { it.drawnSweep == 0f && it.labelAlpha == 0f })
+
+        // At 25% of the *draw phase*, the sweep head is at 90 degrees:
+        // only protein is partially drawn, both later slices are untouched.
+        val quarter = arcs.map { orderedDonutFrame(it, MacroDonutArcEnd * .25f) }
+        assertEquals(90f, quarter[0].drawnSweep, .001f)
+        assertEquals(0f, quarter[1].drawnSweep, .001f)
+        assertEquals(0f, quarter[2].drawnSweep, .001f)
+        assertEquals(-90f, quarter[0].startAngle, .0001f)
+
+        // At 65% of the draw phase, protein is complete and fat draws next.
+        val twoThirds = arcs.map { orderedDonutFrame(it, MacroDonutArcEnd * .65f) }
+        assertTrue(twoThirds[0].drawnSweep > 170f)
+        assertTrue(twoThirds[1].drawnSweep > 0f)
+        assertEquals(0f, twoThirds[2].drawnSweep, .001f)
+
+        // Last segment completes at 82% of the clock. Remaining 18% is
+        // sufficient for the carb percentage to appear smoothly.
+        val all = arcs.map { orderedDonutFrame(it, 1f) }
+        assertTrue(all.all { it.drawnSweep > 0f && it.labelAlpha == 1f })
+    }
+
+    @Test fun curvedLabelFadesAfterItsOwnSectorFinishesIncludingSmallLastSlice() {
+        val arcs = macroDonutArcs(listOf(.76, .06, .18), MacroDonutLayout.ProportionalOrdered)
+        val duringProtein = arcs.map { orderedDonutFrame(it, MacroDonutArcEnd * .50f) }
+        assertEquals(0f, duringProtein[0].labelAlpha, .0001f)
+        assertEquals(0f, duringProtein[1].labelAlpha, .0001f)
+        assertEquals(0f, duringProtein[2].labelAlpha, .0001f)
+
+        val afterProtein = arcs.map { orderedDonutFrame(it, MacroDonutArcEnd * .79f) }
+        assertTrue(afterProtein[0].labelAlpha > 0f)
+        assertEquals(0f, afterProtein[1].labelAlpha, .0001f)
+        assertEquals(0f, afterProtein[2].labelAlpha, .0001f)
+
+        val afterLast = orderedDonutFrame(arcs[2], MacroDonutArcEnd + MacroDonutLabelFadeWindow / 2f)
+        assertTrue(afterLast.labelAlpha > 0f && afterLast.labelAlpha < 1f)
+        assertEquals(1f, orderedDonutFrame(arcs[2], 1f).labelAlpha, .0001f)
+    }
+
+    @Test fun tinyAndZeroEnergySegmentsDoNotCreateNaNOrNegativeSweep() {
+        val arcs = macroDonutArcs(listOf(.999, 0.0, .001), MacroDonutLayout.ProportionalOrdered)
+        assertEquals(-90f, arcs[0].startAngle, .0001f)
+        assertEquals(0f, arcs[1].sweepAngle, .0001f)
+        assertEquals(0f, orderedDonutFrame(arcs[1], 1f).drawnSweep, .0001f)
+        val frames = arcs.map { orderedDonutFrame(it, 1f) }
+        assertTrue(frames.all { it.drawnSweep.isFinite() && it.drawnSweep >= 0f })
+        assertTrue(frames.all { it.labelAlpha in 0f..1f })
     }
 
     @Test fun aSingleMacroKeepsItsAssignedYPosition() {
