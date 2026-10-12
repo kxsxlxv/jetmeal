@@ -101,14 +101,20 @@ internal fun macroLegendLayout(
         MacroLegendStyle.Hidden -> MacroLegendStyle.Hidden
     }
 
-    // At most 3 downgrades per macro. Smaller sectors yield first;
-    // a large sector never steals space from a smaller one's percentage.
+    // At most 3 downgrades per macro. Keep percentages by removing icons
+    // from conflicting wide neighbours before compressing a narrow label.
     repeat(fractions.size * 3) {
         val conflict = overlappingPair() ?: return@repeat
         val (first, second) = conflict
-        val victim = if (shares[first] < shares[second]) first
-            else if (shares[second] < shares[first]) second
-            else second
+        // Keep every percentage if a neighbour can shed its icon instead.
+        // A larger Full label yields before a smaller PercentOnly label.
+        val victim = when {
+            styles[first] == MacroLegendStyle.Full && styles[second] != MacroLegendStyle.Full -> first
+            styles[second] == MacroLegendStyle.Full && styles[first] != MacroLegendStyle.Full -> second
+            shares[first] < shares[second] -> first
+            shares[second] < shares[first] -> second
+            else -> second
+        }
         styles[victim] = downgrade(styles[victim])
     }
     return shares.indices.map { i -> MacroLegendPlacement(left(i), styles[i]) }
