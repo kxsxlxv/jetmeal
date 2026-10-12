@@ -582,7 +582,7 @@ private fun MacroHealthCard(
                         maxLines = 1,
                     )
                     Text(
-                        "${number(actual, 1)} / ${number(target, 1)} г",
+                        "${number(actual)} / ${number(target)} г",
                         style = MaterialTheme.typography.labelLargeEmphasized,
                         color = onSurface,
                         maxLines = 1,
@@ -613,8 +613,8 @@ private fun ringFraction(actual: Double, target: Double): Float = when {
 }
 
 private fun nutritionDescription(name: String, actual: Double, target: Double, unit: String): String {
-    val value = if (unit == "ккал") number(actual) else number(actual, 1)
-    val goal = if (unit == "ккал") number(target) else number(target, 1)
+    val value = number(actual)
+    val goal = number(target)
     return buildString {
         append(name).append(": ").append(value).append(" из ").append(goal).append(' ').append(unit)
         when {
@@ -623,7 +623,7 @@ private fun nutritionDescription(name: String, actual: Double, target: Double, u
             actual > target -> {
                 val delta = actual - target
                 append(", превышение ")
-                append(if (unit == "ккал") number(delta) else number(delta, 1))
+                append(number(delta))
                 append(' ').append(unit)
             }
         }
