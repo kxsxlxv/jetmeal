@@ -62,6 +62,38 @@ internal fun macroEnergyPercentages(shares: MacroEnergyShares): List<Int> {
     return roundedDown
 }
 
+/** An experimental arrangement with fixed category positions, independent of shares.
+ * To roll it back, change MacroDistributionDonut's default layout to Proportional.
+ * Y-center angles (Android Canvas coordinates): B=-150° (upper-left),
+ * J=-30° (upper-right), U=90° (bottom). Each slot is exactly 120°.
+ */
+internal enum class MacroDonutLayout { FixedY, Proportional }
+
+internal data class MacroDonutArc(
+    val startAngle: Float,
+    val sweepAngle: Float,
+    val centerAngle: Float,
+)
+
+internal fun macroDonutArcs(
+    fractions: List<Double>,
+    layout: MacroDonutLayout,
+): List<MacroDonutArc> {
+    require(fractions.size == 3 && fractions.all { it.isFinite() && it >= 0.0 })
+    if (layout == MacroDonutLayout.FixedY) {
+        return (0..2).map { i ->
+            val start = -210f + i * 120f
+            MacroDonutArc(startAngle = start, sweepAngle = 120f, centerAngle = start + 60f)
+        }
+    }
+    var cursor = -90f
+    return fractions.map { share ->
+        val sweep = (share * 360.0).toFloat()
+        MacroDonutArc(startAngle = cursor, sweepAngle = sweep, centerAngle = cursor + sweep / 2f)
+            .also { cursor += sweep }
+    }
+}
+
 private data class MacroDonutSector(
     val fraction: Double,
     val percent: Int,
@@ -71,20 +103,25 @@ private data class MacroDonutSector(
 
 /**
  * Same diameter, centerline radius and 23dp stroke as CalorieHealthDial.
- * Percentages follow the arc, centered on each sector's midpoint.
- * For tiny slices, prioritize a legible percentage over the icon; for slices too
- * narrow even for that, TalkBack exposes the complete values on the toggle.
+ * In FixedY mode, macro categories occupy three equal, immovable 120-degree
+ * positions. Their *labels* represent actual energy shares (4/9/4 kcal per g);
+ * the colored arc lengths intentionally do not. Previous proportional layout
+ * is preserved for a one-line rollback.
+ * Percentages follow the arc at each category's fixed angle.
  */
 @Composable
 internal fun MacroDistributionDonut(
     nutrition: Nutrition,
     diameter: Dp,
+    layout: MacroDonutLayout = MacroDonutLayout.FixedY,
     modifier: Modifier = Modifier,
 ) {
     val palette = nutritionColors()
     val shares = macroEnergyShares(nutrition)
     val fractions = shares.fractions
     val percents = macroEnergyPercentages(shares)
+    val arcs = macroDonutArcs(fractions, layout)
+    val hasFood = fractions.any { it > 0.0 }
     val sectors = listOf(
         MacroDonutSector(fractions[0], percents[0], palette.protein, JetMealSymbol.Protein),
         MacroDonutSector(fractions[1], percents[1], palette.fat, JetMealSymbol.Fat),
@@ -111,7 +148,7 @@ internal fun MacroDistributionDonut(
     val textPath = remember { Path() }
     val bounds = remember { RectF() }
     val clock = remember { Animatable(0f) }
-    LaunchedEffect(nutrition) {
+    LaunchedEffect(nutrition, layout) {
         clock.snapTo(0f)
         clock.animateTo(1f, tween(durationMillis = 1450,
             easing = CubicBezierEasing(.35f, 0f, .15f, 1f)))
@@ -129,19 +166,30 @@ internal fun MacroDistributionDonut(
 
             bounds.set(origin.x, origin.y, origin.x + arcSize.width, origin.y + arcSize.height)
             val nativeCanvas = drawContext.canvas.nativeCanvas
-            var cursor = -90f
             sectors.forEachIndexed { index, sector ->
-                val fullSweep = (sector.fraction * 360.0).toFloat()
-                if (fullSweep <= 0f) return@forEachIndexed
-                val gap = minOf(2.5f, fullSweep * .20f)
+                val arc = arcs[index]
+                val fullSweep = arc.sweepAngle
+                // No colored arcs when there is no logged nutrition. Zero-share
+                // categories in FixedY remain muted on the neutral track.
+                if (!hasFood || sector.fraction <= 0.0 || fullSweep <= 0f) return@forEachIndexed
+                val gap = if (layout == MacroDonutLayout.FixedY) 3.5f
+                    else minOf(2.5f, fullSweep * .20f)
                 val visibleSweep = (fullSweep - gap).coerceAtLeast(0f)
-                if (visibleSweep <= 0f) {
-                    cursor += fullSweep
-                    return@forEachIndexed
+                if (visibleSweep <= 0f) return@forEachIndexed
+
+                val reveal = clock.value.coerceIn(0f, 1f)
+                // FixedY: grow all THREE sectors together from their own centers,
+                // keeping the Y silhouette steady through the entire 1450ms motion.
+                // Proportional: preserve the original single sequential sweep.
+                val start: Float
+                val drawnSweep: Float
+                if (layout == MacroDonutLayout.FixedY) {
+                    drawnSweep = visibleSweep * reveal
+                    start = arc.centerAngle - drawnSweep / 2f
+                } else {
+                    start = arc.startAngle + gap / 2f
+                    drawnSweep = (360f * reveal - (start + 90f)).coerceIn(0f, visibleSweep)
                 }
-                val start = cursor + gap / 2f
-                // One continuous 1450ms sweep, revealing protein, fat and carbs in order.
-                val drawnSweep = (360f * reveal - (start + 90f)).coerceIn(0f, visibleSweep)
                 if (drawnSweep > .001f) {
                     drawArc(
                         brush = Brush.linearGradient(
@@ -159,9 +207,13 @@ internal fun MacroDistributionDonut(
                         style = Stroke(stroke, cap = StrokeCap.Butt),
                     )
                 }
-                // Do not display a label until the entire central group has been revealed.
-                if (drawnSweep >= visibleSweep * .98f && sector.percent > 0) {
-                    val mid = cursor + fullSweep / 2f
+                // Labels fade in only during the final 25% of the Y arc
+                // reveal. The earlier proportional mode retains its label timing.
+                val labelReveal = if (layout == MacroDonutLayout.FixedY)
+                    ((reveal - .72f) / .24f).coerceIn(0f, 1f)
+                else if (drawnSweep >= visibleSweep * .98f) 1f else 0f
+                if (labelReveal > 0f) {
+                    val mid = arc.centerAngle
                     val normalizedMid = ((mid % 360f) + 360f) % 360f
                     val direction = if (normalizedMid > 0f && normalizedMid < 180f) -1f else 1f
                     val label = "${sector.percent}%"
@@ -174,6 +226,7 @@ internal fun MacroDistributionDonut(
                     }
                     if (paint.textSize >= with(density) { 7.sp.toPx() } && textWidth <= availablePx) {
                         paint.color = sector.colors.onContainer.toArgb()
+                        paint.alpha = (255 * labelReveal).toInt()
                         val iconSize = 11.dp.toPx()
                         val iconGap = 2.dp.toPx()
                         val withIcon = icons[index] != null && textWidth + iconSize + iconGap < availablePx
@@ -193,6 +246,7 @@ internal fun MacroDistributionDonut(
                             val y = centerPoint.y + radius * sin(radians).toFloat()
                             val drawable = icons[index]!!
                             DrawableCompat.setTint(drawable, sector.colors.onContainer.toArgb())
+                            drawable.alpha = (255 * labelReveal).toInt()
                             drawable.setBounds(
                                 (x - iconSize / 2).toInt(), (y - iconSize / 2).toInt(),
                                 (x + iconSize / 2).toInt(), (y + iconSize / 2).toInt(),
@@ -209,8 +263,8 @@ internal fun MacroDistributionDonut(
                         }
                     }
                     paint.textSize = originalSize
+                    paint.alpha = 255
                 }
-                cursor += fullSweep
             }
         }
     }
