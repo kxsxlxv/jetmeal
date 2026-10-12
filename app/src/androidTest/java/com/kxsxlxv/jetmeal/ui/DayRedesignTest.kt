@@ -126,6 +126,23 @@ class DayRedesignTest {
         compose.onNodeWithText("∞", substring = true).assertDoesNotExist()
     }
 
+    @Test fun macroTargetsRoundToWholeGramsInHeroAndAccessibility() {
+        val food = entry("macro-rounding", "Йогурт", MealPeriod.Morning,
+            "2020-10-06T09:00:00Z", 220.0)
+        compose.setContent {
+            JetmealTheme {
+                Surface {
+                    DayContent(date, listOf(food),
+                        Targets(2000.0, 190.0, 65.0, 163.8), null, {}, {}, {})
+                }
+            }
+        }
+        // The underlying 163.8g target is unchanged; only the Hero label rounds.
+        compose.onNodeWithContentDescription("Углеводы: 20 из 164 г",
+            substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("163,8", substring = true).assertDoesNotExist()
+    }
+
     @Test fun rightHeroTogglesBetweenGoalBarsAndDistributionWithoutChangingLeftRing() {
         val food = entry("macro", "Йогурт", MealPeriod.Morning, "2020-10-06T09:00:00Z", 220.0)
         compose.setContent {
