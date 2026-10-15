@@ -46,4 +46,26 @@ class OfflineFoodSearchTest {
         assertEquals(listOf("Еда 555"),
             rankFoodCandidates(catalogue,"еда 555").map{it.name})
     }
+    @Test fun timeOfDayHabitBoostsRelevantFoodWithoutBreakingTextRelevance() {
+        val breakfast=food("Овсянка",usage=2,id="oats")
+        val dinner=food("Рис",usage=5,id="rice")
+        val morning=java.time.Instant.parse("2026-10-13T06:30:00Z")
+        val entries=(1..2).map { index ->
+            com.kxsxlxv.jetmeal.domain.DiaryEntry(
+                id="entry-$index", name="Овсянка",brand=null,quantity=100.0,unit="g",
+                basisAmount=100.0,basisNutrition=breakfast.nutrition,
+                nutrition=breakfast.nutrition,consumedAt=morning,
+                meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,
+                variantId="oats",foodId="food-oats",confidence=null)
+        }
+        val ranked=rankFoodCandidates(listOf(dinner,breakfast),"",
+            recentEntries=entries,currentHour=9,timezone=java.time.ZoneOffset.UTC)
+        assertEquals(listOf("Овсянка","Рис"),ranked.map {it.name})
+        assertEquals(listOf("Рис"),rankFoodCandidates(listOf(dinner,breakfast),"рис",
+            recentEntries=entries,currentHour=9,timezone=java.time.ZoneOffset.UTC).map {it.name})
+        assertEquals(listOf("Рис","Овсянка"),
+            rankFoodCandidates(listOf(dinner,breakfast),"",recentEntries=entries,
+                currentHour=20,timezone=java.time.ZoneOffset.UTC).map {it.name})
+    }
+
 }
