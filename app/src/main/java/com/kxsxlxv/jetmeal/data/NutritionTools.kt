@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Locale
 import java.util.UUID
 
@@ -194,13 +195,35 @@ class NutritionTools(
 }
 
 
-/** Identical relevance and ordering for online and offline search. Pure and unit-testable. */
-internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, limit: Int = 20): List<FoodCandidate> {
+/** Identical, deterministic relevance and ordering for online and offline search.
+ * Recent diary records add time-of-day relevance; catalogue-wide counts remain
+ * the fallback when only the cached catalogue is available.
+ */
+internal fun rankFoodCandidates(
+    candidates: List<FoodCandidate>,
+    query: String,
+    limit: Int = 20,
+    recentEntries: List<DiaryEntry> = emptyList(),
+    currentHour: Int? = null,
+    timezone: ZoneId = ZoneId.systemDefault(),
+): List<FoodCandidate> {
     require(limit > 0)
+    require(currentHour == null || currentHour in 0..23)
     fun normalize(value: String) = value.trim().lowercase(Locale.ROOT).replace('ё','е')
         .replace(Regex("\\s+")," ")
     val normalized = normalize(query)
-    val words=normalized.split(' ').filter(String::isNotBlank)
+    val words = normalized.split(' ').filter(String::isNotBlank)
+    // Calculate once, not for each catalogue candidate. Ignore entries without
+    // a stable catalogue identity (estimated/custom text entries).
+    val contextualCounts = if (currentHour == null) emptyMap() else recentEntries
+        .asSequence()
+        .filter { it.variantId != null }
+        .filter {
+            val loggedHour = it.consumedAt.atZone(timezone).hour
+            val distance = kotlin.math.abs(loggedHour - currentHour)
+            minOf(distance, 24 - distance) <= 3
+        }
+        .groupingBy { it.variantId!! }.eachCount()
     val ranked = candidates.asSequence().filter { candidate ->
         val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
         words.all(text::contains)
@@ -226,9 +249,13 @@ internal fun rankFoodCandidates(candidates: List<FoodCandidate>, query: String, 
             name.startsWith(normalized) -> 2
             else -> 1
         }
-    }.thenByDescending{it.usageCount}.thenByDescending{it.lastUsed}.thenBy{it.name}).toList()
-    // Limit distinct products rather than variants so all sizes of a selected food
-    // remain available when users open it, including in the offline catalogue.
+    }.thenByDescending {
+        // A relevant time-of-day observation can lift habitual breakfast or
+        // evening foods without burying globally frequent favourites.
+        it.usageCount + 4 * (contextualCounts[it.id] ?: 0)
+    }.thenByDescending{it.lastUsed}.thenBy{it.name}).toList()
+    // Limit distinct products rather than variants so every serving remains
+    // selectable, including when reading the catalogue offline.
     val visibleIds = ranked.asSequence().map { it.foodId }.distinct().take(limit).toSet()
     return ranked.filter { it.foodId in visibleIds }
 }
