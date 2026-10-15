@@ -119,4 +119,53 @@ class FoodMeasureUiTest {
         compose.onNodeWithText("Большое").assertExists()
         compose.onNodeWithText("≈",substring=true).assertExists()
     }
+    @Test fun sugarUnitPickerOffersIndependentTeaspoonsAndTablespoons() {
+        val tsp=FoodMeasure("sugar-tsp","sugar","tsp","ч. л.",4.0,approximate=true)
+        val tbsp=FoodMeasure("sugar-tbsp","sugar","tbsp","ст. л.",12.0,approximate=true)
+        var saved: ChosenMeasure?=null
+        compose.setContent {
+            JetmealTheme { Surface {
+                AmountContent(name="Сахар белый",unit="g",amount=100.0,basisAmount=100.0,
+                    nutrition=Nutrition(400.0,0.0,0.0,100.0),estimated=false,
+                    busy=false,error=null,onSave={},onDelete=null,onSuccess={},onBack=null,
+                    measures=listOf(tbsp,tsp),measurePreferenceKey="sugar-context-ui-test",
+                    onMeasuredSave={ _,selection -> saved=selection })
+            } }
+        }
+        compose.onNodeWithText("Единица измерения").assertExists()
+        compose.onNodeWithText("ч. л.").assertExists()
+        compose.onNodeWithText("ст. л.").performClick()
+        compose.onNodeWithText("Количество (ст. л.)").performTextReplacement("2")
+        compose.onNodeWithText("≈ 24 г").assertExists()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertNotNull(saved)
+            assertEquals("tbsp",saved!!.measure.key)
+            assertEquals(24.0,saved!!.baseAmount,.001)
+        }
+    }
+
+    @Test fun metricGlassBeginsAtOneAndCanBeLoggedInHalves() {
+        val glass=FoodMeasure("glass","milk","cup","стакан 250 мл",254.0,
+            approximate=true,isDefault=true)
+        var saved: ChosenMeasure?=null
+        compose.setContent {
+            JetmealTheme { Surface {
+                AmountContent(name="Молоко цельное",unit="g",amount=100.0,basisAmount=100.0,
+                    nutrition=Nutrition(60.0,3.2,3.2,4.8),estimated=false,
+                    busy=false,error=null,onSave={},onDelete=null,onSuccess={},onBack=null,
+                    measures=listOf(glass),measurePreferenceKey="milk-glass-ui-test",
+                    onMeasuredSave={ _,selection -> saved=selection })
+            } }
+        }
+        compose.onNodeWithText("стакан 250 мл").assertExists()
+        compose.onNodeWithText("≈ 254 г").assertExists()
+        compose.onNodeWithText("Количество (стакан 250 мл)").performTextReplacement("0,5")
+        compose.onNodeWithText("≈ 127 г").assertExists()
+        compose.onNodeWithText("Добавить еду").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(127.0,saved!!.baseAmount,.001)
+        }
+    }
+
 }
