@@ -238,19 +238,24 @@ and does not send logs to third-party services.
 
 Jetmeal now offers units that belong to the selected **food variant**, not a global
 user preference. Catalogues retain their authoritative nutritional basis in
-grams or millilitres. The Android amount editor supports that base unit plus
-available measures: piece (шт.), official portion (порция), and, when relevant,
-teaspoon/tablespoon or **exactly two egg sizes** (Среднее/Большое).
-Switching measures preserves the edible amount; saving stores the original
-measure/number alongside the converted amount and immutable nutrient snapshot.
-The app remembers the preferred unit per variant.
+grams or millilitres. The Android amount editor supports the base unit
+plus contextual measures: piece (шт.), official portion (порция), teaspoon /
+tablespoon, metric glass (стакан 250 мл), or **exactly two egg sizes**
+(Среднее/Большое). Non-egg unit chips scroll on compact screens without
+compressing long labels. Buttons step in whole pieces, half-portions and
+spoons, or quarter-glasses. Switching measures preserves the edible amount;
+saving stores the selected measure/number and immutable nutrition snapshot.
+The app remembers the preferred unit per variant and can prefill the last
+logged amount and unit.
 
-Approximate measures are visibly marked (≈); a middle-sized egg is
-approximately **44 g edible**, a large egg about **50 g edible**. A level
-teaspoon of white sugar is approximately 4 g and a tablespoon about 12 g.
-These conversions are *not* applied to other foods: each measure is attached
-to the particular food variant. Historical diary totals never update if a
-catalogue serving changes.
+Approximate measures are visibly marked (≈); a medium egg is approximately
+**44 g edible**, a large egg about **50 g edible**. A level teaspoon of white
+sugar is about 4 g and a tablespoon about 12 g; brown sugar and powdered
+sugar deliberately have different weights. For fluid milk, a 250-ml glass
+is represented as approximately **254 g**; for drinks already measured in
+millilitres it is exactly 250 ml. These conversions are *not* applied to
+unrelated foods: every unit is attached to an individual variant. Historical
+diary totals never change if a catalogue serving definition changes.
 
 The additive SQL file `supabase/changes/2026-10-09-product-measures.sql`
 creates RLS-scoped `food_measures`, backfills known official restaurant
@@ -261,6 +266,12 @@ the existing typed `jetmeal_log_food`, `jetmeal_update_log` and offline
 `jetmeal_sync_mutation` operations to resolve `measure_id` +
 `measure_quantity` on the server. Measures and user-entered snapshots live
 in the encrypted offline cache and persistent outbox.
+
+The optional, idempotent data seed
+`supabase/seeds/contextual_measures_2026_10_16.sql` adds the fluid-milk
+glass, specified juice/fruit-drink glasses and species-specific sugar
+spoons in both personal and read-only reference catalogues. It does not
+alter nutrition bases or invent universal weight conversions.
 
 ## Shared reference and personal foods (2026-10-11)
 
