@@ -200,19 +200,47 @@ internal fun measureConversionHint(
     return "${if (measure.approximate) "≈" else "="} ${number(converted, 1)} $equivalentUnit"
 }
 
-/** Opening a new food with a measure starts at ONE measure regardless of
- * the nutrient-basis weight (e.g. 100 g banana is not 0.847457... pieces).
- * Editing uses the saved entered count, or falls back to the stored gram basis. */
+/** Prefer the last *actual* unit when logging a known product. Gram input
+ * stays in grams even if the user selected a different unit in the past. */
+internal fun initialFoodMeasure(
+    measures: List<FoodMeasure>,
+    editing: Boolean,
+    enteredMeasureKey: String?,
+    enteredMeasureBaseAmount: Double?,
+    suggestedQuantity: Double?,
+    suggestedMeasureKey: String?,
+    suggestedMeasureBaseAmount: Double?,
+    savedKey: String?,
+): FoodMeasure? {
+    if (editing || suggestedQuantity != null) {
+        val key = if (editing) enteredMeasureKey else suggestedMeasureKey
+        val base = if (editing) enteredMeasureBaseAmount else suggestedMeasureBaseAmount
+        return measures.firstOrNull { it.key == key &&
+            (base == null || kotlin.math.abs(it.baseAmount-base) < .002) }
+    }
+    return measures.firstOrNull { it.key == savedKey }
+        ?: measures.firstOrNull { it.isDefault }
+        ?: measures.firstOrNull()
+}
+
+/** New foods start at one serving, unless there is a real previous portion.
+ * Existing records continue to preserve their originally entered count. */
 internal fun initialMeasureQuantity(
     amount: Double,
     measure: FoodMeasure?,
     editing: Boolean,
     recordedMeasureKey: String? = null,
     recordedMeasureQuantity: Double? = null,
+    suggestedQuantity: Double? = null,
+    suggestedMeasureKey: String? = null,
+    suggestedMeasureQuantity: Double? = null,
 ): Double = when {
-    measure == null -> amount
+    measure == null -> if (!editing) suggestedQuantity ?: amount else amount
     editing && measure.key == recordedMeasureKey && recordedMeasureQuantity != null ->
         recordedMeasureQuantity
+    !editing && suggestedQuantity != null && measure.key == suggestedMeasureKey &&
+        suggestedMeasureQuantity != null -> suggestedMeasureQuantity
+    !editing && suggestedQuantity != null -> suggestedQuantity / measure.baseAmount
     !editing -> 1.0
     else -> amount / measure.baseAmount
 }
@@ -224,20 +252,25 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     measures: List<FoodMeasure> = emptyList(), measurePreferenceKey: String? = null,
     enteredMeasureKey: String? = null, enteredMeasureQuantity: Double? = null,
     enteredMeasureBaseAmount: Double? = null,
-    onMeasuredSave: ((Double,ChosenMeasure)->Unit)? = null) {
+    onMeasuredSave: ((Double,ChosenMeasure)->Unit)? = null,
+    suggestedQuantity: Double? = null,
+    suggestedMeasureKey: String? = null,
+    suggestedMeasureQuantity: Double? = null,
+    suggestedMeasureBaseAmount: Double? = null) {
     val context=LocalContext.current
     val prefs=remember {context.getSharedPreferences("jetmeal_measures",android.content.Context.MODE_PRIVATE)}
     val saved=remember(measurePreferenceKey) {
         measurePreferenceKey?.let {prefs.getString(it,null)}
     }
-    val first=remember(measures,measurePreferenceKey,enteredMeasureKey) {
-        measures.firstOrNull { it.key==enteredMeasureKey &&
-            (enteredMeasureBaseAmount==null || kotlin.math.abs(it.baseAmount-enteredMeasureBaseAmount)<.002) }
-            ?: measures.firstOrNull { it.key==saved }
-            ?: measures.firstOrNull { it.isDefault }
-            ?: measures.firstOrNull()
+    val first=remember(measures,measurePreferenceKey,enteredMeasureKey,enteredMeasureBaseAmount,
+        suggestedQuantity,suggestedMeasureKey,suggestedMeasureBaseAmount,onDelete) {
+        initialFoodMeasure(measures,editing=onDelete!=null,
+            enteredMeasureKey=enteredMeasureKey,enteredMeasureBaseAmount=enteredMeasureBaseAmount,
+            suggestedQuantity=suggestedQuantity,suggestedMeasureKey=suggestedMeasureKey,
+            suggestedMeasureBaseAmount=suggestedMeasureBaseAmount,savedKey=saved)
     }
-    var chosenId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
+    var chosenId by rememberSaveable(name,basisAmount,measurePreferenceKey,
+        suggestedQuantity,suggestedMeasureKey) {
         mutableStateOf(first?.id)
     }
     // Egg measures are sizes of ONE item, not competing quantity units.
@@ -246,19 +279,22 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
         .takeIf { sizes -> sizes.size == 2 &&
             sizes.any { it.key == "egg_medium" } && sizes.any { it.key == "egg_large" } }
         ?.sortedBy { if (it.key == "egg_medium") 0 else 1 }
-    var preferredEggId by rememberSaveable(name,basisAmount,measurePreferenceKey) {
+    var preferredEggId by rememberSaveable(name,basisAmount,measurePreferenceKey,
+        suggestedQuantity,suggestedMeasureKey) {
         mutableStateOf(first?.id)
     }
     val chosen=measures.firstOrNull {it.id==chosenId}
     val initial=initialMeasureQuantity(
         amount, chosen, editing=onDelete != null,
-        recordedMeasureKey=enteredMeasureKey, recordedMeasureQuantity=enteredMeasureQuantity
+        recordedMeasureKey=enteredMeasureKey, recordedMeasureQuantity=enteredMeasureQuantity,
+        suggestedQuantity=suggestedQuantity, suggestedMeasureKey=suggestedMeasureKey,
+        suggestedMeasureQuantity=suggestedMeasureQuantity
     )
-    val preserveRecorded = onDelete != null && (
-        chosen == null ||
-        (chosen.key == enteredMeasureKey && enteredMeasureQuantity != null)
-    )
-    var text by rememberSaveable(name, amount, measurePreferenceKey) {
+    val preserveRecorded = (onDelete == null && suggestedQuantity != null) ||
+        (onDelete != null && (chosen == null ||
+            (chosen.key == enteredMeasureKey && enteredMeasureQuantity != null)))
+    var text by rememberSaveable(name, amount, measurePreferenceKey,
+        suggestedQuantity,suggestedMeasureKey) {
         mutableStateOf(if (preserveRecorded) recordedDecimalInput(initial) else decimalInput(initial))
     }
     var pending by remember { mutableStateOf(false) }
@@ -282,6 +318,11 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     Column(Modifier.fillMaxWidth().widthIn(max = 640.dp).verticalScroll(rememberScrollState())
         .imePadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(name, style = MaterialTheme.typography.headlineSmallEmphasized)
+        if (onDelete == null && suggestedQuantity != null) {
+            Text("Подставлено количество из последней записи",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (eggSizes != null) {
             Row(Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
