@@ -38,10 +38,27 @@ class SupabaseRepository(val client: SupabaseClient) {
             searchCache?.takeIf { it.first == owner } to searchEpoch
         }
         cached?.let { return@withLock it.second }
+        // The existing paginated RLS-protected usage read covers the full
+        // diary. Summarize locally, storing only compact per-variant signals.
         val history = usage().groupBy { it.optional("food_variant_id") }
+        val zone = ZoneId.systemDefault()
         val candidates = catalogue().map { candidate ->
             val rows = history[candidate.id].orEmpty()
-            candidate.copy(usageCount = rows.size, lastUsed = rows.maxOfOrNull { Instant.parse(it.string("consumed_at")) })
+            val latest = rows.maxByOrNull { Instant.parse(it.string("consumed_at")) }
+            val hourCounts = IntArray(24)
+            rows.forEach { row ->
+                val hour = Instant.parse(row.string("consumed_at")).atZone(zone).hour
+                hourCounts[hour]++
+            }
+            candidate.copy(
+                usageCount = rows.size,
+                lastUsed = latest?.let { Instant.parse(it.string("consumed_at")) },
+                hourlyUsage = hourCounts.toList(),
+                lastQuantity = latest?.number("quantity"),
+                lastMeasureKey = latest?.optional("entered_measure_key"),
+                lastMeasureQuantity = latest?.get("entered_measure_quantity")?.jsonPrimitive?.doubleOrNull,
+                lastMeasureBaseAmount = latest?.get("entered_measure_base_amount")?.jsonPrimitive?.doubleOrNull,
+            )
         }
         synchronized(searchCacheLock) {
             if (epoch == searchEpoch && client.auth.currentUserOrNull()?.id == owner) searchCache = owner to candidates
@@ -245,7 +262,8 @@ class SupabaseRepository(val client: SupabaseClient) {
         var offset = 0L
         do {
             val page = read(ConnectionStage.Catalogue) {
-                client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "consumed_at")) {
+                client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "consumed_at", "quantity",
+                    "entered_measure_key", "entered_measure_quantity", "entered_measure_base_amount")) {
                 filter { exact("deleted_at", null) }
                 order("id", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
