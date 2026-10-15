@@ -46,4 +46,54 @@ class OfflineFoodSearchTest {
         assertEquals(listOf("Еда 555"),
             rankFoodCandidates(catalogue,"еда 555").map{it.name})
     }
+    @Test fun timeOfDayHabitBoostsRelevantFoodWithoutBreakingTextRelevance() {
+        val breakfast=food("Овсянка",usage=2,id="oats")
+        val dinner=food("Рис",usage=5,id="rice")
+        val morning=java.time.Instant.parse("2026-10-13T06:30:00Z")
+        val entries=(1..2).map { index ->
+            com.kxsxlxv.jetmeal.domain.DiaryEntry(
+                id="entry-$index", name="Овсянка",brand=null,quantity=100.0,unit="g",
+                basisAmount=100.0,basisNutrition=breakfast.nutrition,
+                nutrition=breakfast.nutrition,consumedAt=morning,
+                meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,
+                variantId="oats",foodId="food-oats",confidence=null)
+        }
+        val ranked=rankFoodCandidates(listOf(dinner,breakfast),"",
+            recentEntries=entries,currentHour=9,timezone=java.time.ZoneOffset.UTC)
+        assertEquals(listOf("Овсянка","Рис"),ranked.map {it.name})
+        assertEquals(listOf("Рис"),rankFoodCandidates(listOf(dinner,breakfast),"рис",
+            recentEntries=entries,currentHour=9,timezone=java.time.ZoneOffset.UTC).map {it.name})
+        assertEquals(listOf("Рис","Овсянка"),
+            rankFoodCandidates(listOf(dinner,breakfast),"",recentEntries=entries,
+                currentHour=20,timezone=java.time.ZoneOffset.UTC).map {it.name})
+    }
+
+    @Test fun fullHistoryHourlyBucketsWorkWithoutSnapshotAndPreserveLexicalMatches() {
+        val morning = MutableList(24) { 0 }.apply { this[8] = 4 }
+        val oats = food("Овсянка",usage=4,id="oats").copy(hourlyUsage=morning)
+        val rice = food("Рис",usage=8,id="rice").copy(hourlyUsage=List(24){0})
+        assertEquals(listOf("Овсянка", "Рис"),
+            rankFoodCandidates(listOf(rice,oats),"",currentHour=9).map { it.name })
+        assertEquals(listOf("Рис", "Овсянка"),
+            rankFoodCandidates(listOf(rice,oats),"",currentHour=18).map { it.name })
+        assertEquals(listOf("Рис"),
+            rankFoodCandidates(listOf(rice,oats),"рис",currentHour=9).map { it.name })
+    }
+
+    @Test fun pendingLogAddsContextEvenWithFreshServerHistogram() {
+        val grams = food("Творог",usage=0,id="curd").copy(hourlyUsage=List(24){0})
+        val prior = food("Рис",usage=3,id="rice").copy(hourlyUsage=List(24){0})
+        val pending = (1..2).map { index ->
+            com.kxsxlxv.jetmeal.domain.DiaryEntry(
+                id="pending-$index", name="Творог",brand=null,quantity=150.0,unit="g",
+                basisAmount=100.0,basisNutrition=grams.nutrition,
+                nutrition=grams.nutrition,consumedAt=java.time.Instant.parse("2026-10-15T06:00:00Z"),
+                meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,variantId="curd",
+                foodId="food-curd",confidence=null)
+        }
+        assertEquals(listOf("Творог","Рис"),
+            rankFoodCandidates(listOf(prior,grams),"",pendingEntries=pending,
+                currentHour=7,timezone=java.time.ZoneOffset.UTC).map {it.name})
+    }
+
 }

@@ -155,10 +155,28 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     suspend fun rememberFoods(foods: List<FoodCandidate>) = vault.change(owner()) { snapshot,_,queue ->
         Triple(snapshot,foods,queue)
     }
-    /** Full personal catalogue is cached during normal authenticated startup. */
-    suspend fun cachedFoods(query: String): List<FoodCandidate> =
+    /** Full-history habits and last portions survive offline in the owner-scoped vault. */
+    suspend fun cachedFoods(query: String, hour: Int = java.time.LocalTime.now().hour): List<FoodCandidate> =
         withContext(Dispatchers.Default) {
-            rankFoodCandidates(vault.readState(owner()).second,query)
+            val (snapshot, foods, queue) = vault.readState(owner())
+            val pendingAdds = queue.filter { it.kind == "log_food" && !it.blocked }
+                .mapNotNull { it.preview }
+            // Prefer the newest unsynced amount for immediate one-tap reuse.
+            // A legacy cache without portion metadata can still use its snapshot.
+            val observations = (snapshot?.entries.orEmpty() + pendingAdds)
+                .filter { it.variantId != null }
+                .groupBy { it.variantId }
+            val updated = foods.map { food ->
+                val latest = observations[food.id]?.maxByOrNull { it.consumedAt }
+                if (latest != null && (food.lastUsed == null || latest.consumedAt > food.lastUsed)) {
+                    food.copy(lastUsed = latest.consumedAt, lastQuantity = latest.quantity,
+                        lastMeasureKey = latest.enteredMeasureKey,
+                        lastMeasureQuantity = latest.enteredMeasureQuantity,
+                        lastMeasureBaseAmount = latest.enteredMeasureBaseAmount)
+                } else food
+            }
+            rankFoodCandidates(updated, query, recentEntries = snapshot?.entries.orEmpty(),
+                pendingEntries = pendingAdds, currentHour = hour, timezone = ZoneId.systemDefault())
         }
     suspend fun pending(): List<PendingDiaryMutation> = vault.readState(owner()).third
 
@@ -422,6 +440,11 @@ private fun encodeFood(v:FoodCandidate)=buildJsonObject {
     put("amount",v.amount);put("unit",v.unit);put("nutrition",encodeNutrition(v.nutrition))
     put("estimated",v.estimated);put("usage",v.usageCount)
     v.lastUsed?.let{put("last",it.toString())}
+    if (v.hourlyUsage.isNotEmpty()) put("hourlyUsage",JsonArray(v.hourlyUsage.map(::JsonPrimitive)))
+    v.lastQuantity?.let{put("lastQuantity",it)}
+    v.lastMeasureKey?.let{put("lastMeasureKey",it)}
+    v.lastMeasureQuantity?.let{put("lastMeasureQuantity",it)}
+    v.lastMeasureBaseAmount?.let{put("lastMeasureBaseAmount",it)}
     put("measures",JsonArray(v.measures.map { measure ->
         buildJsonObject {
             put("id",measure.id);put("variant",measure.variantId)
@@ -446,6 +469,11 @@ private fun decodeFood(v:JsonObject)=FoodCandidate(
             measure["approx"]?.jsonPrimitive?.boolean ?: false,
             measure["default"]?.jsonPrimitive?.boolean ?: false)
     }.orEmpty(),
+    hourlyUsage=v["hourlyUsage"]?.jsonArray?.map { it.jsonPrimitive.int } ?: emptyList(),
+    lastQuantity=v["lastQuantity"]?.jsonPrimitive?.doubleOrNull,
+    lastMeasureKey=v.optional("lastMeasureKey"),
+    lastMeasureQuantity=v["lastMeasureQuantity"]?.jsonPrimitive?.doubleOrNull,
+    lastMeasureBaseAmount=v["lastMeasureBaseAmount"]?.jsonPrimitive?.doubleOrNull,
 )
 private fun encodePending(v:PendingDiaryMutation)=buildJsonObject {
     put("id",v.id);put("kind",v.kind);put("input",v.input)

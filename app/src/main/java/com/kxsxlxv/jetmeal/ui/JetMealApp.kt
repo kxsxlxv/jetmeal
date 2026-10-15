@@ -172,7 +172,11 @@ private sealed interface Editor {
                                 if(entry!=null) viewModel.edit(entry,quantity,selected)
                                 else if(food!=null && current is Editor.Add)
                                     viewModel.log(food,quantity,current.meal,state.day,selected)
-                            })
+                            },
+                            suggestedQuantity=if(entry==null) food?.lastQuantity else null,
+                            suggestedMeasureKey=if(entry==null) food?.lastMeasureKey else null,
+                            suggestedMeasureQuantity=if(entry==null) food?.lastMeasureQuantity else null,
+                            suggestedMeasureBaseAmount=if(entry==null) food?.lastMeasureBaseAmount else null)
                     }
                 }
             }
