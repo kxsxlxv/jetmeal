@@ -128,6 +128,13 @@ data class FoodCandidate(
     val matchConfidence: Double = 0.0,
     val matchReason: String = "Personal catalogue",
     val measures: List<FoodMeasure> = emptyList(),
+    /** History aggregated across all diary dates in the user's local timezone. */
+    val hourlyUsage: List<Int> = emptyList(),
+    /** Latest real diary portion, independent of nutritional reference amount. */
+    val lastQuantity: Double? = null,
+    val lastMeasureKey: String? = null,
+    val lastMeasureQuantity: Double? = null,
+    val lastMeasureBaseAmount: Double? = null,
 ) {
     init {
         require(id.isNotBlank() && foodId.isNotBlank() && name.isNotBlank() && unit.isNotBlank()) {
@@ -135,6 +142,12 @@ data class FoodCandidate(
         }
         require(amount.isFinite() && amount > 0.0) { "Serving amount must be finite and positive." }
         require(usageCount >= 0) { "Usage count must be non-negative." }
+        require(hourlyUsage.isEmpty() || (hourlyUsage.size == 24 && hourlyUsage.all { it >= 0 })) {
+            "Hourly usage must contain 24 non-negative counts."
+        }
+        require(lastQuantity == null || lastQuantity.isFinite() && lastQuantity > 0.0) {
+            "Last quantity must be positive."
+        }
     }
 }
 
