@@ -196,14 +196,15 @@ class NutritionTools(
 
 
 /** Identical, deterministic relevance and ordering for online and offline search.
- * Recent diary records add time-of-day relevance; catalogue-wide counts remain
- * the fallback when only the cached catalogue is available.
+ * Full-history hourly counts add time-of-day relevance; cached diary entries
+ * remain the fallback for an older offline catalogue.
  */
 internal fun rankFoodCandidates(
     candidates: List<FoodCandidate>,
     query: String,
     limit: Int = 20,
     recentEntries: List<DiaryEntry> = emptyList(),
+    pendingEntries: List<DiaryEntry> = emptyList(),
     currentHour: Int? = null,
     timezone: ZoneId = ZoneId.systemDefault(),
 ): List<FoodCandidate> {
@@ -215,15 +216,19 @@ internal fun rankFoodCandidates(
     val words = normalized.split(' ').filter(String::isNotBlank)
     // Calculate once, not for each catalogue candidate. Ignore entries without
     // a stable catalogue identity (estimated/custom text entries).
-    val contextualCounts = if (currentHour == null) emptyMap() else recentEntries
-        .asSequence()
-        .filter { it.variantId != null }
-        .filter {
-            val loggedHour = it.consumedAt.atZone(timezone).hour
-            val distance = kotlin.math.abs(loggedHour - currentHour)
-            minOf(distance, 24 - distance) <= 3
-        }
-        .groupingBy { it.variantId!! }.eachCount()
+    fun contextualCounts(entries: List<DiaryEntry>): Map<String, Int> =
+        if (currentHour == null) emptyMap() else entries.asSequence()
+            .filter { it.variantId != null }
+            .filter {
+                val loggedHour = it.consumedAt.atZone(timezone).hour
+                val distance = kotlin.math.abs(loggedHour - currentHour)
+                minOf(distance, 24 - distance) <= 3
+            }
+            .groupingBy { it.variantId!! }.eachCount()
+    // A legacy encrypted cache may not have the 24-hour histogram yet.
+    val fallbackCounts = contextualCounts(recentEntries)
+    // Outbox additions are not in the server aggregates until synced.
+    val pendingCounts = contextualCounts(pendingEntries)
     val ranked = candidates.asSequence().filter { candidate ->
         val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
         words.all(text::contains)
@@ -252,7 +257,10 @@ internal fun rankFoodCandidates(
     }.thenByDescending {
         // A relevant time-of-day observation can lift habitual breakfast or
         // evening foods without burying globally frequent favourites.
-        it.usageCount + 4 * (contextualCounts[it.id] ?: 0)
+        val hourCount = if (currentHour == null) 0 else if (it.hourlyUsage.size == 24) {
+            (-3..3).sumOf { offset -> it.hourlyUsage[(currentHour + offset + 24) % 24] }
+        } else fallbackCounts[it.id] ?: 0
+        it.usageCount + 4 * (hourCount + (pendingCounts[it.id] ?: 0))
     }.thenByDescending{it.lastUsed}.thenBy{it.name}).toList()
     // Limit distinct products rather than variants so every serving remains
     // selectable, including when reading the catalogue offline.
