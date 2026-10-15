@@ -130,6 +130,8 @@ data class FoodCandidate(
     val measures: List<FoodMeasure> = emptyList(),
     /** History aggregated across all diary dates in the user's local timezone. */
     val hourlyUsage: List<Int> = emptyList(),
+    /** Observed diary meal categories, ordered like MealPeriod.entries. */
+    val mealUsage: List<Int> = emptyList(),
     /** Latest real diary portion, independent of nutritional reference amount. */
     val lastQuantity: Double? = null,
     val lastMeasureKey: String? = null,
@@ -144,6 +146,9 @@ data class FoodCandidate(
         require(usageCount >= 0) { "Usage count must be non-negative." }
         require(hourlyUsage.isEmpty() || (hourlyUsage.size == 24 && hourlyUsage.all { it >= 0 })) {
             "Hourly usage must contain 24 non-negative counts."
+        }
+        require(mealUsage.isEmpty() || (mealUsage.size == MealPeriod.entries.size && mealUsage.all { it >= 0 })) {
+            "Meal usage must match the supported meal types."
         }
         require(lastQuantity == null || lastQuantity.isFinite() && lastQuantity > 0.0) {
             "Last quantity must be positive."
