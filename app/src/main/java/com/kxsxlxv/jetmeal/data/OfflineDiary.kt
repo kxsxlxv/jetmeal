@@ -156,9 +156,13 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         Triple(snapshot,foods,queue)
     }
     /** Full personal catalogue is cached during normal authenticated startup. */
-    suspend fun cachedFoods(query: String): List<FoodCandidate> =
+    suspend fun cachedFoods(query: String, hour: Int = java.time.LocalTime.now().hour): List<FoodCandidate> =
         withContext(Dispatchers.Default) {
-            rankFoodCandidates(vault.readState(owner()).second,query)
+            val (snapshot, foods, queue) = vault.readState(owner())
+            val pendingAdds = queue.filter { it.kind == "log_food" && !it.blocked }
+                .mapNotNull { it.preview }
+            rankFoodCandidates(foods, query, recentEntries = snapshot?.entries.orEmpty() + pendingAdds,
+                currentHour = hour, timezone = ZoneId.systemDefault())
         }
     suspend fun pending(): List<PendingDiaryMutation> = vault.readState(owner()).third
 
