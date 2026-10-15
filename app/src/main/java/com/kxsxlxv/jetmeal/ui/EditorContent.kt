@@ -176,6 +176,25 @@ internal fun measureSymbol(measure: FoodMeasure): JetMealSymbol = when(measure.k
     else -> JetMealSymbol.Serving
 }
 
+/** Show the most useful food-specific unit first, without depending on
+ * UUID ordering returned by Supabase. Grams/ml are always available in UI. */
+internal fun orderedFoodMeasures(measures: List<FoodMeasure>): List<FoodMeasure> =
+    measures.sortedWith(compareByDescending<FoodMeasure> { it.isDefault }
+        .thenBy { when(it.key) {
+            "piece" -> 0; "serving" -> 1; "cup" -> 2
+            "tsp" -> 3; "tbsp" -> 4; "slice" -> 5; "package" -> 6
+            else -> 7
+        }}.thenBy { it.label })
+
+/** Discrete items use whole-item taps; cups, recipes and spoons support
+ * common fractions without requiring the keyboard. */
+internal fun foodMeasureIncrement(key: String?): Pair<Double, Double> = when(key) {
+    "piece","egg_medium","egg_large","package","slice" -> 1.0 to 1.0
+    "serving","tsp","tbsp" -> .5 to .5
+    "cup" -> .25 to .25
+    else -> 10.0 to .1
+}
+
 /** Show the base-unit equivalent while entering a portion, and the portion equivalent
  * while entering grams/ml. This hint is informational and never changes saved amounts. */
 internal fun measureConversionHint(
@@ -259,6 +278,7 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     suggestedMeasureBaseAmount: Double? = null) {
     val context=LocalContext.current
     val prefs=remember {context.getSharedPreferences("jetmeal_measures",android.content.Context.MODE_PRIVATE)}
+    val orderedMeasures=remember(measures) { orderedFoodMeasures(measures) }
     val saved=remember(measurePreferenceKey) {
         measurePreferenceKey?.let {prefs.getString(it,null)}
     }
@@ -373,59 +393,37 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else if(measures.isNotEmpty()) {
-            val count = measures.size + 1
-            Row(Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
-                verticalAlignment = Alignment.CenterVertically) {
-                ToggleButton(checked=chosen==null,
-                    onCheckedChange={
-                        text=decimalInput(quantity ?: amount)
-                        chosenId=null
-                    },
-                    shapes=ButtonGroupDefaults.connectedLeadingButtonShapes(),
-                    enabled=!busy,
-                    modifier=Modifier.weight(1f).heightIn(min=48.dp)
-                        .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" }) {
-                    SymbolIcon(JetMealSymbol.Weight,null,Modifier.size(20.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(unitLabel(unit))
-                }
-                measures.forEachIndexed { index, measure ->
-                    val symbol = measureSymbol(measure)
-                    ToggleButton(checked=chosen?.id==measure.id,
-                        onCheckedChange={
+            Text("Единица измерения",style=MaterialTheme.typography.titleSmall)
+            // A drink can offer ml, glasses and servings; chips scroll instead
+            // of shrinking into clipped, unreadable connected buttons.
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement=Arrangement.spacedBy(8.dp),
+                verticalAlignment=Alignment.CenterVertically) {
+                FilterChip(selected=chosen==null,
+                    onClick={ text=decimalInput(quantity ?: amount); chosenId=null },
+                    label={ Text(unitLabel(unit)) },enabled=!busy,
+                    modifier=Modifier.heightIn(min=48.dp)
+                        .semantics { role=Role.RadioButton; contentDescription="В ${unitLabel(unit)}" })
+                orderedMeasures.forEach { measure ->
+                    FilterChip(selected=chosen?.id==measure.id,
+                        onClick={
                             val current=quantity ?: amount
                             chosenId=measure.id
                             text=decimalInput(current/measure.baseAmount)
                         },
-                        shapes=if(index==count-2) ButtonGroupDefaults.connectedTrailingButtonShapes()
-                            else ButtonGroupDefaults.connectedMiddleButtonShapes(),
-                        enabled=!busy,
-                        modifier=Modifier.weight(1f).heightIn(min=48.dp)
-                            .semantics { role=Role.RadioButton; contentDescription=measure.label }) {
-                        SymbolIcon(symbol,null,Modifier.size(20.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(measure.label,maxLines=1)
-                    }
+                        label={ Text(measure.label) }, enabled=!busy,
+                        modifier=Modifier.heightIn(min=48.dp)
+                            .semantics { role=Role.RadioButton; contentDescription=measure.label })
                 }
             }
             if (chosen?.approximate==true)
-                Text("≈ ${number(chosen.baseAmount, 1)} ${unitLabel(unit)} за ${chosen.label}; можно уточнить в граммах",
+                Text("≈ ${number(chosen.baseAmount, 1)} ${unitLabel(unit)} за ${chosen.label}; можно уточнить в ${unitLabel(unit)}",
                     style=MaterialTheme.typography.labelSmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (estimated) Text("Примерная пищевая ценность", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.tertiary)
-        val step=when(chosen?.key) {
-            "piece","serving","egg_medium","egg_large","package","slice" -> 1.0
-            "tsp","tbsp" -> 0.5
-            else -> 10.0
-        }
-        val minimum=when(chosen?.key) {
-            "piece","serving","egg_medium","egg_large","package","slice" -> 1.0
-            "tsp","tbsp" -> 0.5
-            else -> 0.1
-        }
+        val (step,minimum)=foodMeasureIncrement(chosen?.key)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp),
             verticalAlignment=Alignment.CenterVertically) {
             OutlinedIconButton(

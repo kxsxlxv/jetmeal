@@ -125,4 +125,34 @@ class FoodSearchPresentationTest {
         assertEquals(1.0,initialMeasureQuantity(100.0,piece,editing=false),0.0)
     }
 
+    @Test fun contextualUnitsOrderDefaultFirstAndDistinguishSpoonSizes() {
+        val tablespoon=FoodMeasure("tb","sugar","tbsp","ст. л.",12.0,approximate=true)
+        val teaspoon=FoodMeasure("ts","sugar","tsp","ч. л.",4.0,approximate=true)
+        val ordered=orderedFoodMeasures(listOf(tablespoon,teaspoon))
+        assertEquals(listOf("tsp","tbsp"),ordered.map { it.key })
+        val cup=FoodMeasure("cup","milk","cup","стакан 250 мл",254.0,
+            approximate=true,isDefault=true)
+        assertEquals(cup,orderedFoodMeasures(listOf(tablespoon,cup,teaspoon)).first())
+        assertEquals(cup,initialFoodMeasure(listOf(tablespoon,cup),
+            editing=false,enteredMeasureKey=null,enteredMeasureBaseAmount=null,
+            suggestedQuantity=null,suggestedMeasureKey=null,suggestedMeasureBaseAmount=null,
+            savedKey=null))
+    }
+
+    @Test fun cupsCanBeQuarteredByButtonsAndSugarHalfSpoons() {
+        assertEquals(Pair(.25,.25),foodMeasureIncrement("cup"))
+        assertEquals(Pair(.5,.5),foodMeasureIncrement("tsp"))
+        assertEquals(Pair(.5,.5),foodMeasureIncrement("tbsp"))
+        assertEquals(Pair(.5,.5),foodMeasureIncrement("serving"))
+        assertEquals(Pair(1.0,1.0),foodMeasureIncrement("piece"))
+        assertEquals(Pair(10.0,.1),foodMeasureIncrement(null))
+        val cup=FoodMeasure("cup","milk","cup","стакан 250 мл",254.0,approximate=true)
+        assertEquals(127.0,cup.toBase(.5),.001)
+        assertEquals(63.5,cup.toBase(.25),.001)
+        assertEquals("≈ 127 г",measureConversionHint(.5,cup,cup,"g"))
+        val juice=FoodMeasure("juice-cup","juice","cup","стакан 250 мл",250.0)
+        assertEquals(500.0,juice.toBase(2.0),.001)
+        assertEquals("= 500 мл",measureConversionHint(2.0,juice,juice,"ml"))
+    }
+
 }
