@@ -96,4 +96,35 @@ class OfflineFoodSearchTest {
                 currentHour=7,timezone=java.time.ZoneOffset.UTC).map {it.name})
     }
 
+    @Test fun selectedMealBeatsBothGlobalFrequencyAndWallClock() {
+        val usualBreakfast = food("Творог 0,5%", usage=3, id="curd")
+            .copy(mealUsage=listOf(3,0,0,0),hourlyUsage=List(24) { 0 })
+        val oftenEatenLater = food("Чизбургер", usage=80, id="burger")
+            .copy(mealUsage=listOf(0,50,30,0),hourlyUsage=List(24) { 1 })
+        val results = rankFoodCandidates(listOf(oftenEatenLater,usualBreakfast),"",
+            meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,currentHour=23)
+        assertEquals(listOf("Творог 0,5%","Чизбургер"),results.map { it.name })
+        assertEquals(listOf("Чизбургер"),
+            rankFoodCandidates(listOf(oftenEatenLater,usualBreakfast),"чиз",
+                meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning).map { it.name })
+        assertEquals("Чизбургер",
+            rankFoodCandidates(listOf(oftenEatenLater,usualBreakfast),"",
+                meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Day).first().name)
+    }
+
+    @Test fun legacyCacheDerivesMealContextFromActualEntries() {
+        val breakfast = food("Творог",id="curd")
+        val dinner = food("Бургер",usage=10,id="burger")
+        val entry = com.kxsxlxv.jetmeal.domain.DiaryEntry(
+            id="saved-curd",name="Творог",brand=null,quantity=300.0,unit="g",
+            basisAmount=100.0,basisNutrition=breakfast.nutrition,nutrition=breakfast.nutrition,
+            consumedAt=java.time.Instant.parse("2026-10-11T23:40:00Z"),
+            meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,
+            variantId="curd",foodId=breakfast.foodId,confidence=null)
+        val results=rankFoodCandidates(listOf(dinner,breakfast),"",
+            recentEntries=listOf(entry), meal=com.kxsxlxv.jetmeal.domain.MealPeriod.Morning,
+            currentHour=19,timezone=java.time.ZoneOffset.UTC)
+        assertEquals("Творог",results.first().name)
+    }
+
 }

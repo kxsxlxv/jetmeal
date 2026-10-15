@@ -68,6 +68,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private var refreshInFlight = false
     private var refreshGeneration = 0
     private var searchGeneration = 0
+    private var searchMeal: MealPeriod? = null
+    private var latestSearchQuery = ""
     private var sessionRefreshError: String? = null
     private var authenticatedOwnerId: String? = null
 
@@ -191,6 +193,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 catalogueOwner = ownerId
                 mutable.update { it.copy(catalogueCount = foods.map { it.foodId }.distinct().size,
                     catalogueMeasures=foods.associate { it.id to it.measures },catalogueError=null) }
+                // Previously an already-open food search kept showing the old
+                // recommendation list even after catalogue refresh succeeded.
+                if (searchMeal != null) search(latestSearchQuery)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 repo.diagnostics?.failure(ConnectionOperation.Catalogue, error)
@@ -230,6 +235,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         refreshJob?.cancel(); searchJob?.cancel()
         cachedNavigationJob?.cancel()
         recentSnapshots.clear(); snapshotOwner = null
+        searchMeal = null
+        latestSearchQuery = ""
         refreshInFlight = false
         mutable.update { it.copy(searching = false) }
         if ((offline?.status()?.remaining ?: 0) > 0) {
@@ -586,7 +593,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         saved["month"] = mutable.value.month.toString()
         saved["scale"] = mutable.value.scale.name
     }
+    /** The requested diary meal, not the device clock, defines the
+     * recommendation context (including backfilled meals). */
+    fun beginFoodSearch(meal: MealPeriod) {
+        searchMeal = meal
+        search("")
+    }
+
+    fun endFoodSearch() { searchMeal = null }
+
     fun search(query: String) {
+        latestSearchQuery = query
         val generation = ++searchGeneration
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
@@ -595,7 +612,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 if (query.isNotBlank()) delay(180)
                 val diary=offline
                 val results=if (diary != null && diary.catalogueCount() > 0) {
-                    diary.cachedFoods(query)
+                    diary.cachedFoods(query, meal = searchMeal)
                 } else if(diary != null && !diary.onlineNow()) {
                     mutable.update { it.copy(catalogueCount=0) }
                     emptyList()
@@ -607,8 +624,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     if(diary!=null) mutable.update { it.copy(catalogueCount=foods.map { it.foodId }.distinct().size) }
                     // Both online and offline paths use the same cached-history
                     // ranking and latest-portion overlay for consistency.
-                    diary?.cachedFoods(query) ?: rankFoodCandidates(foods,query,
-                        currentHour = java.time.LocalTime.now().hour)
+                    diary?.cachedFoods(query, meal = searchMeal) ?: rankFoodCandidates(foods,query,
+                        meal = searchMeal, currentHour = java.time.LocalTime.now().hour)
                 }
                 ensureActive()
                 if (generation != searchGeneration) return@launch

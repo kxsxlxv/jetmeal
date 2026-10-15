@@ -156,7 +156,8 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         Triple(snapshot,foods,queue)
     }
     /** Full-history habits and last portions survive offline in the owner-scoped vault. */
-    suspend fun cachedFoods(query: String, hour: Int = java.time.LocalTime.now().hour): List<FoodCandidate> =
+    suspend fun cachedFoods(query: String, hour: Int = java.time.LocalTime.now().hour,
+                            meal: MealPeriod? = null): List<FoodCandidate> =
         withContext(Dispatchers.Default) {
             val (snapshot, foods, queue) = vault.readState(owner())
             val pendingAdds = queue.filter { it.kind == "log_food" && !it.blocked }
@@ -176,7 +177,8 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
                 } else food
             }
             rankFoodCandidates(updated, query, recentEntries = snapshot?.entries.orEmpty(),
-                pendingEntries = pendingAdds, currentHour = hour, timezone = ZoneId.systemDefault())
+                pendingEntries = pendingAdds, meal = meal, currentHour = hour,
+                timezone = ZoneId.systemDefault())
         }
     suspend fun pending(): List<PendingDiaryMutation> = vault.readState(owner()).third
 
@@ -441,6 +443,7 @@ private fun encodeFood(v:FoodCandidate)=buildJsonObject {
     put("estimated",v.estimated);put("usage",v.usageCount)
     v.lastUsed?.let{put("last",it.toString())}
     if (v.hourlyUsage.isNotEmpty()) put("hourlyUsage",JsonArray(v.hourlyUsage.map(::JsonPrimitive)))
+    if (v.mealUsage.isNotEmpty()) put("mealUsage",JsonArray(v.mealUsage.map(::JsonPrimitive)))
     v.lastQuantity?.let{put("lastQuantity",it)}
     v.lastMeasureKey?.let{put("lastMeasureKey",it)}
     v.lastMeasureQuantity?.let{put("lastMeasureQuantity",it)}
@@ -470,6 +473,7 @@ private fun decodeFood(v:JsonObject)=FoodCandidate(
             measure["default"]?.jsonPrimitive?.boolean ?: false)
     }.orEmpty(),
     hourlyUsage=v["hourlyUsage"]?.jsonArray?.map { it.jsonPrimitive.int } ?: emptyList(),
+    mealUsage=v["mealUsage"]?.jsonArray?.map { it.jsonPrimitive.int } ?: emptyList(),
     lastQuantity=v["lastQuantity"]?.jsonPrimitive?.doubleOrNull,
     lastMeasureKey=v.optional("lastMeasureKey"),
     lastMeasureQuantity=v["lastMeasureQuantity"]?.jsonPrimitive?.doubleOrNull,
