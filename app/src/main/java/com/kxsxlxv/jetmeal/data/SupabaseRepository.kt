@@ -40,20 +40,32 @@ class SupabaseRepository(val client: SupabaseClient) {
         cached?.let { return@withLock it.second }
         // The existing paginated RLS-protected usage read covers the full
         // diary. Summarize locally, storing only compact per-variant signals.
-        val history = usage().groupBy { it.optional("food_variant_id") }
+        val usage = usage()
+        val byVariant = usage.groupBy { it.optional("food_variant_id") }
+        val byFood = usage.groupBy { it.optional("food_id") }
         val zone = ZoneId.systemDefault()
         val candidates = catalogue().map { candidate ->
-            val rows = history[candidate.id].orEmpty()
-            val latest = rows.maxByOrNull { Instant.parse(it.string("consumed_at")) }
+            // A product can have multiple nutrition/serving variants. Attribute
+            // the habit to the product while reusing quantities only when the
+            // selected variant has the same base unit as the diary entry.
+            val rows = byFood[candidate.foodId].orEmpty().ifEmpty {
+                byVariant[candidate.id].orEmpty()
+            }
+            val latest = rows.filter { it.optional("quantity_unit") == candidate.unit }
+                .maxByOrNull { Instant.parse(it.string("consumed_at")) }
             val hourCounts = IntArray(24)
+            val mealCounts = IntArray(MealPeriod.entries.size)
             rows.forEach { row ->
                 val hour = Instant.parse(row.string("consumed_at")).atZone(zone).hour
                 hourCounts[hour]++
+                val meal = MealPeriod.entries.indexOfFirst { it.wireValue == row.optional("meal_type") }
+                if (meal >= 0) mealCounts[meal]++
             }
             candidate.copy(
                 usageCount = rows.size,
                 lastUsed = latest?.let { Instant.parse(it.string("consumed_at")) },
                 hourlyUsage = hourCounts.toList(),
+                mealUsage = mealCounts.toList(),
                 lastQuantity = latest?.number("quantity"),
                 lastMeasureKey = latest?.optional("entered_measure_key"),
                 lastMeasureQuantity = latest?.get("entered_measure_quantity")?.jsonPrimitive?.doubleOrNull,
@@ -262,8 +274,9 @@ class SupabaseRepository(val client: SupabaseClient) {
         var offset = 0L
         do {
             val page = read(ConnectionStage.Catalogue) {
-                client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "consumed_at", "quantity",
-                    "entered_measure_key", "entered_measure_quantity", "entered_measure_base_amount")) {
+                client.from("diary_entries").select(columns = Columns.list("id", "food_variant_id", "food_id", "consumed_at", "meal_type",
+                    "quantity", "quantity_unit", "entered_measure_key", "entered_measure_quantity",
+                    "entered_measure_base_amount")) {
                 filter { exact("deleted_at", null) }
                 order("id", Order.ASCENDING)
                 range(offset, offset + PAGE_SIZE - 1)
