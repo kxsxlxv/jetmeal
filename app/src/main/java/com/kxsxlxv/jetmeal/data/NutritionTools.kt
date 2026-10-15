@@ -205,6 +205,7 @@ internal fun rankFoodCandidates(
     limit: Int = 20,
     recentEntries: List<DiaryEntry> = emptyList(),
     pendingEntries: List<DiaryEntry> = emptyList(),
+    meal: MealPeriod? = null,
     currentHour: Int? = null,
     timezone: ZoneId = ZoneId.systemDefault(),
 ): List<FoodCandidate> {
@@ -229,6 +230,18 @@ internal fun rankFoodCandidates(
     val fallbackCounts = contextualCounts(recentEntries)
     // Outbox additions are not in the server aggregates until synced.
     val pendingCounts = contextualCounts(pendingEntries)
+    fun mealCounts(entries: List<DiaryEntry>): Map<String, Int> =
+        if (meal == null) emptyMap() else entries.asSequence()
+            .filter { it.variantId != null && it.meal == meal }
+            .groupingBy { it.variantId!! }.eachCount()
+    val snapshotMealCounts = mealCounts(recentEntries)
+    val pendingMealCounts = mealCounts(pendingEntries)
+    fun candidateMealCount(candidate: FoodCandidate): Int =
+        if (meal == null) 0 else
+            (if (candidate.mealUsage.size == MealPeriod.entries.size)
+                candidate.mealUsage[meal.ordinal]
+            else snapshotMealCounts[candidate.id] ?: 0) +
+                (pendingMealCounts[candidate.id] ?: 0)
     val ranked = candidates.asSequence().filter { candidate ->
         val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
         words.all(text::contains)
@@ -254,9 +267,13 @@ internal fun rankFoodCandidates(
             name.startsWith(normalized) -> 2
             else -> 1
         }
-    }.thenByDescending {
-        // A relevant time-of-day observation can lift habitual breakfast or
-        // evening foods without burying globally frequent favourites.
+    }
+    // When searching within a selected meal, actual entries in that meal must
+    // outrank foods never eaten there. This is separate from wall-clock time:
+    // the user can log breakfast at night or backfill an earlier date.
+    .thenByDescending { candidateMealCount(it) > 0 }
+    .thenByDescending { candidateMealCount(it) }
+    .thenByDescending {
         val hourCount = if (currentHour == null) 0 else if (it.hourlyUsage.size == 24) {
             (-3..3).sumOf { offset -> it.hourlyUsage[(currentHour + offset + 24) % 24] }
         } else fallbackCounts[it.id] ?: 0
