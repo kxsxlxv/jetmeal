@@ -605,7 +605,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     }
                     diary?.rememberFoods(foods)
                     if(diary!=null) mutable.update { it.copy(catalogueCount=foods.map { it.foodId }.distinct().size) }
-                    rankFoodCandidates(foods,query)
+                    rankFoodCandidates(foods,query, recentEntries = diary?.cachedSnapshot()?.entries.orEmpty(),
+                        currentHour = java.time.LocalTime.now().hour)
                 }
                 ensureActive()
                 if (generation != searchGeneration) return@launch
