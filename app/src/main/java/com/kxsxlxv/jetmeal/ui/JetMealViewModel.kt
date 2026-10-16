@@ -237,7 +237,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         viewModelScope.launch {
             val snap=runCatching { offline?.cachedSnapshot() }.getOrNull()
             offlineHistoryOwner=null
-            if(snap!=null) prepareOfflineHistory(snap)
+            if(snap!=null) prepareOfflineHistory(snap,force=true)
             else refresh()
         }
     }
@@ -245,7 +245,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     /** Prefetch six calendar months for offline Day/Week/Month/Quarter
      * navigation without delaying the visible timeline or food search.
      * Snapshots are merged instead of replacing one another. */
-    private fun prepareOfflineHistory(seed: OfflineSnapshot) {
+    private fun prepareOfflineHistory(seed: OfflineSnapshot,force:Boolean=false) {
         val repo=repository ?: return
         val diary=offline ?: return
         val owner=repo.client.auth.currentUserOrNull()?.id ?: return
@@ -261,7 +261,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val end=quarterStart.plusMonths(3).plusDays(7)
                 // Avoid a redundant fetch if another period already filled it.
                 val cached=diary.cachedSnapshotFor(start,end)
-                if (cached == null) {
+                if (force || cached == null) {
                     // Do not mark preparation complete if connectivity vanished
                     // before the download started. Connectivity recovery can retry.
                     if(!diary.onlineNow()) return@launch
@@ -271,8 +271,10 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     if (repo.client.auth.currentUserOrNull()?.id != owner) return@launch
                     // Persist the exact server coverage; leave previously visited
                     // date intervals and all unsent mutations untouched.
-                    diary.rememberHistorical(OfflineSnapshot(start,end,entries,
-                        seed.targets,seed.history,zero))
+                    val downloaded=OfflineSnapshot(start,end,entries,
+                        seed.targets,seed.history,zero)
+                    if(force) diary.remember(downloaded)
+                    else diary.rememberHistorical(downloaded)
                 }
                 offlineHistoryOwner=owner
             } catch (cancelled: CancellationException) { throw cancelled }
