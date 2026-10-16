@@ -1,3 +1,36 @@
+## Vivo X300 debugging, 2026-10-16
+
+Real-world report on vivo X300:
+- 30,080 ms PCM (962,560 bytes) was rejected by whisper.cpp JNI because
+  native code caps PCM at 30 seconds (960,000 bytes). The audio recorder
+  requested 4096-byte chunks without clipping the FINAL read. This was an
+  implementation error rather than a Whisper model issue.
+- System on-device recognizer returned error 7 = ERROR_NO_MATCH after roughly
+  one second; it did not produce a usable transcript. The old PCM writer
+  streamed the entire recorded audio as fast as possible before the service
+  had finished initialization. Whether the OEM recognizer supports the
+  EXTRA_AUDIO_SOURCE extra remains unknown.
+
+Fix:
+- Never read more PCM bytes than the native 30-second cap; keep 16-bit
+  sample alignment. Add regression tests using the exact problematic bytes.
+- Wait for recognizer onReadyForSpeech (up to two seconds), stream PCM via
+  pipe paced at roughly 100 ms audio per 100 ms wall-time, extend the ASR
+  deadline to accommodate the actual audio duration. Report sent bytes,
+  service readiness, EOF and the default provider package.
+- If an on-device recognizer returns NO_MATCH (7), try the ordinary system
+  recognizer *with the same recorded PCM* and explicitly flag possible network
+  use. Neither path is falsely represented as confirmed PCM support.
+- If the recorded PCM still fails, offer a **separate live-microphone** test
+  (a new spoken take, clearly distinguished from the original recording).
+  This helps distinguish unsupported PCM injection from unavailable speech
+  recognition. Do not merge live-microphone text with the Whisper comparison.
+- Wrap the lab in a Material Surface for proper light/dark text contrast.
+
+This still requires a physical vivo X300 regression test to confirm OEM
+services respect the audio source and timing. Fully successful Android CI does
+not substitute for real-device validation.
+
 # JetMeal voice lab: Google/Android SpeechRecognizer + Whisper Tiny
 
 ## Status
