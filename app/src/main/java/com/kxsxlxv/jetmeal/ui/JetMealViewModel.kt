@@ -807,7 +807,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         if (result.synced > 0) catalogueOwner = null
         mutable.update {
             it.copy(
-                notice=if(pending==0 && !connected) "Неотправленная запись удалена с телефона."
+                notice=if(pending==0 && !connected) "Сохранено на телефоне: неотправленная запись удалена."
                     else if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
                     else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
                 pendingWrites=pending,blockedWrites=result.blocked)
