@@ -170,12 +170,17 @@ Run Android lint:
   allowance, configurable clamp, and unreconciled residual. Missing dates are
   shown as unknown, not as zero. Macro targets remain unchanged. No workout
   calorie credit is added.
-- After at least one successful online timeline refresh, JetMeal keeps the most
-  recently downloaded timeline period in an Android Keystore AES-GCM encrypted
-  private file (excluded from backups). That period can be read while offline;
-  uncached date ranges must be loaded online before becoming available offline.
-- After authenticated timeline refresh, JetMeal asynchronously downloads and
-  encrypts the **entire personal food catalogue**, not merely earlier search
+- JetMeal merges successfully downloaded diary periods in an Android Keystore
+  AES-GCM encrypted, owner-scoped private cache (excluded from backups).
+  It retains exact downloaded date intervals: gaps are unknown, never treated
+  as zero-calorie days. Offline timeline arrows and Day/Week/Month/Quarter
+  views reuse cached periods without network requests. A new authenticated
+  session quietly preloads the current and previous calendar quarters (with
+  boundary weeks), roughly six months, without delaying the visible timeline.
+  Previously visited older periods are retained. Unvisited periods still need
+  an initial connection to Supabase.
+- On authentication JetMeal downloads and encrypts the **entire personal food
+  catalogue**, independently of diary/profile success, not merely earlier search
   results. Online and offline matching share the same Cyrillic normalization,
   confidence ordering and usage ranking. Search exposes the cached item count
   and an explicit **Обновить** action; newly added cloud foods become available
@@ -193,9 +198,15 @@ Run Android lint:
   into permanent conflicts. Previously blocked operations can be explicitly
   rechecked with identical UUIDs and revision guards.
 - Manual food log, quantity correction and soft delete are committed to a
-  persistent, owner-scoped encrypted outbox first and displayed provisionally.
+  persistent, owner-scoped encrypted outbox first and displayed immediately
+  without requiring a network request. A never-sent new food can be corrected
+  in-place or deleted before synchronization; after a send attempt, its stable
+  idempotency UUID must be replayed before further changes. Uncached dates
+  show only explicitly pending records and warn that historical data is missing.
+  Settings displays the number of cached foods and downloaded diary days and
+  offers an **Обновить офлайн-данные** action.
   Other actions (target changes, zero-day confirmations, undo of already
-  synchronized actions) still require the server.
+  synchronized actions, weight import) still require the server.
 - Each request has a stable UUID, applied atomically by
   `public.jetmeal_sync_mutation`. Private receipts preserve exactly-once
   database execution even if HTTP replies are lost; duplicate retries cannot

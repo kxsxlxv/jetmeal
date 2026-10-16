@@ -44,6 +44,24 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+data class CachedDateRange(val start: LocalDate, val end: LocalDate) {
+    init { require(start < end) }
+    fun contains(first: LocalDate, last: LocalDate): Boolean = start <= first && end >= last
+}
+
+/** Exact intervals that were downloaded. Gaps must never be silently presented
+ * as zero-calorie days when the user opens an unvisited period offline. */
+fun mergedCoverage(ranges: List<CachedDateRange>): List<CachedDateRange> {
+    val merged = mutableListOf<CachedDateRange>()
+    for (range in ranges.sortedWith(compareBy<CachedDateRange> { it.start }.thenBy { it.end })) {
+        val last = merged.lastOrNull()
+        if (last != null && range.start <= last.end) {
+            merged[merged.lastIndex] = CachedDateRange(last.start, maxOf(last.end,range.end))
+        } else merged.add(range)
+    }
+    return merged
+}
+
 data class OfflineSnapshot(
     val start: LocalDate,
     val end: LocalDate,
@@ -51,7 +69,48 @@ data class OfflineSnapshot(
     val targets: Targets?,
     val history: List<TargetVersion>,
     val zeroDays: Set<LocalDate>,
-)
+    val coverage: List<CachedDateRange> = listOf(CachedDateRange(start,end)),
+) {
+    fun covers(start: LocalDate, end: LocalDate): Boolean =
+        coverage.any { it.contains(start,end) }
+}
+
+/** Merge only confirmed ranges; an empty incoming day removes stale deleted
+ * entries for that day, while untouched ranges and their coverage survive. */
+fun mergeOfflineSnapshots(
+    previous: OfflineSnapshot?, incoming: OfflineSnapshot, preserveExisting: Boolean = false
+): OfflineSnapshot {
+    if (previous == null) return incoming
+    val zone = ZoneId.systemDefault()
+    fun alreadyCovered(day:LocalDate) = previous.coverage.any {
+        day >= it.start && day < it.end
+    }
+    val kept = if(preserveExisting) previous.entries else previous.entries.filterNot {
+        val day = it.consumedAt.atZone(zone).toLocalDate()
+        day >= incoming.start && day < incoming.end
+    }
+    val incomingEntries = if(preserveExisting) incoming.entries.filterNot {
+        alreadyCovered(it.consumedAt.atZone(zone).toLocalDate())
+    } else incoming.entries
+    val entries = (kept + incomingEntries).distinctBy { it.id }
+        .sortedWith(compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id })
+    val keptZeros=if(preserveExisting) previous.zeroDays
+        else previous.zeroDays.filterNotTo(mutableSetOf()) {
+            it >= incoming.start && it < incoming.end
+        }
+    val incomingZeros=if(preserveExisting) incoming.zeroDays.filterNot(::alreadyCovered)
+        else incoming.zeroDays
+    return OfflineSnapshot(
+        start=minOf(previous.start,incoming.start),
+        end=maxOf(previous.end,incoming.end),
+        entries=entries,
+        targets=if(preserveExisting) previous.targets ?: incoming.targets else incoming.targets ?: previous.targets,
+        history=if(preserveExisting && previous.history.isNotEmpty()) previous.history
+            else if(incoming.history.isNotEmpty()) incoming.history else previous.history,
+        zeroDays=keptZeros + incomingZeros,
+        coverage=mergedCoverage(previous.coverage + incoming.coverage),
+    )
+}
 
 data class PendingDiaryMutation(
     val id: String,
@@ -63,6 +122,29 @@ data class PendingDiaryMutation(
     val attempted: Boolean = false,
     val chosenMeasure: ChosenMeasure? = null,
 )
+
+/** Editing a not-yet-sent add changes that add in place, preserving its
+ * idempotency UUID. Once a request was attempted, only server replay is safe. */
+fun amendUnsentLog(log:PendingDiaryMutation, amount:Double, chosen:ChosenMeasure?):PendingDiaryMutation {
+    require(log.kind=="log_food" && log.preview != null && !log.attempted && !log.blocked)
+    require(amount.isFinite() && amount>0.0)
+    val input=buildJsonObject {
+        log.input.forEach { (key,value) ->
+            if(key !in setOf("quantity","measure_id","measure_quantity")) put(key,value)
+        }
+        put("quantity",amount)
+        chosen?.let { put("measure_id",it.measure.id);put("measure_quantity",it.quantity) }
+    }
+    val entry=log.preview
+    val preview=entry.copy(quantity=amount,
+        nutrition=entry.basisNutrition*(amount/entry.basisAmount),
+        enteredMeasureLabel=chosen?.measure?.label,
+        enteredMeasureKey=chosen?.measure?.key,
+        enteredMeasureQuantity=chosen?.quantity,
+        enteredMeasureBaseAmount=chosen?.measure?.baseAmount,
+        enteredMeasureApproximate=chosen?.measure?.approximate ?: false)
+    return log.copy(input=input,preview=preview)
+}
 
 data class OfflineSyncStatus(val remaining: Int, val blocked: Int, val synced: Int = 0)
 
@@ -144,13 +226,23 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         return OfflineSyncStatus(queue.size,queue.count { it.blocked })
     }
     suspend fun cachedSnapshot(): OfflineSnapshot?=vault.readState(owner()).first
+    suspend fun cachedSnapshotFor(start: LocalDate, end: LocalDate): OfflineSnapshot? =
+        cachedSnapshot()?.takeIf { it.covers(start,end) }
 
     suspend fun catalogueCount(): Int = vault.readState(owner()).second.map { it.foodId }.distinct().size
+    suspend fun coveredDays(): Int = cachedSnapshot()?.coverage.orEmpty().sumOf {
+        java.time.temporal.ChronoUnit.DAYS.between(it.start,it.end).toInt()
+    }
     suspend fun cachedMeasures(): Map<String,List<FoodMeasure>> =
         vault.readState(owner()).second.associate { it.id to it.measures }
 
-    suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { _,foods,queue ->
-        Triple(snapshot,foods,queue)
+    suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { previous,foods,queue ->
+        Triple(mergeOfflineSnapshots(previous,snapshot),foods,queue)
+    }
+    /** Background preload fills only missing days; it must never overwrite a
+     * newer foreground fetch or locally confirmed post-sync state. */
+    suspend fun rememberHistorical(snapshot:OfflineSnapshot) = vault.change(owner()) { previous,foods,queue ->
+        Triple(mergeOfflineSnapshots(previous,snapshot,preserveExisting=true),foods,queue)
     }
     suspend fun rememberFoods(foods: List<FoodCandidate>) = vault.change(owner()) { snapshot,_,queue ->
         Triple(snapshot,foods,queue)
@@ -207,7 +299,29 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         require(amount.isFinite() && amount>0)
         require(chosen==null || (chosen.measure.variantId==entry.variantId &&
             kotlin.math.abs(chosen.baseAmount-amount)<.002))
-        val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before editing offline." }
+        val user=owner()
+        // An unsent newly added food has no server revision yet. Coalesce
+        // its correction into the original idempotent log instead of creating
+        // a doomed update_log with a nonexistent entry_id.
+        val replaced=syncMutex.withLock {
+            val log=vault.readState(user).third.firstOrNull {
+                it.kind=="log_food" && it.preview?.id==entry.id
+            } ?: return@withLock null
+            require(!log.attempted) {
+                "Запись уже отправлялась. Дождитесь синхронизации перед редактированием."
+            }
+            val amended=amendUnsentLog(log,amount,chosen)
+            vault.change(user) { snap,foods,queue ->
+                Triple(snap,foods,queue.map {
+                    if(it.id==log.id) amended else it
+                })
+            }
+            vault.readState(user).third.size
+        }
+        if(replaced!=null) { schedule();return replaced }
+        val expected=requireNotNull(entry.updatedAt) {
+            "Сначала синхронизируйте эту запись, чтобы изменить её количество."
+        }
         val id=UUID.randomUUID().toString()
         return add(PendingDiaryMutation(id,"update_log",buildJsonObject {
             put("entry_id",entry.id);put("quantity",amount)
@@ -215,7 +329,23 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         },expectedUpdatedAt=expected,chosenMeasure=chosen))
     }
     suspend fun enqueueDelete(entry: DiaryEntry): Int {
-        val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before deleting offline." }
+        val user=owner()
+        val removed=syncMutex.withLock {
+            val log=vault.readState(user).third.firstOrNull {
+                it.kind=="log_food" && it.preview?.id==entry.id
+            } ?: return@withLock null
+            require(!log.attempted) {
+                "Запись уже отправлялась. Дождитесь синхронизации перед удалением."
+            }
+            vault.change(user) { snap,foods,queue ->
+                Triple(snap,foods,queue.filterNot { it.id==log.id })
+            }
+            vault.readState(user).third.size
+        }
+        if(removed!=null) return removed
+        val expected=requireNotNull(entry.updatedAt) {
+            "Сначала синхронизируйте эту запись, чтобы удалить её."
+        }
         val id=UUID.randomUUID().toString()
         return add(PendingDiaryMutation(id,"delete_log",buildJsonObject {
             put("entry_id",entry.id)
@@ -343,7 +473,7 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         error is IOException || error is HttpRequestTimeoutException ||
             error is HttpRequestException ||
             error is RestException && (error.statusCode>=500 ||
-                error.statusCode==408 || error.statusCode==429)
+                error.statusCode==401 || error.statusCode==408 || error.statusCode==429)
 }
 
 fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): List<DiaryEntry> {
@@ -515,6 +645,9 @@ private fun encodeSnapshot(v:OfflineSnapshot)=buildJsonObject {
         buildJsonObject {put("date",it.date.toString());put("targets",encodeTargets(it.targets))}
     }))
     put("zero",JsonArray(v.zeroDays.map {JsonPrimitive(it.toString())}))
+    put("coverage",JsonArray(v.coverage.map { range -> buildJsonObject {
+        put("start",range.start.toString());put("end",range.end.toString())
+    } }))
 }
 private fun decodeSnapshot(v:JsonObject)=OfflineSnapshot(
     LocalDate.parse(v.string("start")),LocalDate.parse(v.string("end")),
@@ -525,4 +658,8 @@ private fun decodeSnapshot(v:JsonObject)=OfflineSnapshot(
             decodeTargets(it.jsonObject.getValue("targets").jsonObject))
     },
     v.getValue("zero").jsonArray.map {LocalDate.parse(it.jsonPrimitive.content)}.toSet(),
+    v["coverage"]?.jsonArray?.map { range -> CachedDateRange(
+        LocalDate.parse(range.jsonObject.string("start")),
+        LocalDate.parse(range.jsonObject.string("end"))
+    ) } ?: listOf(CachedDateRange(LocalDate.parse(v.string("start")),LocalDate.parse(v.string("end")))),
 )

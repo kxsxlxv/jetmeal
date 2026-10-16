@@ -110,7 +110,11 @@ private sealed interface Editor {
                                         weightGoal=state.weightGoal, onSetWeightGoal=viewModel::setWeightGoal,
                                         picoocConnected=state.picoocConnected, weightLoading=state.weightLoading,
                                         onAddWeight=viewModel::addWeight, onConnectPicooc=viewModel::connectPicooc,
-                                        onSyncPicooc=viewModel::syncPicooc, onDisconnectPicooc=viewModel::disconnectPicooc) }
+                                        onSyncPicooc=viewModel::syncPicooc, onDisconnectPicooc=viewModel::disconnectPicooc,
+                                        offlineFoodCount=state.catalogueCount,
+                                        offlineCoveredDays=state.offlineCoveredDays,
+                                        offlineDownloading=state.offlineHistoryLoading || state.catalogueLoading,
+                                        onDownloadOffline=viewModel::downloadOfflineData) }
                                 }
                                 MainScreen.Timeline -> NutritionTimeline(state,viewModel,
                                     onAdd={ viewModel.dismissError(); editor=Editor.Add(it); chosenFood=null; foodVariants=null; viewModel.beginFoodSearch(it) },
