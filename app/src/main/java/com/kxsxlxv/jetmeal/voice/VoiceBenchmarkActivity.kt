@@ -59,6 +59,8 @@ class VoiceBenchmarkActivity : ComponentActivity() {
     private var recorder: AudioRecord? = null
     private var downloadProgress = mutableStateOf<Pair<Long,Long>?>(null)
     private var downloadDialog = mutableStateOf(false)
+    private val whisperModels = WhisperModel.entries.toList()
+    private val systemEngine = "Системный распознаватель (Google / OEM)"
 
     private val microphonePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -160,51 +162,67 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         runCatching {recorder?.stop()}
     }
 
-    private fun requestBenchmark() {
-        if (busy.value || recording.value || recorded.value == null) return
-        val model=File(File(filesDir,"asr_models"),WhisperModelMetadata.NAME)
-        if (!model.isFile || model.length()!=WhisperModelMetadata.BYTES) {
-            downloadDialog.value=true
-        } else runComparison()
+    private fun missingModelBytes():Long = whisperModels.sumOf { model ->
+        val file=File(File(filesDir,"asr_models"),model.fileName)
+        if(file.isFile && file.length()==model.bytes) 0L else model.bytes
     }
 
-    /** Google/Android and Whisper are executed sequentially from exactly the
-     * same file; a failure in one never substitutes the other's output. */
+    private fun requestBenchmark() {
+        if (busy.value || recording.value || recorded.value == null) return
+        if (missingModelBytes()>0) downloadDialog.value=true
+        else runComparison()
+    }
+
+    /** Order and audio are identical for both Whisper models. Android may
+     * ignore PCM injection; an explicit live-mic diagnostic remains separate.
+     */
     private fun runComparison() {
         if (busy.value || recording.value) return
         val pcm=recorded.value ?: return
         busy.value=true
         downloadProgress.value=null
         runs.value=listOf(
-            BenchmarkResult("Системный распознаватель (Google / OEM)",
-                status="Распознавание PCM…"),
-            BenchmarkResult("Whisper Tiny (whisper.cpp)",
-                status="Ожидание завершения системного распознавателя…"))
+            BenchmarkResult(systemEngine,status="Ожидание очереди (PCM будет передан после Whisper)…")
+        ) + whisperModels.map { BenchmarkResult(it.displayName,status="Ожидание очереди…") }
         lifecycleScope.launch {
             try {
+                for(model in whisperModels) {
+                    runs.value=runs.value.map {
+                        if(it.engine==model.displayName) it.copy(
+                            status="Подготовка ${model.displayName}…") else it
+                    }
+                    val result=try {
+                        val provision=WhisperModelRepository(this@VoiceBenchmarkActivity)
+                            .prepare(model) { downloaded,total ->
+                                withContext(Dispatchers.Main) {
+                                    downloadProgress.value=downloaded to total
+                                    info.value="Загрузка ${model.name}: "+
+                                        "${downloaded/1_000_000} из ${total/1_000_000} МБ"
+                                }
+                            }
+                        downloadProgress.value=null
+                        runs.value=runs.value.map {
+                            if(it.engine==model.displayName) it.copy(
+                                status="Инициализация и транскрибация ${model.name}…") else it
+                        }
+                        runWhisperTranscription(pcm,provision,model)
+                    } catch(c:CancellationException) { throw c }
+                    catch(e:Exception) { BenchmarkResult(model.displayName,
+                        status="Ошибка: ${e.message}") }
+                    catch(e:LinkageError) { BenchmarkResult(model.displayName,
+                        status="Нативная библиотека не загрузилась: ${e.message}") }
+                    runs.value=runs.value.map { if(it.engine==model.displayName) result else it }
+                }
+                runs.value=runs.value.map {
+                    if(it.engine==systemEngine) it.copy(status="Системное распознавание PCM…") else it
+                }
                 val system = try { transcribeSystemAudio(pcm) }
                 catch(c:CancellationException) { throw c }
-                catch(e:Exception) { BenchmarkResult("Системный распознаватель (Google / OEM)",
-                    status="Ошибка: ${e.message}") }
-                runs.value=listOf(system,runs.value[1].copy(status="Подготовка Whisper Tiny…"))
-                val whisper=try {
-                    val provision=WhisperModelRepository(this@VoiceBenchmarkActivity)
-                        .prepare { downloaded,total ->
-                            withContext(Dispatchers.Main) {
-                                downloadProgress.value=downloaded to total
-                                info.value="Загрузка Whisper Tiny: ${downloaded / 1_000_000} / ${total / 1_000_000} МБ"
-                            }
-                        }
-                    runs.value=listOf(system,runs.value[1].copy(status="Инициализация и транскрибация Whisper…"))
-                    runWhisperTranscription(pcm,provision)
-                } catch(c:CancellationException) { throw c }
-                catch(e:Exception) { BenchmarkResult("Whisper Tiny (whisper.cpp)",
-                    status="Ошибка: ${e.message}") }
-                catch(e:LinkageError) { BenchmarkResult("Whisper Tiny (whisper.cpp)",
-                    status="Нативная библиотека не загрузилась: ${e.message}") }
-                runs.value=listOf(system,whisper)
-                downloadProgress.value=null
-                info.value="Сравнение завершено. Результат системного сервиса зависит от поддержки PCM на устройстве."
+                catch(e:Exception) { BenchmarkResult(systemEngine,status="Ошибка: ${e.message}",
+                    errorCode=-1) }
+                runs.value=runs.value.map { if(it.engine==systemEngine) system else it }
+                info.value="Сравнение закончено. Whisper Tiny и Base обработали один PCM; " +
+                    "приём PCM системным сервисом Android не гарантирован."
             } finally {
                 busy.value=false
                 downloadProgress.value=null
@@ -212,7 +230,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         }
     }
 
-    /** Try strict on-device first, then (only if NO_MATCH) the system default
+    /** Try strict on-device first, then (if NO_MATCH or timeout) the system default
      * recognition service on the exact same recorded bytes. This is NOT a
      * guarantee that either OEM service actually consumes EXTRA_AUDIO_SOURCE.
      */
@@ -230,6 +248,9 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         if(first.errorCode !in listOf(SpeechRecognizer.ERROR_NO_MATCH,-1) || !onDevice) return first
         val second=run(false)
         return second.copy(
+            // The full system attempt includes both recognizers, not just
+            // the successful (or failed) second pass.
+            totalMs=(first.totalMs ?: 0L)+(second.totalMs ?: 0L),
             status=if(second.errorCode==null)
                 "Обычный системный провайдер распознал запись после отказа on-device."
                 else "On-device: ${first.status}; обычный провайдер: ${second.status}",
@@ -252,6 +273,8 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         val ready=CompletableDeferred<Unit>()
         val sent=AtomicLong(0L)
         val completelySent=AtomicBoolean(false)
+        val resultCallbackCount=AtomicLong(0L)
+        val candidateCount=AtomicLong(-1L)
         val started=SystemClock.elapsedRealtimeNanos()
         var readyNs:Long?=null
         val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -307,8 +330,12 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                                 override fun onEndOfSpeech()=Unit
                                 override fun onError(error:Int)=finish(null,error)
                                 override fun onResults(results:Bundle?) {
-                                    finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                                        ?.firstOrNull(),null)
+                                    val alternatives=results?.getStringArrayList(
+                                        SpeechRecognizer.RESULTS_RECOGNITION)
+                                    resultCallbackCount.incrementAndGet()
+                                    candidateCount.set(alternatives?.size?.toLong() ?: -1L)
+                                    val text=bestRecognitionText(alternatives)
+                                    finish(text,if(text==null) SpeechRecognizer.ERROR_NO_MATCH else null)
                                 }
                                 override fun onPartialResults(partialResults:Bundle?)=Unit
                                 override fun onEvent(eventType:Int,params:Bundle?)=Unit
@@ -325,6 +352,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     }.getOrDefault("не определён")
                     val diagnostic="PCM: ${bytesSent} из ${pcm.bytes} байт; "+
                         "EOF: ${completelySent.get()}; ready: ${readyNs!=null}; "+
+                        "onResults: ${resultCallbackCount.get()} (вариантов: ${candidateCount.get()}); "+
                         "распознаватель по умолчанию: ${defaultProvider}"
                     BenchmarkResult(engine,
                         transcript=outcome.first,
@@ -398,8 +426,9 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                         override fun onEndOfSpeech()=Unit
                         override fun onError(error:Int)=finish(null,error)
                         override fun onResults(results:Bundle?) {
-                            finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                                ?.firstOrNull(),null)
+                            val text=bestRecognitionText(results?.getStringArrayList(
+                                SpeechRecognizer.RESULTS_RECOGNITION))
+                            finish(text,if(text==null) SpeechRecognizer.ERROR_NO_MATCH else null)
                         }
                         override fun onPartialResults(partialResults:Bundle?)=Unit
                         override fun onEvent(eventType:Int,params:Bundle?)=Unit
@@ -463,9 +492,11 @@ private fun VoiceBenchmarkScreen(
 ) {
     if(downloadDialog) AlertDialog(
         onDismissRequest=onCancelDownload,
-        title={ Text("Скачать Whisper Tiny?") },
-        text={ Text("Jetmeal автоматически загрузит модель (~78 МБ) в память телефона. " +
-            "Повторно скачивать её не понадобится. При использовании мобильного интернета расходуется трафик.") },
+        title={ Text("Скачать модели Whisper?") },
+        text={ Text("Jetmeal автоматически загрузит недостающие модели: " +
+            "Tiny (77,7 МБ) и/или Base (148 МБ). Уже загруженная Tiny останется на устройстве. " +
+            "При первом запуске Base потребуется около 148 МБ интернет-трафика. " +
+            "При использовании мобильного интернета расходуется трафик.") },
         confirmButton={ TextButton(onClick=onConfirmDownload) { Text("Скачать и протестировать") } },
         dismissButton={ TextButton(onClick=onCancelDownload) { Text("Отмена") } }
     )
@@ -473,8 +504,8 @@ private fun VoiceBenchmarkScreen(
         .safeDrawingPadding().padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         Text("Лаборатория распознавания",style=MaterialTheme.typography.headlineMedium)
         Text("Произнесите короткую фразу и сразу нажмите «Остановить». " +
-            "Автоостановка через 30 секунд. Сначала система, затем Whisper Tiny. " +
-            "Данные не добавляются в дневник.",
+            "Автоостановка через 30 секунд. Затем Whisper Tiny, Whisper Base " +
+            "и системное распознавание. В дневник ничего не записывается.",
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text(info,style=MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -503,7 +534,8 @@ private fun VoiceBenchmarkScreen(
         Text("Транскрипции и задержки",style=MaterialTheme.typography.titleLarge)
         val cards=if(results.isNotEmpty()) results else listOf(
             BenchmarkResult("Системный распознаватель (Google / OEM)",status="Не запускался"),
-            BenchmarkResult("Whisper Tiny (whisper.cpp)",status="Не запускалась"))
+            BenchmarkResult(WhisperModel.Tiny.displayName,status="Не запускалась"),
+            BenchmarkResult(WhisperModel.Base.displayName,status="Не запускалась"))
         cards.forEach { item ->
             OutlinedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -516,6 +548,11 @@ private fun VoiceBenchmarkScreen(
                     item.verificationMs?.let { Text("Проверка SHA-256: ${it} мс") }
                     item.initializationMs?.let { Text("Инициализация: ${it} мс") }
                     item.processingMs?.let { Text("Транскрибация: ${it} мс") }
+                    if(item.engine.startsWith("Whisper") && item.processingMs!=null && audio!=null) {
+                        Text("Скорость относительно аудио: "+
+                            "${String.format(java.util.Locale.ROOT,"%.2f",
+                                audio.durationMs.toDouble()/item.processingMs.coerceAtLeast(1))}×")
+                    }
                     item.totalMs?.let { Text("Загрузка в RAM + распознавание: ${it} мс") }
                 }
             }

@@ -14,7 +14,33 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
-/** Official multilingual Whisper Tiny (NOT tiny.en). No bundled model weights. */
+/** Two independent *multilingual* official ggml weights (not *.en.bin).
+ * Independent files + hashes ensure Base never accidentally loads Tiny. */
+internal enum class WhisperModel(
+    val displayName: String,
+    val fileName: String,
+    val bytes: Long,
+    val sha256: String,
+) {
+    Tiny(
+        "Whisper Tiny (whisper.cpp)",
+        "ggml-tiny.bin",
+        77_691_713L,
+        "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21",
+    ),
+    Base(
+        "Whisper Base (whisper.cpp)",
+        "ggml-base.bin",
+        147_951_465L,
+        "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+    );
+
+    val url: String get() =
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$fileName"
+}
+
+/** Backwards compatible constant names used by the shipped Tiny test.
+ * The actual installer and transcriber take an explicit model. */
 internal object WhisperModelMetadata {
     const val NAME = "ggml-tiny.bin"
     const val BYTES = 77_691_713L
@@ -30,27 +56,27 @@ internal data class WhisperProvision(
 internal class WhisperModelRepository(private val context: Context) {
     private val dir get() = File(context.filesDir, "asr_models")
 
-    suspend fun prepare(onProgress: suspend (Long, Long) -> Unit): WhisperProvision =
+    suspend fun prepare(model: WhisperModel, onProgress: suspend (Long, Long) -> Unit): WhisperProvision =
         withContext(Dispatchers.IO) {
             dir.mkdirs()
-            val installed = File(dir, WhisperModelMetadata.NAME)
+            val installed = File(dir, model.fileName)
             val start = SystemClock.elapsedRealtimeNanos()
-            if (installed.isFile && installed.length() == WhisperModelMetadata.BYTES) {
+            if (installed.isFile && installed.length() == model.bytes) {
                 val verifyStart = SystemClock.elapsedRealtimeNanos()
-                if (verify(installed)) return@withContext WhisperProvision(
+                if (verify(installed,model)) return@withContext WhisperProvision(
                     installed, 0, 0, (SystemClock.elapsedRealtimeNanos() - verifyStart) / 1_000_000,
                 )
                 installed.delete()
             }
             val available = StatFs(dir.absolutePath).availableBytes
-            require(available > WhisperModelMetadata.BYTES + 20_000_000L) {
-                "Недостаточно места для модели Whisper Tiny (нужно около 100 МБ)."
+            require(available > model.bytes + 20_000_000L) {
+                "Недостаточно места для ${model.displayName} (нужно ещё ${((model.bytes+20_000_000L)/1_000_000)} МБ)."
             }
-            val temp = File(dir, "${WhisperModelMetadata.NAME}.download")
+            val temp = File(dir, "${model.fileName}.download")
             temp.delete()
             var connection: HttpURLConnection? = null
             try {
-                val target = URL(WhisperModelMetadata.URL).openConnection()
+                val target = URL(model.url).openConnection()
                 require(target is HttpURLConnection) { "Недоступен HTTPS источник модели." }
                 connection = target
                 target.connectTimeout = 15_000
@@ -71,26 +97,26 @@ internal class WhisperModelRepository(private val context: Context) {
                             if (n < 0) break
                             output.write(buffer, 0, n)
                             received += n
-                            require(received <= WhisperModelMetadata.BYTES) {
+                            require(received <= model.bytes) {
                                 "Размер модели отличается от ожидаемого."
                             }
                             if (received - lastShown >= 512 * 1024L) {
-                                onProgress(received, WhisperModelMetadata.BYTES)
+                                onProgress(received, model.bytes)
                                 lastShown = received
                             }
                         }
                         output.flush()
                     }
                 }
-                require(received == WhisperModelMetadata.BYTES) {
+                require(received == model.bytes) {
                     "Модель загружена не полностью: $received байт."
                 }
                 val downloadMs = (SystemClock.elapsedRealtimeNanos() - start) / 1_000_000
                 val verifyStart = SystemClock.elapsedRealtimeNanos()
-                require(verify(temp)) { "SHA-256 модели не совпал. Файл отклонён." }
+                require(verify(temp,model)) { "SHA-256 модели не совпал. Файл отклонён." }
                 val verificationMs = (SystemClock.elapsedRealtimeNanos() - verifyStart) / 1_000_000
                 check(temp.renameTo(installed)) { "Не удалось сохранить проверенную модель." }
-                onProgress(received, WhisperModelMetadata.BYTES)
+                onProgress(received, model.bytes)
                 WhisperProvision(installed, received, downloadMs, verificationMs)
             } finally {
                 connection?.disconnect()
@@ -98,8 +124,8 @@ internal class WhisperModelRepository(private val context: Context) {
             }
         }
 
-    private fun verify(file: File): Boolean {
-        if (!file.isFile || file.length() != WhisperModelMetadata.BYTES) return false
+    private fun verify(file: File, model:WhisperModel): Boolean {
+        if (!file.isFile || file.length() != model.bytes) return false
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().buffered().use { input ->
             val buf = ByteArray(256 * 1024)
@@ -112,7 +138,7 @@ internal class WhisperModelRepository(private val context: Context) {
         val actual = digest.digest().joinToString("") {
             String.format(Locale.ROOT, "%02x", it.toInt() and 0xff)
         }
-        return actual == WhisperModelMetadata.SHA256
+        return actual == model.sha256
     }
 }
 
@@ -125,7 +151,7 @@ internal object WhisperNative {
 }
 
 internal suspend fun runWhisperTranscription(
-    audio: RecordedPcm, provision: WhisperProvision,
+    audio: RecordedPcm, provision: WhisperProvision, model:WhisperModel,
 ): BenchmarkResult = withContext(Dispatchers.Default) {
     val begin = SystemClock.elapsedRealtimeNanos()
     var pointer = 0L
@@ -137,7 +163,7 @@ internal suspend fun runWhisperTranscription(
         val text = WhisperNative.transcribe(pointer, audio.file.absolutePath, threads).trim()
         val completed = SystemClock.elapsedRealtimeNanos()
         BenchmarkResult(
-            engine = "Whisper Tiny (whisper.cpp)",
+            engine = model.displayName,
             transcript = text,
             status = if (text.isBlank()) "Пустая транскрипция" else "Готово · CPU · русский язык",
             initializationMs = (loaded - begin) / 1_000_000,
@@ -145,7 +171,7 @@ internal suspend fun runWhisperTranscription(
             totalMs = (completed - begin) / 1_000_000,
             downloadMs = provision.downloadMs,
             verificationMs = provision.verificationMs,
-            mode = "whisper.cpp, multilingual Tiny, ${threads} CPU-потока",
+            mode = "whisper.cpp, multilingual ${model.name}, ${threads} CPU-потока",
         )
     } finally {
         if (pointer != 0L) WhisperNative.closeModel(pointer)
