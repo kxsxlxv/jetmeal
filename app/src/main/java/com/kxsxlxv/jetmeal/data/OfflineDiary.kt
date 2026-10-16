@@ -256,7 +256,42 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         require(amount.isFinite() && amount>0)
         require(chosen==null || (chosen.measure.variantId==entry.variantId &&
             kotlin.math.abs(chosen.baseAmount-amount)<.002))
-        val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before editing offline." }
+        val user=owner()
+        // An unsent newly added food has no server revision yet. Coalesce
+        // its correction into the original idempotent log instead of creating
+        // a doomed update_log with a nonexistent entry_id.
+        val replaced=syncMutex.withLock {
+            val log=vault.readState(user).third.firstOrNull {
+                it.kind=="log_food" && it.preview?.id==entry.id
+            } ?: return@withLock null
+            require(!log.attempted) {
+                "Запись уже отправлялась. Дождитесь синхронизации перед редактированием."
+            }
+            val updatedInput=buildJsonObject {
+                log.input.forEach { (key,value) ->
+                    if(key !in setOf("quantity","measure_id","measure_quantity")) put(key,value)
+                }
+                put("quantity",amount)
+                chosen?.let { put("measure_id",it.measure.id);put("measure_quantity",it.quantity) }
+            }
+            val preview=entry.copy(quantity=amount,
+                nutrition=entry.basisNutrition*(amount/entry.basisAmount),
+                enteredMeasureLabel=chosen?.measure?.label,
+                enteredMeasureKey=chosen?.measure?.key,
+                enteredMeasureQuantity=chosen?.quantity,
+                enteredMeasureBaseAmount=chosen?.measure?.baseAmount,
+                enteredMeasureApproximate=chosen?.measure?.approximate ?: false)
+            vault.change(user) { snap,foods,queue ->
+                Triple(snap,foods,queue.map {
+                    if(it.id==log.id) it.copy(input=updatedInput,preview=preview) else it
+                })
+            }
+            vault.readState(user).third.size
+        }
+        if(replaced!=null) { schedule();return replaced }
+        val expected=requireNotNull(entry.updatedAt) {
+            "Сначала синхронизируйте эту запись, чтобы изменить её количество."
+        }
         val id=UUID.randomUUID().toString()
         return add(PendingDiaryMutation(id,"update_log",buildJsonObject {
             put("entry_id",entry.id);put("quantity",amount)
@@ -264,7 +299,23 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         },expectedUpdatedAt=expected,chosenMeasure=chosen))
     }
     suspend fun enqueueDelete(entry: DiaryEntry): Int {
-        val expected=requireNotNull(entry.updatedAt) { "Record must be loaded before deleting offline." }
+        val user=owner()
+        val removed=syncMutex.withLock {
+            val log=vault.readState(user).third.firstOrNull {
+                it.kind=="log_food" && it.preview?.id==entry.id
+            } ?: return@withLock null
+            require(!log.attempted) {
+                "Запись уже отправлялась. Дождитесь синхронизации перед удалением."
+            }
+            vault.change(user) { snap,foods,queue ->
+                Triple(snap,foods,queue.filterNot { it.id==log.id })
+            }
+            vault.readState(user).third.size
+        }
+        if(removed!=null) return removed
+        val expected=requireNotNull(entry.updatedAt) {
+            "Сначала синхронизируйте эту запись, чтобы удалить её."
+        }
         val id=UUID.randomUUID().toString()
         return add(PendingDiaryMutation(id,"delete_log",buildJsonObject {
             put("entry_id",entry.id)
@@ -392,7 +443,7 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         error is IOException || error is HttpRequestTimeoutException ||
             error is HttpRequestException ||
             error is RestException && (error.statusCode>=500 ||
-                error.statusCode==408 || error.statusCode==429)
+                error.statusCode==401 || error.statusCode==408 || error.statusCode==429)
 }
 
 fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): List<DiaryEntry> {
