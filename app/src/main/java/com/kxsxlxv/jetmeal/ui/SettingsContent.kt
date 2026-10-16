@@ -11,6 +11,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import com.kxsxlxv.jetmeal.voice.VoiceBenchmarkActivity
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -55,6 +58,7 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
         Targets(settingsNumber(calories), settingsNumber(protein), settingsNumber(fat), settingsNumber(carbs), settingsNumber(limit) / 100)
     }.getOrNull()
     val fontScale = LocalDensity.current.fontScale
+    val context=LocalContext.current
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 640.dp).fillMaxSize().verticalScroll(rememberScrollState())
             .imePadding().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -135,6 +139,19 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
             HorizontalDivider()
             WeightSection(weights,weightGoal,picoocConnected,weightLoading,busy,onAddWeight,onSetWeightGoal,
                 onConnectPicooc,onSyncPicooc,onDisconnectPicooc)
+            HorizontalDivider()
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text("Эксперименты",style=MaterialTheme.typography.titleLargeEmphasized)
+                Text("Голосовая лаборатория: запись PCM, проверка системного распознавания " +
+                    "и измерение задержек. Whisper Tiny и Qwen3-ASR пока не подключены.",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(
+                    onClick={context.startActivity(Intent(context,VoiceBenchmarkActivity::class.java))},
+                    modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+                    Text("Тест распознавания речи (эксперимент)")
+                }
+            }
             HorizontalDivider()
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Аккаунт", style = MaterialTheme.typography.titleLargeEmphasized)
