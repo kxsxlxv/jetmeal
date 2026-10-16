@@ -211,10 +211,7 @@ internal fun rankFoodCandidates(
 ): List<FoodCandidate> {
     require(limit > 0)
     require(currentHour == null || currentHour in 0..23)
-    fun normalize(value: String) = value.trim().lowercase(Locale.ROOT).replace('ё','е')
-        .replace(Regex("\\s+")," ")
-    val normalized = normalize(query)
-    val words = normalized.split(' ').filter(String::isNotBlank)
+    val parsed = parseFoodSearch(query)
     // Calculate once, not for each catalogue candidate. Ignore entries without
     // a stable catalogue identity (estimated/custom text entries).
     fun contextualCounts(entries: List<DiaryEntry>): Map<String, Int> =
@@ -242,43 +239,35 @@ internal fun rankFoodCandidates(
                 candidate.mealUsage[meal.ordinal]
             else snapshotMealCounts[candidate.id] ?: 0) +
                 (pendingMealCounts[candidate.id] ?: 0)
-    val ranked = candidates.asSequence().filter { candidate ->
-        val text=normalize("${candidate.name} ${candidate.brand.orEmpty()} ${candidate.source.orEmpty()}")
-        words.all(text::contains)
-    }.map { candidate ->
-        val name=normalize(candidate.name)
-        val score=when {
-            normalized.isEmpty() -> .5
-            name==normalized -> .99
-            name.startsWith(normalized) -> .9
-            else -> .75
+    val ranked = candidates.asSequence().mapNotNull { candidate ->
+        val match = smartFoodMatch(candidate,parsed) ?: return@mapNotNull null
+        val reason = when(parsed.nutrient) {
+            NutrientSearchIntent.Protein -> "Protein density"
+            NutrientSearchIntent.LowCalorie -> "Calorie density"
+            NutrientSearchIntent.LowFat -> "Fat density"
+            null -> match.reason
         }
-        candidate.copy(matchConfidence=score,matchReason=when {
-            normalized.isEmpty() -> "Frequently used personal food"
-            score>=.99 -> "Exact normalized name"
-            score>=.9 -> "Name prefix"
-            else -> "Name, brand or source match"
-        })
-    }.sortedWith(compareByDescending<FoodCandidate> { candidate ->
-        val name=normalize(candidate.name)
-        when {
-            normalized.isEmpty() -> 0
-            name==normalized -> 3
-            name.startsWith(normalized) -> 2
-            else -> 1
-        }
+        candidate.copy(matchConfidence=match.relevance,matchReason=reason)
+    }.sortedWith(compareByDescending<FoodCandidate> {
+        // When a macro was explicitly requested, all strong name matches
+        // compete on nutrition rather than generic name brevity. Weak
+        // aliases/typos still cannot outrank a literal product match.
+        if (parsed.nutrient != null && it.matchConfidence >= .82) .82
+        else it.matchConfidence
     }
-    // When searching within a selected meal, actual entries in that meal must
-    // outrank foods never eaten there. This is separate from wall-clock time:
-    // the user can log breakfast at night or backfill an earlier date.
-    .thenByDescending { candidateMealCount(it) > 0 }
-    .thenByDescending { candidateMealCount(it) }
-    .thenByDescending {
-        val hourCount = if (currentHour == null) 0 else if (it.hourlyUsage.size == 24) {
-            (-3..3).sumOf { offset -> it.hourlyUsage[(currentHour + offset + 24) % 24] }
-        } else fallbackCounts[it.id] ?: 0
-        it.usageCount + 4 * (hourCount + (pendingCounts[it.id] ?: 0))
-    }.thenByDescending{it.lastUsed}.thenBy{it.name}).toList()
+        // Per 100 kcal for protein, per 100 g/ml for calorie or fat density.
+        .thenByDescending { nutrientSearchValue(it,parsed.nutrient) }
+        .thenByDescending { it.matchConfidence }
+        // For a selected meal, observed meals outrank globally frequent foods.
+        .thenByDescending { candidateMealCount(it) > 0 }
+        .thenByDescending { candidateMealCount(it) }
+        .thenByDescending {
+            val hourCount = if (currentHour == null) 0 else if (it.hourlyUsage.size == 24) {
+                (-3..3).sumOf { offset -> it.hourlyUsage[(currentHour + offset + 24) % 24] }
+            } else fallbackCounts[it.id] ?: 0
+            it.usageCount + 4 * (hourCount + (pendingCounts[it.id] ?: 0))
+        }.thenByDescending { it.lastUsed }
+        .thenBy { it.name }).toList()
     // Limit distinct products rather than variants so every serving remains
     // selectable, including when reading the catalogue offline.
     val visibleIds = ranked.asSequence().map { it.foodId }.distinct().take(limit).toSet()

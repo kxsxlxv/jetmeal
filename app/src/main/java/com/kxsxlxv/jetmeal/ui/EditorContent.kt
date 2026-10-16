@@ -59,6 +59,19 @@ internal fun variantTitle(food: FoodCandidate): String {
     else "${number(food.amount, 1)} ${unitLabel(food.unit)}"
 }
 
+/** Show why an approximate spelling or macro-focused result appeared.
+ * No claims about healthfulness or untracked nutrients such as sugar. */
+internal fun foodSearchResultHint(food:FoodCandidate):String? = when(food.matchReason) {
+    "Similar spelling" -> "Похожее написание"
+    "Matching synonym or keyboard layout" -> "По синониму или раскладке"
+    "Protein density" -> if(food.nutrition.calories>0)
+        "Б ${number(100*food.nutrition.protein/food.nutrition.calories,1)} г / 100 ккал"
+        else null
+    "Calorie density" -> "${number(100*food.nutrition.calories/food.amount)} ккал / 100 ${unitLabel(food.unit)}"
+    "Fat density" -> "Ж ${number(100*food.nutrition.fat/food.amount,1)} г / 100 ${unitLabel(food.unit)}"
+    else -> null
+}
+
 internal fun variantCountLabel(count: Int): String {
     val suffix = if(count % 100 in 11..14) "вариантов" else when(count % 10) {
         1 -> "вариант"
@@ -124,7 +137,8 @@ internal fun FoodSearchContent(foods: List<FoodCandidate>, searching: Boolean, o
                     supportingContent = {
                         Text(listOfNotNull(compactFoodBrand(food),
                             if (variants.size > 1) variantCountLabel(variants.size)
-                            else "${number(food.amount, 1)} ${unitLabel(food.unit)}").joinToString(" · "))
+                            else "${number(food.amount, 1)} ${unitLabel(food.unit)}",
+                            foodSearchResultHint(food)).joinToString(" · "))
                     },
                     trailingContent = {
                         if(variants.size > 1) SymbolIcon(JetMealSymbol.Next, null, Modifier.size(24.dp))
