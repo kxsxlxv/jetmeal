@@ -29,7 +29,12 @@ import com.kxsxlxv.jetmeal.ui.theme.JetmealTheme
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -64,6 +69,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             JetmealTheme {
+                Surface(Modifier.fillMaxSize()) {
                 VoiceBenchmarkScreen(recording.value,busy.value,info.value,recorded.value,runs.value,
                     downloadProgress.value,downloadDialog.value,
                     onRecord={ requestRecording() },onStop={ stopRecording() },
@@ -71,6 +77,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     onConfirmDownload={ downloadDialog.value=false; runComparison() },
                     onCancelDownload={ downloadDialog.value=false },
                     onClose={ finish() })
+                }
             }
         }
     }
@@ -107,13 +114,16 @@ class VoiceBenchmarkActivity : ComponentActivity() {
             recording.value=true
             info.value="Идёт запись… Произнесите фразу и нажмите «Стоп»."
             recordingJob=lifecycleScope.launch(Dispatchers.IO) {
-                val started=SystemClock.elapsedRealtimeNanos()
                 var bytes=0L
                 try {
                     FileOutputStream(output).use { stream ->
                         val chunk=ByteArray(4096)
                         while (recording.value && bytes < MAX_BYTES) {
-                            val read=input.read(chunk,0,chunk.size,AudioRecord.READ_BLOCKING)
+                            // Never request more bytes than the native decoder accepts.
+                            // Previously the final 4096-byte read could exceed 30 s.
+                            val remaining=remainingPcmBytes(bytes,MAX_BYTES,chunk.size)
+                            if(remaining==0) break
+                            val read=input.read(chunk,0,remaining,AudioRecord.READ_BLOCKING)
                             if(read>0) { stream.write(chunk,0,read); bytes+=read }
                             else if(read<0) break
                         }
@@ -199,17 +209,40 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         }
     }
 
-    /** API 33+ optional PCM audio injection. Android explicitly permits services
-     * to ignore it and reopen the microphone. Do not interpret a transcript as
-     * validated same-audio benchmarking until checked on the physical device.
+    /** Try strict on-device first, then (only if NO_MATCH) the system default
+     * recognition service on the exact same recorded bytes. This is NOT a
+     * guarantee that either OEM service actually consumes EXTRA_AUDIO_SOURCE.
      */
     private suspend fun transcribeSystemAudio(pcm:RecordedPcm):BenchmarkResult {
         if(!SpeechRecognizer.isRecognitionAvailable(this))
-            return BenchmarkResult("Системный распознаватель (Google / OEM)",status="Системная служба распознавания недоступна.")
+            return BenchmarkResult(SYSTEM_ENGINE,status="Системная служба распознавания недоступна.")
         val onDevice=SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        val first=transcribeProviderPcm(pcm,onDevice)
+        if(first.errorCode!=SpeechRecognizer.ERROR_NO_MATCH || !onDevice) return first
+        val second=transcribeProviderPcm(pcm,false)
+        return second.copy(
+            status=if(second.errorCode==null)
+                "Обычный системный провайдер распознал запись после ошибки on-device (7)."
+                else "On-device: NO_MATCH (7); обычный провайдер: ${second.status}",
+            mode="Попытка 1: on-device (${first.totalMs ?: 0} мс); "+
+                "попытка 2: системный/возможно сетевой. Данные PCM переданы повторно.",
+            diagnostic=listOfNotNull(first.diagnostic,second.diagnostic)
+                .joinToString(" | "),
+        )
+    }
+
+    /** Send real-time paced PCM (100 ms chunks) instead of dumping 30 seconds
+     * into the pipe instantly. Wait for onReadyForSpeech to avoid dropping
+     * the beginning while service startup is in progress.
+     */
+    private suspend fun transcribeProviderPcm(pcm:RecordedPcm,onDevice:Boolean):BenchmarkResult {
+        val engine=SYSTEM_ENGINE
         val recognizer=if(onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
             else SpeechRecognizer.createSpeechRecognizer(this)
         val pipe=ParcelFileDescriptor.createPipe()
+        val ready=CompletableDeferred<Unit>()
+        val sent=AtomicLong(0L)
+        val completelySent=AtomicBoolean(false)
         val started=SystemClock.elapsedRealtimeNanos()
         var readyNs:Long?=null
         val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -224,16 +257,32 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         return try {
             kotlinx.coroutines.coroutineScope {
                 val writer=launch(Dispatchers.IO) {
+                    // The provider may not emit onReady, so allow an eventual
+                    // stream start after a short bounded wait.
+                    withTimeoutOrNull(2_000) { ready.await() }
                     try {
                         FileInputStream(pcm.file).use { input ->
                             ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { output ->
-                                input.copyTo(output,8192)
+                                val chunk=ByteArray(PCM_STREAM_CHUNK_BYTES)
+                                while (true) {
+                                    val read=input.read(chunk)
+                                    if(read<0) break
+                                    output.write(chunk,0,read)
+                                    sent.addAndGet(read.toLong())
+                                    // Maintain approximately microphone-equivalent
+                                    // pacing; do not decode 30 s as a 1 s burst.
+                                    delay((read.toLong()*1000 / (SAMPLE_RATE*BYTES_PER_SAMPLE))
+                                        .coerceAtLeast(1))
+                                }
+                                output.flush()
+                                completelySent.set(true)
                             }
                         }
-                    } catch (_:Exception) { /* Consumer can close when finished. */ }
+                    } catch(c:CancellationException) { throw c }
+                    catch (_:Exception) { /* Consumer may stop early; report bytes. */ }
                 }
                 try {
-                    val outcome=withTimeout(25000) {
+                    val outcome=withTimeout(pcm.durationMs+12_000L) {
                         suspendCancellableCoroutine<Pair<String?,Int?>> { continuation ->
                             fun finish(text:String?,error:Int?) {
                                 if(continuation.isActive) continuation.resume(text to error)
@@ -241,6 +290,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                             recognizer.setRecognitionListener(object:RecognitionListener {
                                 override fun onReadyForSpeech(params:Bundle?) {
                                     readyNs=SystemClock.elapsedRealtimeNanos()
+                                    ready.complete(Unit)
                                 }
                                 override fun onBeginningOfSpeech()=Unit
                                 override fun onRmsChanged(rmsdB:Float)=Unit
@@ -259,18 +309,32 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     }
                     val ended=SystemClock.elapsedRealtimeNanos()
                     val total=(ended-started)/1_000_000
-                    BenchmarkResult("Системный распознаватель (Google / OEM)",
+                    val bytesSent=sent.get()
+                    val diagnostic="Отправлено PCM: ${bytesSent} из ${pcm.bytes} байт; "+
+                        "поток завершён: ${completelySent.get()}; "+
+                        "сервис ready: ${readyNs!=null}"
+                    BenchmarkResult(engine,
                         transcript=outcome.first,
-                        status=if(outcome.second==null) "Получен результат (источник PCM не подтверждён)"
-                            else "Ошибка распознавателя: код ${outcome.second}",
+                        status=when(outcome.second) {
+                            null -> "Получен текст; подтверждение приёма PCM сервисом недоступно"
+                            SpeechRecognizer.ERROR_NO_MATCH ->
+                                "NO_MATCH (7): сервис не распознал речь из аудиоисточника"
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+                                "SPEECH_TIMEOUT (6): сервис не обнаружил речь"
+                            else -> "Ошибка распознавателя: код ${outcome.second}"
+                        },
                         initializationMs=readyNs?.let { (it-started)/1_000_000 },
                         processingMs=readyNs?.let { (ended-it)/1_000_000 },
                         totalMs=total,
-                        mode=if(onDevice) "Запрошен on-device" else "Системный провайдер; офлайн не гарантирован")
+                        mode=if(onDevice) "On-device, ru-RU, PCM 16 кГц" else
+                            "Стандартный провайдер, ru-RU; сеть может использоваться",
+                        errorCode=outcome.second,
+                        diagnostic=diagnostic,
+                    )
                 } finally {
-                    pipe[1].close()
-                    pipe[0].close()
                     writer.cancel()
+                    runCatching {pipe[1].close()}
+                    runCatching {pipe[0].close()}
                 }
             }
         } finally { recognizer.destroy() }
@@ -287,15 +351,23 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         const val SAMPLE_RATE=16000
         const val BYTES_PER_SAMPLE=2L
         const val MAX_BYTES=16000*2L*30
+        const val PCM_STREAM_CHUNK_BYTES=3200
+        const val SYSTEM_ENGINE="Системный распознаватель (Google / OEM)"
     }
 }
+
+/** Exact read bound: the last AudioRecord buffer must not overshoot the cap.
+ * Keeping reads sample-aligned avoids accidentally writing half an int16. */
+internal fun remainingPcmBytes(written:Long,maxBytes:Long,bufferSize:Int):Int =
+    (minOf((maxBytes-written).coerceAtLeast(0),bufferSize.toLong()).toInt() and -2)
 
 internal data class RecordedPcm(val file:File,val bytes:Long,val durationMs:Long)
 internal data class BenchmarkResult(
     val engine:String, val transcript:String?=null, val status:String,
     val initializationMs:Long?=null,val processingMs:Long?=null,
     val totalMs:Long?=null,val mode:String?=null,
-    val downloadMs:Long?=null,val verificationMs:Long?=null)
+    val downloadMs:Long?=null,val verificationMs:Long?=null,
+    val errorCode:Int?=null,val diagnostic:String?=null)
 
 @Composable
 private fun VoiceBenchmarkScreen(
@@ -345,6 +417,7 @@ private fun VoiceBenchmarkScreen(
                     Text(item.engine,style=MaterialTheme.typography.titleMedium)
                     Text(item.status,style=MaterialTheme.typography.bodySmall)
                     item.mode?.let { Text(it,style=MaterialTheme.typography.labelSmall) }
+                    item.diagnostic?.let { Text(it,style=MaterialTheme.typography.labelSmall) }
                     item.transcript?.let { Text(it,style=MaterialTheme.typography.bodyLarge) }
                     item.downloadMs?.let { Text("Загрузка файла модели: ${it} мс") }
                     item.verificationMs?.let { Text("Проверка SHA-256: ${it} мс") }
