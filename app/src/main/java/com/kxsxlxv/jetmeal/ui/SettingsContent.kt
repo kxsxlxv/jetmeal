@@ -37,6 +37,10 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
     onConnectPicooc: (String,String,String) -> Unit = { _,_,_ -> },
     onSyncPicooc: () -> Unit = {},
     onDisconnectPicooc: () -> Unit = {},
+    offlineFoodCount: Int = 0,
+    offlineCoveredDays: Int = 0,
+    offlineDownloading: Boolean = false,
+    onDownloadOffline: () -> Unit = {},
 ) {
     var calories by rememberSaveable(targets) { mutableStateOf(targets?.calories?.let(::decimalInput) ?: "") }
     var protein by rememberSaveable(targets) { mutableStateOf(targets?.protein?.let(::decimalInput) ?: "") }
@@ -106,6 +110,26 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
                         "${number(version.targets.calories)} ккал · Б ${number(version.targets.protein)} · " +
                         "Ж ${number(version.targets.fat)} · У ${number(version.targets.carbs)}",
                         style=MaterialTheme.typography.bodyMedium)
+                }
+            }
+            HorizontalDivider()
+            Surface(shape=MaterialTheme.shapes.extraLarge,
+                color=MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("Доступно без интернета",style=MaterialTheme.typography.titleLargeEmphasized)
+                    Text("$offlineFoodCount продуктов · $offlineCoveredDays дней дневника",
+                        style=MaterialTheme.typography.bodyMedium)
+                    Text("Каталог и просмотренные периоды сохраняются на устройстве. " +
+                        "Дополнительно загружаются текущие и предыдущие три месяца календарных кварталов. " +
+                        "Новые записи отправятся в Supabase при восстановлении связи.",
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        style=MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick=onDownloadOffline,
+                        enabled=!offlineDownloading && !busy,
+                        modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+                        Text(if(offlineDownloading) "Подготовка…" else "Обновить офлайн-данные")
+                    }
                 }
             }
             HorizontalDivider()
