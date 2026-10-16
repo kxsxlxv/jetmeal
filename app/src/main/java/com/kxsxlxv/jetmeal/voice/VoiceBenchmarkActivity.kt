@@ -186,11 +186,6 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         ) + whisperModels.map { BenchmarkResult(it.displayName,status="Ожидание очереди…") }
         lifecycleScope.launch {
             try {
-                val system = try { transcribeSystemAudio(pcm) }
-                catch(c:CancellationException) { throw c }
-                catch(e:Exception) { BenchmarkResult(systemEngine,status="Ошибка: ${e.message}",
-                    errorCode=-1) }
-                runs.value=runs.value.map { if(it.engine==systemEngine) system else it }
                 for(model in whisperModels) {
                     runs.value=runs.value.map {
                         if(it.engine==model.displayName) it.copy(
@@ -218,6 +213,14 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                         status="Нативная библиотека не загрузилась: ${e.message}") }
                     runs.value=runs.value.map { if(it.engine==model.displayName) result else it }
                 }
+                runs.value=runs.value.map {
+                    if(it.engine==systemEngine) it.copy(status="Системное распознавание PCM…") else it
+                }
+                val system = try { transcribeSystemAudio(pcm) }
+                catch(c:CancellationException) { throw c }
+                catch(e:Exception) { BenchmarkResult(systemEngine,status="Ошибка: ${e.message}",
+                    errorCode=-1) }
+                runs.value=runs.value.map { if(it.engine==systemEngine) system else it }
                 info.value="Сравнение закончено. Whisper Tiny и Base обработали один PCM; " +
                     "приём PCM системным сервисом Android не гарантирован."
             } finally {
@@ -227,7 +230,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         }
     }
 
-    /** Try strict on-device first, then (only if NO_MATCH) the system default
+    /** Try strict on-device first, then (if NO_MATCH or timeout) the system default
      * recognition service on the exact same recorded bytes. This is NOT a
      * guarantee that either OEM service actually consumes EXTRA_AUDIO_SOURCE.
      */
@@ -245,6 +248,9 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         if(first.errorCode !in listOf(SpeechRecognizer.ERROR_NO_MATCH,-1) || !onDevice) return first
         val second=run(false)
         return second.copy(
+            // The full system attempt includes both recognizers, not just
+            // the successful (or failed) second pass.
+            totalMs=(first.totalMs ?: 0L)+(second.totalMs ?: 0L),
             status=if(second.errorCode==null)
                 "Обычный системный провайдер распознал запись после отказа on-device."
                 else "On-device: ${first.status}; обычный провайдер: ${second.status}",
@@ -492,8 +498,8 @@ private fun VoiceBenchmarkScreen(
         .safeDrawingPadding().padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         Text("Лаборатория распознавания",style=MaterialTheme.typography.headlineMedium)
         Text("Произнесите короткую фразу и сразу нажмите «Остановить». " +
-            "Автоостановка через 30 секунд. Затем по очереди система, " +
-            "Whisper Tiny и Whisper Base. В дневник ничего не записывается.",
+            "Автоостановка через 30 секунд. Затем Whisper Tiny, Whisper Base " +
+            "и системное распознавание. В дневник ничего не записывается.",
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text(info,style=MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
