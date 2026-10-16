@@ -7,6 +7,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -311,9 +312,13 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     val ended=SystemClock.elapsedRealtimeNanos()
                     val total=(ended-started)/1_000_000
                     val bytesSent=sent.get()
-                    val diagnostic="Отправлено PCM: ${bytesSent} из ${pcm.bytes} байт; "+
-                        "поток завершён: ${completelySent.get()}; "+
-                        "сервис ready: ${readyNs!=null}"
+                    val defaultProvider=runCatching {
+                        Settings.Secure.getString(contentResolver,"voice_recognition_service")
+                            ?.substringBefore('/') ?: "не определён"
+                    }.getOrDefault("не определён")
+                    val diagnostic="PCM: ${bytesSent} из ${pcm.bytes} байт; "+
+                        "EOF: ${completelySent.get()}; ready: ${readyNs!=null}; "+
+                        "распознаватель по умолчанию: ${defaultProvider}"
                     BenchmarkResult(engine,
                         transcript=outcome.first,
                         status=when(outcome.second) {
@@ -457,8 +462,9 @@ private fun VoiceBenchmarkScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .safeDrawingPadding().padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         Text("Лаборатория распознавания",style=MaterialTheme.typography.headlineMedium)
-        Text("Запишите фразу один раз. Сначала работает системное распознавание, " +
-            "затем Whisper Tiny. Данные не добавляются в дневник.",
+        Text("Произнесите короткую фразу и сразу нажмите «Остановить». " +
+            "Автоостановка через 30 секунд. Сначала система, затем Whisper Tiny. " +
+            "Данные не добавляются в дневник.",
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text(info,style=MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
