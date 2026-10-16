@@ -33,6 +33,7 @@ import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -219,13 +220,19 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         if(!SpeechRecognizer.isRecognitionAvailable(this))
             return BenchmarkResult(SYSTEM_ENGINE,status="Системная служба распознавания недоступна.")
         val onDevice=SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-        val first=transcribeProviderPcm(pcm,onDevice)
-        if(first.errorCode!=SpeechRecognizer.ERROR_NO_MATCH || !onDevice) return first
-        val second=transcribeProviderPcm(pcm,false)
+        suspend fun run(onDeviceMode:Boolean):BenchmarkResult = try {
+            transcribeProviderPcm(pcm,onDeviceMode)
+        } catch(e:TimeoutCancellationException) {
+            BenchmarkResult(SYSTEM_ENGINE,status="Тайм-аут системного распознавания",
+                errorCode=-1,diagnostic="Сервис не вернул результат после ожидания записи.")
+        }
+        val first=run(onDevice)
+        if(first.errorCode !in listOf(SpeechRecognizer.ERROR_NO_MATCH,-1) || !onDevice) return first
+        val second=run(false)
         return second.copy(
             status=if(second.errorCode==null)
-                "Обычный системный провайдер распознал запись после ошибки on-device (7)."
-                else "On-device: NO_MATCH (7); обычный провайдер: ${second.status}",
+                "Обычный системный провайдер распознал запись после отказа on-device."
+                else "On-device: ${first.status}; обычный провайдер: ${second.status}",
             mode="Попытка 1: on-device (${first.totalMs ?: 0} мс); "+
                 "попытка 2: системный/возможно сетевой. Данные PCM переданы повторно.",
             diagnostic=listOfNotNull(first.diagnostic,second.diagnostic)
@@ -358,6 +365,9 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val result=try { transcribeLiveMicrophone() }
+                catch(e:TimeoutCancellationException) {
+                    BenchmarkResult(title,status="Тайм-аут ожидания речи (18 секунд)",errorCode=-1)
+                }
                 catch(c:CancellationException) { throw c }
                 catch(e:Exception) { BenchmarkResult(title,status="Ошибка: ${e.message}") }
                 runs.value=runs.value.filterNot {it.engine==title}+result
