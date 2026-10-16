@@ -182,7 +182,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         busy.value=true
         downloadProgress.value=null
         runs.value=listOf(
-            BenchmarkResult(systemEngine,status="Системный сервис получает сохранённый PCM…")
+            BenchmarkResult(systemEngine,status="Ожидание очереди (PCM будет передан после Whisper)…")
         ) + whisperModels.map { BenchmarkResult(it.displayName,status="Ожидание очереди…") }
         lifecycleScope.launch {
             try {
