@@ -273,6 +273,8 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         val ready=CompletableDeferred<Unit>()
         val sent=AtomicLong(0L)
         val completelySent=AtomicBoolean(false)
+        val resultCallbackCount=AtomicLong(0L)
+        val candidateCount=AtomicLong(-1L)
         val started=SystemClock.elapsedRealtimeNanos()
         var readyNs:Long?=null
         val intent=Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -328,8 +330,11 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                                 override fun onEndOfSpeech()=Unit
                                 override fun onError(error:Int)=finish(null,error)
                                 override fun onResults(results:Bundle?) {
-                                    val text=bestRecognitionText(results?.getStringArrayList(
-                                        SpeechRecognizer.RESULTS_RECOGNITION))
+                                    val alternatives=results?.getStringArrayList(
+                                        SpeechRecognizer.RESULTS_RECOGNITION)
+                                    resultCallbackCount.incrementAndGet()
+                                    candidateCount.set(alternatives?.size?.toLong() ?: -1L)
+                                    val text=bestRecognitionText(alternatives)
                                     finish(text,if(text==null) SpeechRecognizer.ERROR_NO_MATCH else null)
                                 }
                                 override fun onPartialResults(partialResults:Bundle?)=Unit
@@ -347,6 +352,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     }.getOrDefault("не определён")
                     val diagnostic="PCM: ${bytesSent} из ${pcm.bytes} байт; "+
                         "EOF: ${completelySent.get()}; ready: ${readyNs!=null}; "+
+                        "onResults: ${resultCallbackCount.get()} (вариантов: ${candidateCount.get()}); "+
                         "распознаватель по умолчанию: ${defaultProvider}"
                     BenchmarkResult(engine,
                         transcript=outcome.first,
