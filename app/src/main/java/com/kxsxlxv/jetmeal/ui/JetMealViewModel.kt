@@ -261,7 +261,10 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val end=quarterStart.plusMonths(3).plusDays(7)
                 // Avoid a redundant fetch if another period already filled it.
                 val cached=diary.cachedSnapshotFor(start,end)
-                if (cached == null && diary.onlineNow()) {
+                if (cached == null) {
+                    // Do not mark preparation complete if connectivity vanished
+                    // before the download started. Connectivity recovery can retry.
+                    if(!diary.onlineNow()) return@launch
                     val entries=repo.entries(start,end,zone)
                     val zero=repo.confirmedZeroDays(start,end)
                     ensureActive()
