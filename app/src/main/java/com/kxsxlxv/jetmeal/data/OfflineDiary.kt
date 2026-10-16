@@ -230,6 +230,9 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         cachedSnapshot()?.takeIf { it.covers(start,end) }
 
     suspend fun catalogueCount(): Int = vault.readState(owner()).second.map { it.foodId }.distinct().size
+    suspend fun coveredDays(): Int = cachedSnapshot()?.coverage.orEmpty().sumOf {
+        java.time.temporal.ChronoUnit.DAYS.between(it.start,it.end).toInt()
+    }
     suspend fun cachedMeasures(): Map<String,List<FoodMeasure>> =
         vault.readState(owner()).second.associate { it.id to it.measures }
 
