@@ -245,6 +245,27 @@ preferences. The UI shows the last 12 or last 60; **Copy report** includes all
 currently stored entries. This feature has no special diagnostic permissions
 and does not send logs to third-party services.
 
+## Smart food search (2026-10-16)
+
+Food search is evaluated over the entire owner-scoped encrypted catalogue on
+the device. It works the same offline and online, without sending typed food
+names to a third-party search/AI service. Queries accept Russian е/ё,
+punctuation and word order, verified common food synonyms (e.g. гречка →
+гречневая; сгущёнка → молоко сгущённое), fast-food aliases, names combined
+with brands, and common typos or letters entered using the wrong keyboard
+layout. Fuzzy matching excludes very short words to avoid unrelated results.
+The UI marks similar-spelling and synonym matches without silently changing
+the food's authoritative nutrient profile.
+
+Exact/prefix/word matches come before fuzzy suggestions; within equally
+relevant matches, the selected meal and prior usage still personalize results.
+Explicit requests like «белковый йогурт», «много белка» or
+«низкокалорийный напиток» compare protein per **100 kcal** or calories per
+**100 g/ml**, rather than misleading differences in label serving size. The
+ranking hint displays these ratios. This is a nutritional ranking, not an
+assertion that a food is healthy or medically suitable. No schema migration
+or new API permission is needed.
+
 ## Food-specific serving measures
 
 Jetmeal now offers units that belong to the selected **food variant**, not a global
