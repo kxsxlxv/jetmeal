@@ -52,7 +52,7 @@ private val foodAliases = mapOf(
 /** Cyrillic entered on an English keyboard: "ndjhju" -> "творог".
  * It is only a fallback, so real Latin brands always win. */
 private const val latinKeys = "qwertyuiopasdfghjklzxcvbnm"
-private const val russianKeys = "йцукенгшщзфывапролячсмитьбю"
+private const val russianKeys = "йцукенгшщзфывапролдячсмить"
 private fun fromWrongKeyboard(word: String): String? {
     if (word.length < 4 || !word.all { it in 'a'..'z' }) return null
     val converted = buildString {
