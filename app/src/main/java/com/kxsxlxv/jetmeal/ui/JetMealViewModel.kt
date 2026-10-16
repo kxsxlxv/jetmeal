@@ -61,6 +61,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private var searchJob: Job? = null
     private var retryJob: Job? = null
     private var catalogueJob: Job? = null
+    private var offlineHistoryJob: Job? = null
+    private var offlineHistoryOwner: String? = null
     private var catalogueOwner: String? = null
     private var retryAttempt = 0
     private var today = LocalDate.now()
@@ -87,6 +89,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                             snapshotOwner = ownerId
                             cachedNavigationJob?.cancel()
                             catalogueJob?.cancel()
+                            offlineHistoryJob?.cancel()
+                            offlineHistoryOwner = null
                             catalogueOwner = null
                         }
                         authenticatedOwnerId = ownerId
@@ -109,6 +113,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         recentSnapshots.clear()
                         cachedNavigationJob?.cancel()
                         retryJob?.cancel(); catalogueJob?.cancel()
+                        offlineHistoryJob?.cancel(); offlineHistoryOwner = null
                         catalogueOwner = null
                         refreshGeneration++; searchGeneration++
                         refreshJob?.cancel(); searchJob?.cancel()
@@ -210,6 +215,41 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
 
     fun downloadCatalogue() = warmCatalogue(force = true)
 
+    /** Prefetch six calendar months for offline Day/Week/Month/Quarter
+     * navigation without delaying the visible timeline or food search.
+     * Snapshots are merged instead of replacing one another. */
+    private fun prepareOfflineHistory(seed: OfflineSnapshot) {
+        val repo=repository ?: return
+        val diary=offline ?: return
+        val owner=repo.client.auth.currentUserOrNull()?.id ?: return
+        if (offlineHistoryOwner==owner || offlineHistoryJob?.isActive==true) return
+        offlineHistoryJob=viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val zone=ZoneId.systemDefault()
+                val current=LocalDate.now(zone)
+                val quarterStart=TimelinePeriods.start(TimeScale.Quarter,current)
+                val start=quarterStart.minusMonths(3)
+                val end=quarterStart.plusMonths(3)
+                // Avoid a redundant fetch if another period already filled it.
+                val cached=diary.cachedSnapshotFor(start,end)
+                if (cached == null && diary.onlineNow()) {
+                    val entries=repo.entries(start,end,zone)
+                    val zero=repo.confirmedZeroDays(start,end)
+                    ensureActive()
+                    if (repo.client.auth.currentUserOrNull()?.id != owner) return@launch
+                    // Persist the exact server coverage; leave previously visited
+                    // date intervals and all unsent mutations untouched.
+                    diary.remember(OfflineSnapshot(start,end,entries,
+                        seed.targets,seed.history,zero))
+                }
+                offlineHistoryOwner=owner
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error:Exception) {
+                repo.diagnostics?.failure(ConnectionOperation.Diary,error,ConnectionStage.Cache)
+            }
+        }
+    }
+
     private fun scheduleConnectionRetry() {
         val diary = offline ?: return
         if (!diary.onlineNow()) return
@@ -231,6 +271,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         repository?.authFailures?.clear()
         repository?.diagnostics?.authState(ConnectionAuthState.SignOutRequested)
         retryJob?.cancel(); catalogueJob?.cancel()
+        offlineHistoryJob?.cancel(); offlineHistoryOwner = null
         refreshGeneration++; searchGeneration++
         refreshJob?.cancel(); searchJob?.cancel()
         cachedNavigationJob?.cancel()
@@ -302,8 +343,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         recentSnapshots.clear()
                         snapshotOwner = owner
                     }
-                    recentSnapshots.addLast(snap)
-                    while (recentSnapshots.size > 4) recentSnapshots.removeFirst()
+                    val combined=mergeOfflineSnapshots(recentSnapshots.lastOrNull(),snap)
+                    recentSnapshots.clear()
+                    recentSnapshots.addLast(combined)
                 }
                 // A Keystore/file-system failure must not mislabel a perfectly
                 // successful Supabase download as a remote outage.
@@ -321,6 +363,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 retryAttempt=0
                 retryJob?.cancel()
                 warmCatalogue()
+                prepareOfflineHistory(snap)
                 if(nav.destination==Destination.Settings) loadWeights()
                 val perDay=weekTargets(snap)
                 // Widget rendering is a separate concern: it cannot turn a
@@ -362,10 +405,12 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     connected -> "Не удалось завершить запрос к Supabase."
                     else -> "Нет подключения к интернету."
                 }
-                val cached=runCatching { offline?.cachedSnapshot() }.getOrNull()
                 val requested=mutable.value
-                val cachedValid=cached?.let { validCacheFor(it,requested) } ?: false
-                if(cachedValid && cached!=null) {
+                val (requiredStart,requiredEnd)=requiredRange(requested)
+                val cached=runCatching {
+                    offline?.cachedSnapshotFor(requiredStart,requiredEnd)
+                }.getOrNull()
+                if(cached!=null) {
                     displaySnapshot(cached,requested,true)
                     mutable.update { it.copy(connectionWarning="$reason Показаны сохранённые данные.") }
                 } else {
@@ -401,7 +446,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
 
     private fun validCacheFor(snap:OfflineSnapshot,nav:AppState):Boolean {
         val (start,end) = requiredRange(nav)
-        return snap.start<=start && snap.end>=end
+        return snap.covers(start,end)
     }
 
     private suspend fun displaySnapshot(snap:OfflineSnapshot,nav:AppState,cached:Boolean) {
@@ -552,10 +597,25 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             recentSnapshots.lastOrNull { validCacheFor(it,updated) } else null
         cachedNavigationJob?.cancel()
         if(cached == null) {
-            mutable.value = updated.copy(week=null,monthCalories=emptyMap(),
+            mutable.value = updated.copy(entries=emptyList(),week=null,monthCalories=emptyMap(),
                 monthTargets=emptyMap(),confirmedZeroDays=emptySet())
             saveNavigation()
-            refresh()
+            val (start,end)=requiredRange(updated)
+            // Read the durable, merged encrypted cache *before* a network
+            // request: offline period arrows must work immediately.
+            cachedNavigationJob=viewModelScope.launch {
+                val stored=runCatching { offline?.cachedSnapshotFor(start,end) }.getOrNull()
+                if (mutable.value.day != updated.day || mutable.value.scale != updated.scale) return@launch
+                if (stored != null) {
+                    displaySnapshot(stored,updated,true)
+                    mutable.update { it.copy(connectionWarning=if(offline?.onlineNow()==false)
+                        "Нет подключения к интернету. Показаны сохранённые данные." else it.connectionWarning) }
+                    if (offline?.onlineNow()==true) refresh()
+                } else if(offline?.onlineNow()==false) {
+                    mutable.update { it.copy(connectionWarning=
+                        "Этот период ещё не сохранён на телефоне. Откройте его при подключении к интернету.") }
+                } else refresh()
+            }
             return
         }
         ++refreshGeneration
@@ -567,7 +627,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val expectedScale=updated.scale
         cachedNavigationJob=viewModelScope.launch {
             if(mutable.value.day==expectedDay && mutable.value.scale==expectedScale)
-                displaySnapshot(cached,updated,false)
+                displaySnapshot(cached,updated,offline?.onlineNow()==false)
         }
     }
     fun setTimeScale(scale: TimeScale) {
