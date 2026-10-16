@@ -30,7 +30,7 @@ class WhisperMetadataTest {
     @Test fun googleOnResultsMustContainNonblankText() {
         assertNull(bestRecognitionText(null))
         assertNull(bestRecognitionText(emptyList()))
-        assertNull(bestRecognitionText(listOf("","  ","\\t")))
+        assertNull(bestRecognitionText(listOf("","  ","\t")))
         assertEquals("300 граммов творога",
             bestRecognitionText(listOf(" ", " 300 граммов творога ", "творог")))
     }
