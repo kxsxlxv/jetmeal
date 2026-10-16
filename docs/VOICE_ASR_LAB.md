@@ -1,3 +1,31 @@
+## Three-engine comparison: multilingual Whisper Base (2026-10-17)
+
+Whisper Base multilingual is included as the second local model with exactly
+the same native whisper.cpp decoder used by Tiny. Both process the identical
+recorded PCM; they are run sequentially, not as two resident contexts.
+
+- ggml-tiny.bin: 77,691,713 bytes; SHA-256
+  be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21
+- ggml-base.bin: 147,951,465 bytes; SHA-256
+  60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+- Source: https://huggingface.co/ggerganov/whisper.cpp/tree/main
+
+First-use automatic app-private download asks user before consuming network
+data. Checksums, independent files, disk capacity, download timing and
+per-run model initialization/decoding timings are retained. The first run
+will be slower due to downloading; comparisons should use subsequent runs.
+
+Android's on-device speech service on vivo X300 sent all 5.5 s of prerecorded
+PCM but returned an empty onResults list, while Whisper transcribed correctly.
+This is now treated as NO_MATCH, not as a successful empty transcript.
+As before, an on-device no-match retries the default system provider with
+the same PCM; a separately labelled live-mic button can verify whether
+Google/OEM recognizes a NEW utterance. Android's EXTRA_AUDIO_SOURCE is
+optional: it is not possible to force Google/OEM to support recording replay.
+Results must not claim a transcript that the service did not provide.
+
+The voice experiment still does not parse or save any food entries.
+
 ## Vivo X300 debugging, 2026-10-16
 
 Real-world report on vivo X300:
