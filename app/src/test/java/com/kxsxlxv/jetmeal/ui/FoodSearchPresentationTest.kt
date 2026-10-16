@@ -155,4 +155,19 @@ class FoodSearchPresentationTest {
         assertEquals("= 500 мл",measureConversionHint(2.0,juice,juice,"ml"))
     }
 
+    @Test fun approximateAndNutritionSearchResultsExplainTheirRanking() {
+        val nutrients=com.kxsxlxv.jetmeal.domain.Nutrition(80.0,20.0,1.0,3.0)
+        val base=com.kxsxlxv.jetmeal.domain.FoodCandidate(
+            "v1","f1","Йогурт",null,null,100.0,"g",nutrients,false)
+        assertEquals("Похожее написание",
+            foodSearchResultHint(base.copy(matchReason="Similar spelling")))
+        assertEquals("По синониму или раскладке",
+            foodSearchResultHint(base.copy(matchReason="Matching synonym or keyboard layout")))
+        assertEquals("Б 25 г / 100 ккал",
+            foodSearchResultHint(base.copy(matchReason="Protein density")))
+        assertEquals("80 ккал / 100 г",
+            foodSearchResultHint(base.copy(matchReason="Calorie density")))
+        assertNull(foodSearchResultHint(base))
+    }
+
 }
