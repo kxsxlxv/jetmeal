@@ -241,7 +241,13 @@ internal fun rankFoodCandidates(
                 (pendingMealCounts[candidate.id] ?: 0)
     val ranked = candidates.asSequence().mapNotNull { candidate ->
         val match = smartFoodMatch(candidate,parsed) ?: return@mapNotNull null
-        candidate.copy(matchConfidence=match.relevance,matchReason=match.reason)
+        val reason = when(parsed.nutrient) {
+            NutrientSearchIntent.Protein -> "Protein density"
+            NutrientSearchIntent.LowCalorie -> "Calorie density"
+            NutrientSearchIntent.LowFat -> "Fat density"
+            null -> match.reason
+        }
+        candidate.copy(matchConfidence=match.relevance,matchReason=reason)
     }.sortedWith(compareByDescending<FoodCandidate> {
         // When a macro was explicitly requested, all strong name matches
         // compete on nutrition rather than generic name brevity. Weak
