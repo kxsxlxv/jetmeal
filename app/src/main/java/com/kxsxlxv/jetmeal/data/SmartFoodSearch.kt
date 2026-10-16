@@ -55,13 +55,7 @@ private const val latinKeys = "qwertyuiopasdfghjklzxcvbnm"
 private const val russianKeys = "йцукенгшщзфывапролдячсмить"
 private fun fromWrongKeyboard(word: String): String? {
     if (word.length < 4 || !word.all { it in 'a'..'z' }) return null
-    val converted = buildString {
-        for (c in word) {
-            val index = latinKeys.indexOf(c)
-            if (index < 0) return null
-            append(russianKeys[index])
-        }
-    }
+    val converted = word.map { russianKeys[latinKeys.indexOf(it)] }.joinToString("")
     return converted.takeIf { it != word }
 }
 
