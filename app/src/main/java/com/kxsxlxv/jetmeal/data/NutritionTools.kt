@@ -242,10 +242,16 @@ internal fun rankFoodCandidates(
     val ranked = candidates.asSequence().mapNotNull { candidate ->
         val match = smartFoodMatch(candidate,parsed) ?: return@mapNotNull null
         candidate.copy(matchConfidence=match.relevance,matchReason=match.reason)
-    }.sortedWith(compareByDescending<FoodCandidate> { it.matchConfidence }
-        // Nutrient intent is explicit (e.g. "белковый йогурт").
-        // Compare per 100 kcal or 100 g/ml, never per arbitrary reference serving.
+    }.sortedWith(compareByDescending<FoodCandidate> {
+        // When a macro was explicitly requested, all strong name matches
+        // compete on nutrition rather than generic name brevity. Weak
+        // aliases/typos still cannot outrank a literal product match.
+        if (parsed.nutrient != null && it.matchConfidence >= .82) .82
+        else it.matchConfidence
+    }
+        // Per 100 kcal for protein, per 100 g/ml for calorie or fat density.
         .thenByDescending { nutrientSearchValue(it,parsed.nutrient) }
+        .thenByDescending { it.matchConfidence }
         // For a selected meal, observed meals outrank globally frequent foods.
         .thenByDescending { candidateMealCount(it) > 0 }
         .thenByDescending { candidateMealCount(it) }
