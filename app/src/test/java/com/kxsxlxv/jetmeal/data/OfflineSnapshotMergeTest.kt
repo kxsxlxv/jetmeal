@@ -76,4 +76,15 @@ class OfflineSnapshotMergeTest {
         assertEquals(2,ranges.size)
         assertEquals(date("2026-10-01"),ranges.first().end)
     }
+    @Test fun backgroundPrefetchCannotRevertNewerEntriesInsideAlreadyCachedDates() {
+        val live=snapshot("2026-10-01","2026-11-01",
+            entry("new","2026-10-05",300.0))
+        val delayedPrefetch=snapshot("2026-07-01","2027-01-01",
+            entry("old","2026-10-05",100.0),entry("july","2026-07-10"))
+        val merged=mergeOfflineSnapshots(live,delayedPrefetch,preserveExisting=true)
+        assertEquals(listOf("july","new"),merged.entries.map{it.id})
+        assertFalse(merged.entries.any { it.id=="old" })
+        assertTrue(merged.covers(date("2026-07-01"),date("2027-01-01")))
+    }
+
 }
