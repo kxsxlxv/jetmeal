@@ -103,8 +103,12 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         // to cancel foreground refreshes and restart all progress animations.
                         if (reload) {
                             widgetCoordinator?.requestSync()
-                            refresh()
                             restoreCatalogueCount()
+                            // Catalogue download must not depend on a successful
+                            // diary or profile request. Those routes can fail
+                            // independently during an otherwise online login.
+                            warmCatalogue()
+                            refresh()
                         }
                     }
                     is SessionStatus.NotAuthenticated -> {
@@ -125,9 +129,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     }
                     is SessionStatus.RefreshFailure -> {
                         repository.diagnostics?.authState(ConnectionAuthState.Recovering)
+                        val persistedUser=repository.client.auth.currentUserOrNull()
                         mutable.update { it.copy(authLoading = false, authRecovering = true,
+                            // A retained authenticated identity can read its
+                            // encrypted cache even while token refresh is offline.
+                            email = it.email ?: persistedUser?.email,
                             error = sessionRefreshError ?: repository.authFailures.latest?.let(UserErrors::sessionRecoveryMessage)
                                 ?: UserErrors.SESSION_RECOVERING) }
+                        if(persistedUser!=null && offline?.onlineNow()==false) {
+                            restoreCatalogueCount()
+                            refresh()
+                        }
                     }
                     else -> Unit
                 }
