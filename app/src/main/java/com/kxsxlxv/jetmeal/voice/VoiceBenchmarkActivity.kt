@@ -1,7 +1,6 @@
 package com.kxsxlxv.jetmeal.voice
 
 import android.Manifest
-import android.app.Activity
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -51,6 +50,8 @@ class VoiceBenchmarkActivity : ComponentActivity() {
     private var recorded = mutableStateOf<RecordedPcm?>(null)
     private var runs = mutableStateOf(emptyList<BenchmarkResult>())
     private var recorder: AudioRecord? = null
+    private var downloadProgress = mutableStateOf<Pair<Long,Long>?>(null)
+    private var downloadDialog = mutableStateOf(false)
 
     private val microphonePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -64,8 +65,12 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         setContent {
             JetmealTheme {
                 VoiceBenchmarkScreen(recording.value,busy.value,info.value,recorded.value,runs.value,
+                    downloadProgress.value,downloadDialog.value,
                     onRecord={ requestRecording() },onStop={ stopRecording() },
-                    onRun={ runSystemBenchmark() },onClose={ finish() })
+                    onRun={ requestBenchmark() },
+                    onConfirmDownload={ downloadDialog.value=false; runComparison() },
+                    onCancelDownload={ downloadDialog.value=false },
+                    onClose={ finish() })
             }
         }
     }
@@ -142,26 +147,55 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         runCatching {recorder?.stop()}
     }
 
-    private fun runSystemBenchmark() {
-        if(busy.value || recording.value) return
+    private fun requestBenchmark() {
+        if (busy.value || recording.value || recorded.value == null) return
+        val model=File(File(filesDir,"asr_models"),WhisperModelMetadata.NAME)
+        if (!model.isFile || model.length()!=WhisperModelMetadata.BYTES) {
+            downloadDialog.value=true
+        } else runComparison()
+    }
+
+    /** Google/Android and Whisper are executed sequentially from exactly the
+     * same file; a failure in one never substitutes the other's output. */
+    private fun runComparison() {
+        if (busy.value || recording.value) return
         val pcm=recorded.value ?: return
         busy.value=true
+        downloadProgress.value=null
         runs.value=listOf(
-            BenchmarkResult("Whisper Tiny",status="Движок ещё не интегрирован; транскрибации нет."),
-            BenchmarkResult("Qwen3-ASR-0.6B",status="Движок ещё не интегрирован; транскрибации нет."),
-            BenchmarkResult("Android SpeechRecognizer",status="Обработка одного и того же PCM…"))
+            BenchmarkResult("Системный распознаватель (Google / OEM)",
+                status="Распознавание PCM…"),
+            BenchmarkResult("Whisper Tiny (whisper.cpp)",
+                status="Ожидание завершения системного распознавателя…"))
         lifecycleScope.launch {
             try {
-                val google=transcribeSystemAudio(pcm)
-                runs.value=runs.value.map { if(it.engine=="Android SpeechRecognizer") google else it }
-                info.value="Экспериментальный прогон закончен. Поддержку подачи PCM системным сервисом необходимо проверить на устройстве."
-            } catch(c:CancellationException) { throw c }
-            catch(e:Exception) {
-                runs.value=runs.value.map {
-                    if(it.engine=="Android SpeechRecognizer")
-                        BenchmarkResult(it.engine,status="Ошибка: ${e.message}") else it
-                }
-            } finally { busy.value=false }
+                val system = try { transcribeSystemAudio(pcm) }
+                catch(c:CancellationException) { throw c }
+                catch(e:Exception) { BenchmarkResult("Системный распознаватель (Google / OEM)",
+                    status="Ошибка: ${e.message}") }
+                runs.value=listOf(system,runs.value[1].copy(status="Подготовка Whisper Tiny…"))
+                val whisper=try {
+                    val provision=WhisperModelRepository(this@VoiceBenchmarkActivity)
+                        .prepare { downloaded,total ->
+                            withContext(Dispatchers.Main) {
+                                downloadProgress.value=downloaded to total
+                                info.value="Загрузка Whisper Tiny: ${downloaded / 1_000_000} / ${total / 1_000_000} МБ"
+                            }
+                        }
+                    runs.value=listOf(system,runs.value[1].copy(status="Инициализация и транскрибация Whisper…"))
+                    runWhisperTranscription(pcm,provision)
+                } catch(c:CancellationException) { throw c }
+                catch(e:Exception) { BenchmarkResult("Whisper Tiny (whisper.cpp)",
+                    status="Ошибка: ${e.message}") }
+                catch(e:LinkageError) { BenchmarkResult("Whisper Tiny (whisper.cpp)",
+                    status="Нативная библиотека не загрузилась: ${e.message}") }
+                runs.value=listOf(system,whisper)
+                downloadProgress.value=null
+                info.value="Сравнение завершено. Результат системного сервиса зависит от поддержки PCM на устройстве."
+            } finally {
+                busy.value=false
+                downloadProgress.value=null
+            }
         }
     }
 
@@ -171,7 +205,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
      */
     private suspend fun transcribeSystemAudio(pcm:RecordedPcm):BenchmarkResult {
         if(!SpeechRecognizer.isRecognitionAvailable(this))
-            return BenchmarkResult("Android SpeechRecognizer",status="Системная служба распознавания недоступна.")
+            return BenchmarkResult("Системный распознаватель (Google / OEM)",status="Системная служба распознавания недоступна.")
         val onDevice=SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
         val recognizer=if(onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
             else SpeechRecognizer.createSpeechRecognizer(this)
@@ -225,7 +259,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     }
                     val ended=SystemClock.elapsedRealtimeNanos()
                     val total=(ended-started)/1_000_000
-                    BenchmarkResult("Android SpeechRecognizer",
+                    BenchmarkResult("Системный распознаватель (Google / OEM)",
                         transcript=outcome.first,
                         status=if(outcome.second==null) "Получен результат (источник PCM не подтверждён)"
                             else "Ошибка распознавателя: код ${outcome.second}",
@@ -260,18 +294,30 @@ internal data class RecordedPcm(val file:File,val bytes:Long,val durationMs:Long
 internal data class BenchmarkResult(
     val engine:String, val transcript:String?=null, val status:String,
     val initializationMs:Long?=null,val processingMs:Long?=null,
-    val totalMs:Long?=null,val mode:String?=null)
+    val totalMs:Long?=null,val mode:String?=null,
+    val downloadMs:Long?=null,val verificationMs:Long?=null)
 
 @Composable
 private fun VoiceBenchmarkScreen(
     recording:Boolean,busy:Boolean,info:String,audio:RecordedPcm?,
-    results:List<BenchmarkResult>,onRecord:()->Unit,onStop:()->Unit,
-    onRun:()->Unit,onClose:()->Unit,
+    results:List<BenchmarkResult>,
+    downloadProgress:Pair<Long,Long>?,downloadDialog:Boolean,
+    onRecord:()->Unit,onStop:()->Unit,onRun:()->Unit,
+    onConfirmDownload:()->Unit,onCancelDownload:()->Unit,onClose:()->Unit,
 ) {
+    if(downloadDialog) AlertDialog(
+        onDismissRequest=onCancelDownload,
+        title={ Text("Скачать Whisper Tiny?") },
+        text={ Text("Jetmeal автоматически загрузит модель (~78 МБ) в память телефона. " +
+            "Повторно скачивать её не понадобится. При использовании мобильного интернета расходуется трафик.") },
+        confirmButton={ TextButton(onClick=onConfirmDownload) { Text("Скачать и протестировать") } },
+        dismissButton={ TextButton(onClick=onCancelDownload) { Text("Отмена") } }
+    )
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())
         .safeDrawingPadding().padding(20.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         Text("Лаборатория распознавания",style=MaterialTheme.typography.headlineMedium)
-        Text("Запишите фразу один раз. Этот экран ничего не добавляет в дневник.",
+        Text("Запишите фразу один раз. Сначала работает системное распознавание, " +
+            "затем Whisper Tiny. Данные не добавляются в дневник.",
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         Text(info,style=MaterialTheme.typography.bodyMedium)
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -284,11 +330,15 @@ private fun VoiceBenchmarkScreen(
         }
         if(audio!=null) Text("Аудио: ${audio.durationMs} мс · ${audio.bytes} байт, 16 кГц / mono PCM.",
             style=MaterialTheme.typography.labelMedium)
+        if(downloadProgress!=null) {
+            LinearProgressIndicator(progress={ downloadProgress.first.toFloat() /
+                downloadProgress.second.coerceAtLeast(1).toFloat() },
+                modifier=Modifier.fillMaxWidth())
+        }
         Text("Транскрипции и задержки",style=MaterialTheme.typography.titleLarge)
         val cards=if(results.isNotEmpty()) results else listOf(
-            BenchmarkResult("Whisper Tiny",status="Не запускалась"),
-            BenchmarkResult("Qwen3-ASR-0.6B",status="Не запускалась"),
-            BenchmarkResult("Android SpeechRecognizer",status="Не запускалась"))
+            BenchmarkResult("Системный распознаватель (Google / OEM)",status="Не запускался"),
+            BenchmarkResult("Whisper Tiny (whisper.cpp)",status="Не запускалась"))
         cards.forEach { item ->
             OutlinedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -296,9 +346,11 @@ private fun VoiceBenchmarkScreen(
                     Text(item.status,style=MaterialTheme.typography.bodySmall)
                     item.mode?.let { Text(it,style=MaterialTheme.typography.labelSmall) }
                     item.transcript?.let { Text(it,style=MaterialTheme.typography.bodyLarge) }
-                    item.initializationMs?.let { Text("Готовность сервиса: ${it} мс") }
-                    item.processingMs?.let { Text("После готовности: ${it} мс") }
-                    item.totalMs?.let { Text("Всего: ${it} мс") }
+                    item.downloadMs?.let { Text("Загрузка файла модели: ${it} мс") }
+                    item.verificationMs?.let { Text("Проверка SHA-256: ${it} мс") }
+                    item.initializationMs?.let { Text("Инициализация: ${it} мс") }
+                    item.processingMs?.let { Text("Транскрибация: ${it} мс") }
+                    item.totalMs?.let { Text("Загрузка в RAM + распознавание: ${it} мс") }
                 }
             }
         }
