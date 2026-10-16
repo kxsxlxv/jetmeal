@@ -228,8 +228,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val zone=ZoneId.systemDefault()
                 val current=LocalDate.now(zone)
                 val quarterStart=TimelinePeriods.start(TimeScale.Quarter,current)
-                val start=quarterStart.minusMonths(3)
-                val end=quarterStart.plusMonths(3)
+                // Include Monday-based budget context around both quarters.
+                val start=quarterStart.minusMonths(3).minusDays(7)
+                val end=quarterStart.plusMonths(3).plusDays(7)
                 // Avoid a redundant fetch if another period already filled it.
                 val cached=diary.cachedSnapshotFor(start,end)
                 if (cached == null && diary.onlineNow()) {
@@ -306,6 +307,19 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             val navigation=mutable.value
             mutable.update { it.copy(busy=true,refreshing=showPullIndicator,error=null) }
             try {
+                // Do not wait for a doomed HTTP/DNS request when Android has no
+                // validated network. This also works on cold app startup.
+                if(offline?.onlineNow()==false) {
+                    val nav=mutable.value
+                    val (cacheStart,cacheEnd)=requiredRange(nav)
+                    val cached=offline.cachedSnapshotFor(cacheStart,cacheEnd)
+                    if(cached!=null) {
+                        displaySnapshot(cached,nav,true)
+                        mutable.update { it.copy(connectionWarning=
+                            "Нет подключения к интернету. Показаны сохранённые данные.") }
+                    } else displayUncachedPending(nav)
+                    return@launch
+                }
                 val zone=ZoneId.systemDefault()
                 // Treat the Supabase request, not Android's network icon, as
                 // the source of truth for server availability. Outbox replay is
@@ -753,7 +767,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         if (result.synced > 0) catalogueOwner = null
         mutable.update {
             it.copy(
-                notice=if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
+                notice=if(pending==0 && !connected) "Неотправленная запись удалена с телефона."
+                    else if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
                     else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
                 pendingWrites=pending,blockedWrites=result.blocked)
         }
