@@ -77,25 +77,37 @@ data class OfflineSnapshot(
 
 /** Merge only confirmed ranges; an empty incoming day removes stale deleted
  * entries for that day, while untouched ranges and their coverage survive. */
-fun mergeOfflineSnapshots(previous: OfflineSnapshot?, incoming: OfflineSnapshot): OfflineSnapshot {
+fun mergeOfflineSnapshots(
+    previous: OfflineSnapshot?, incoming: OfflineSnapshot, preserveExisting: Boolean = false
+): OfflineSnapshot {
     if (previous == null) return incoming
     val zone = ZoneId.systemDefault()
-    val inNewRange: (DiaryEntry) -> Boolean = {
+    fun alreadyCovered(day:LocalDate) = previous.coverage.any {
+        day >= it.start && day < it.end
+    }
+    val kept = if(preserveExisting) previous.entries else previous.entries.filterNot {
         val day = it.consumedAt.atZone(zone).toLocalDate()
         day >= incoming.start && day < incoming.end
     }
-    val kept = previous.entries.filterNot(inNewRange)
-    val entries = (kept + incoming.entries).distinctBy { it.id }
+    val incomingEntries = if(preserveExisting) incoming.entries.filterNot {
+        alreadyCovered(it.consumedAt.atZone(zone).toLocalDate())
+    } else incoming.entries
+    val entries = (kept + incomingEntries).distinctBy { it.id }
         .sortedWith(compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id })
+    val keptZeros=if(preserveExisting) previous.zeroDays
+        else previous.zeroDays.filterNotTo(mutableSetOf()) {
+            it >= incoming.start && it < incoming.end
+        }
+    val incomingZeros=if(preserveExisting) incoming.zeroDays.filterNot(::alreadyCovered)
+        else incoming.zeroDays
     return OfflineSnapshot(
         start=minOf(previous.start,incoming.start),
         end=maxOf(previous.end,incoming.end),
         entries=entries,
-        targets=incoming.targets ?: previous.targets,
-        history=if(incoming.history.isNotEmpty()) incoming.history else previous.history,
-        zeroDays=previous.zeroDays.filterNotTo(mutableSetOf()) {
-            it >= incoming.start && it < incoming.end
-        } + incoming.zeroDays,
+        targets=if(preserveExisting) previous.targets ?: incoming.targets else incoming.targets ?: previous.targets,
+        history=if(preserveExisting && previous.history.isNotEmpty()) previous.history
+            else if(incoming.history.isNotEmpty()) incoming.history else previous.history,
+        zeroDays=keptZeros + incomingZeros,
         coverage=mergedCoverage(previous.coverage + incoming.coverage),
     )
 }
@@ -223,6 +235,11 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
 
     suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { previous,foods,queue ->
         Triple(mergeOfflineSnapshots(previous,snapshot),foods,queue)
+    }
+    /** Background preload fills only missing days; it must never overwrite a
+     * newer foreground fetch or locally confirmed post-sync state. */
+    suspend fun rememberHistorical(snapshot:OfflineSnapshot) = vault.change(owner()) { previous,foods,queue ->
+        Triple(mergeOfflineSnapshots(previous,snapshot,preserveExisting=true),foods,queue)
     }
     suspend fun rememberFoods(foods: List<FoodCandidate>) = vault.change(owner()) { snapshot,_,queue ->
         Triple(snapshot,foods,queue)
