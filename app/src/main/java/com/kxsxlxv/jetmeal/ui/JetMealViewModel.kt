@@ -496,6 +496,24 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         )}
     }
 
+    /** Show queued changes even if the target day has never been opened
+     * online. Do not invent zeroes for days without downloaded history. */
+    private suspend fun displayUncachedPending(nav:AppState) {
+        val additions=runCatching {
+            applyPending(emptyList(),offline?.pending().orEmpty())
+        }.getOrDefault(emptyList())
+        val zone=ZoneId.systemDefault()
+        val status=runCatching { offline?.status() }.getOrNull()
+        if (mutable.value.day!=nav.day || mutable.value.scale!=nav.scale) return
+        mutable.update { it.copy(
+            entries=additions.filter { row -> row.consumedAt.atZone(zone).toLocalDate()==nav.day },
+            pendingWrites=status?.remaining ?: 0,blockedWrites=status?.blocked ?: 0,
+            cachedOffline=true,week=null,weekNutrition=Nutrition.Zero,
+            monthCalories=emptyMap(),monthTargets=emptyMap(),
+            connectionWarning="Этот период ещё не загружен целиком. Показаны только неотправленные записи.",
+        ) }
+    }
+
     fun syncPending() {
         viewModelScope.launch {
             try {
@@ -612,8 +630,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         "Нет подключения к интернету. Показаны сохранённые данные." else it.connectionWarning) }
                     if (offline?.onlineNow()==true) refresh()
                 } else if(offline?.onlineNow()==false) {
-                    mutable.update { it.copy(connectionWarning=
-                        "Этот период ещё не сохранён на телефоне. Откройте его при подключении к интернету.") }
+                    displayUncachedPending(updated)
                 } else refresh()
             }
             return
@@ -721,23 +738,27 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     }
 
     private suspend fun persistQueued() {
-        val result=offline?.sync()
-        val pending=result?.remaining ?: 0
-        // The server has accepted the change: do not re-display a pre-write
-        // snapshot from memory after the optimistic outbox item disappears.
-        if (result != null && pending == 0) recentSnapshots.clear()
-        // Logging a shared reference can create a new private variant and
-        // owner-scoped measures. Re-warm the catalogue before later edits.
-        if ((result?.synced ?: 0) > 0) catalogueOwner = null
+        val diary=offline ?: return
+        val nav=mutable.value
+        val (start,end)=requiredRange(nav)
+        // Publish local writes instantly, before waiting for a broken network.
+        // A failed Supabase request must not hide a successfully persisted edit.
+        val cached=runCatching {diary.cachedSnapshotFor(start,end)}.getOrNull()
+        if(cached!=null) displaySnapshot(cached,nav,true)
+        else displayUncachedPending(nav)
+        val connected=diary.onlineNow()
+        val result=if(connected) diary.sync() else diary.status()
+        val pending=result.remaining
+        if (pending == 0) recentSnapshots.clear()
+        if (result.synced > 0) catalogueOwner = null
         mutable.update {
             it.copy(
                 notice=if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
                     else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
-                pendingWrites=pending,blockedWrites=result?.blocked ?: 0)
+                pendingWrites=pending,blockedWrites=result.blocked)
         }
-        // Also reconcile the widget after the server acknowledges the mutation.
-        if(pending == 0) widgetCoordinator?.requestSync()
-        refresh()
+        if(pending==0) widgetCoordinator?.requestSync()
+        if(connected) refresh()
     }
 
     fun log(candidate: FoodCandidate,quantity: Double,meal: MealPeriod,date: LocalDate,
