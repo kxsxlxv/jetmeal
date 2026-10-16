@@ -74,6 +74,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     downloadProgress.value,downloadDialog.value,
                     onRecord={ requestRecording() },onStop={ stopRecording() },
                     onRun={ requestBenchmark() },
+                    onLiveCheck={ runLiveMicrophoneTest() },
                     onConfirmDownload={ downloadDialog.value=false; runComparison() },
                     onCancelDownload={ downloadDialog.value=false },
                     onClose={ finish() })
@@ -340,6 +341,74 @@ class VoiceBenchmarkActivity : ComponentActivity() {
         } finally { recognizer.destroy() }
     }
 
+    /** Separate diagnostic when a system service rejects recorded PCM.
+     * The user must speak again. Never mix this new audio into the Whisper
+     * comparison or claim that it belongs to the original recording. */
+    private fun runLiveMicrophoneTest() {
+        if(busy.value || recording.value) return
+        busy.value=true
+        val title="Системный микрофон (отдельная запись)"
+        runs.value=runs.value.filterNot {it.engine==title}+
+            BenchmarkResult(title,status="Говорите сейчас; используется новая запись…")
+        lifecycleScope.launch {
+            try {
+                val result=try { transcribeLiveMicrophone() }
+                catch(c:CancellationException) { throw c }
+                catch(e:Exception) { BenchmarkResult(title,status="Ошибка: ${e.message}") }
+                runs.value=runs.value.filterNot {it.engine==title}+result
+            } finally { busy.value=false }
+        }
+    }
+
+    private suspend fun transcribeLiveMicrophone():BenchmarkResult {
+        val title="Системный микрофон (отдельная запись)"
+        if(!SpeechRecognizer.isRecognitionAvailable(this))
+            return BenchmarkResult(title,status="Служба недоступна")
+        val recognizer=SpeechRecognizer.createSpeechRecognizer(this)
+        val started=SystemClock.elapsedRealtimeNanos()
+        var readyNs:Long?=null
+        return try {
+            val result=withTimeout(18_000) {
+                suspendCancellableCoroutine<Pair<String?,Int?>> { continuation ->
+                    fun finish(text:String?,error:Int?) {
+                        if(continuation.isActive) continuation.resume(text to error)
+                    }
+                    recognizer.setRecognitionListener(object:RecognitionListener {
+                        override fun onReadyForSpeech(params:Bundle?) {
+                            readyNs=SystemClock.elapsedRealtimeNanos()
+                        }
+                        override fun onBeginningOfSpeech()=Unit
+                        override fun onRmsChanged(rmsdB:Float)=Unit
+                        override fun onBufferReceived(buffer:ByteArray?)=Unit
+                        override fun onEndOfSpeech()=Unit
+                        override fun onError(error:Int)=finish(null,error)
+                        override fun onResults(results:Bundle?) {
+                            finish(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                ?.firstOrNull(),null)
+                        }
+                        override fun onPartialResults(partialResults:Bundle?)=Unit
+                        override fun onEvent(eventType:Int,params:Bundle?)=Unit
+                    })
+                    recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE,"ru-RU")
+                    })
+                }
+            }
+            val ended=SystemClock.elapsedRealtimeNanos()
+            BenchmarkResult(title,
+                transcript=result.first,
+                status=if(result.second==null)
+                    "Микрофон распознал речь. Это НОВАЯ запись, не исходный PCM."
+                    else "Системный сервис не распознал микрофон: ошибка ${result.second}",
+                initializationMs=readyNs?.let { (it-started)/1_000_000 },
+                processingMs=readyNs?.let {(ended-it)/1_000_000},
+                totalMs=(ended-started)/1_000_000,
+                mode="Обычный системный сервис (возможно сетевой), прямой микрофон",
+                errorCode=result.second)
+        } finally { recognizer.destroy() }
+    }
+
     override fun onDestroy() {
         stopRecording()
         recordingJob?.cancel()
@@ -374,7 +443,7 @@ private fun VoiceBenchmarkScreen(
     recording:Boolean,busy:Boolean,info:String,audio:RecordedPcm?,
     results:List<BenchmarkResult>,
     downloadProgress:Pair<Long,Long>?,downloadDialog:Boolean,
-    onRecord:()->Unit,onStop:()->Unit,onRun:()->Unit,
+    onRecord:()->Unit,onStop:()->Unit,onRun:()->Unit,onLiveCheck:()->Unit,
     onConfirmDownload:()->Unit,onCancelDownload:()->Unit,onClose:()->Unit,
 ) {
     if(downloadDialog) AlertDialog(
@@ -406,6 +475,14 @@ private fun VoiceBenchmarkScreen(
             LinearProgressIndicator(progress={ downloadProgress.first.toFloat() /
                 downloadProgress.second.coerceAtLeast(1).toFloat() },
                 modifier=Modifier.fillMaxWidth())
+        }
+        if(!busy && results.firstOrNull()?.errorCode!=null) {
+            Text("Система не распознала сохранённый PCM. Проверьте отдельно, "+
+                "работает ли штатный микрофон: это потребует повторно произнести фразу.",
+                style=MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick=onLiveCheck,modifier=Modifier.fillMaxWidth()) {
+                Text("Проверить системный микрофон отдельно")
+            }
         }
         Text("Транскрипции и задержки",style=MaterialTheme.typography.titleLarge)
         val cards=if(results.isNotEmpty()) results else listOf(
