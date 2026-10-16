@@ -31,6 +31,10 @@
             android:name=".voice.VoiceBenchmarkActivity"
             android:exported="false"
             android:theme="@style/Theme.Jetmeal" />
+        <activity
+            android:name=".voice.MlKitSpeechActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Jetmeal" />
         <receiver
             android:name=".widget.HeroWidgetReceiver"
             android:exported="true"
