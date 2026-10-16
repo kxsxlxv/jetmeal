@@ -122,6 +122,8 @@ dependencies {
     implementation(libs.kotlinx.serialization)
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.androidx.work.runtime)
+    // Google's experimental on-device streaming speech API; Basic ru-RU on vivo X300.
+    implementation("com.google.mlkit:genai-speech-recognition:1.0.0-alpha1")
     testImplementation(libs.junit)
     testImplementation(libs.ktor.mock)
     testImplementation(libs.kotlinx.coroutines.test)

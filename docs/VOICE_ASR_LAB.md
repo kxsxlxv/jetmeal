@@ -1,3 +1,36 @@
+## Google ML Kit Speech — isolated streaming experiment (2026-10-17)
+
+The lab now offers **Google ML Kit GenAI Speech Recognition 1.0.0-alpha1**
+through Settings → Experiments → Google ML Kit · потоковая речь and directly
+from the existing Whisper comparison screen.
+
+- Uses official Google's `SpeechRecognition.getClient` and
+  `SpeechRecognizerOptions.Mode.MODE_BASIC`, locale `ru-RU` (beta), with
+  `AudioSource.fromMic()`. No saved PCM is passed to this test.
+- `checkStatus()` must report AVAILABLE. If DOWNLOADABLE, JetMeal asks for
+  explicit consent and downloads using ML Kit's own `download()` Flow, with
+  progress, model-check timing, and error diagnostics. DOWNLOADING and
+  UNAVAILABLE are reported without pretending the microphone worked.
+- Collects `PartialTextResponse` and `FinalTextResponse` in real time;
+  partial hypotheses replace one another and finalized segments accumulate
+  without overwriting earlier text. Users can call `stopRecognition()`;
+  the final result and elapsed times remain displayed. A bounded watchdog
+  prevents indefinite waits on close.
+- Shows time to first partial, time to first final, model-check overhead,
+  download time, number of updates and total recognition duration.
+- **Important:** this is not Gboard and does not guarantee the same accuracy.
+  Basic is the generally available on-device model, not the newer Advanced
+  model restricted to Pixel 10/11. Google classifies this API as alpha, so
+  availability on vivo X300 depends on the installed Google services/model.
+- The experiment is an independent **live microphone** take; it must not be
+  displayed as a four-way identical-recording contest with Whisper or the
+  legacy Android PCM injection experiment.
+- No food parsing, database mutations, microphone background services or
+  permanent audio storage are added.
+
+Official guide: https://developers.google.com/ml-kit/genai/speech-recognition/android
+Official sample: https://github.com/googlesamples/mlkit/tree/master/android/speech
+
 ## Three-engine comparison: multilingual Whisper Base (2026-10-17)
 
 Whisper Base multilingual is included as the second local model with exactly

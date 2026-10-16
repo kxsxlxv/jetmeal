@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import com.kxsxlxv.jetmeal.voice.VoiceBenchmarkActivity
+import com.kxsxlxv.jetmeal.voice.MlKitSpeechActivity
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -151,6 +152,15 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
                     onClick={context.startActivity(Intent(context,VoiceBenchmarkActivity::class.java))},
                     modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
                     Text("Тест распознавания речи (эксперимент)")
+                }
+                Text("Google ML Kit: отдельная потоковая диктовка на русском. "+
+                    "Текст появляется по мере речи, с ручной остановкой.",
+                    style=MaterialTheme.typography.bodySmall,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(
+                    onClick={context.startActivity(Intent(context,MlKitSpeechActivity::class.java))},
+                    modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+                    Text("Google ML Kit · потоковая речь")
                 }
             }
             HorizontalDivider()
