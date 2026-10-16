@@ -33,6 +33,8 @@ data class AppState(
     val cachedOffline: Boolean = false,
     val connectionWarning: String? = null,
     val catalogueCount: Int = 0,
+    val offlineCoveredDays: Int = 0,
+    val offlineHistoryLoading: Boolean = false,
     val catalogueMeasures: Map<String,List<FoodMeasure>> = emptyMap(),
     val catalogueLoading: Boolean = false,
     val catalogueError: String? = null,
@@ -180,7 +182,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         viewModelScope.launch {
             val count = runCatching { diary.catalogueCount() }.getOrNull() ?: return@launch
             val measures = runCatching {diary.cachedMeasures()}.getOrDefault(emptyMap())
-            mutable.update { it.copy(catalogueCount = count,catalogueMeasures=measures) }
+            val days = runCatching { diary.coveredDays() }.getOrDefault(0)
+            mutable.update { it.copy(catalogueCount = count,catalogueMeasures=measures,
+                offlineCoveredDays=days) }
         }
     }
 
@@ -227,6 +231,17 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
 
     fun downloadCatalogue() = warmCatalogue(force = true)
 
+    /** Manual refresh of both encrypted catalogue and the nearby history. */
+    fun downloadOfflineData() {
+        warmCatalogue(force=true)
+        viewModelScope.launch {
+            val snap=runCatching { offline?.cachedSnapshot() }.getOrNull()
+            offlineHistoryOwner=null
+            if(snap!=null) prepareOfflineHistory(snap)
+            else refresh()
+        }
+    }
+
     /** Prefetch six calendar months for offline Day/Week/Month/Quarter
      * navigation without delaying the visible timeline or food search.
      * Snapshots are merged instead of replacing one another. */
@@ -236,6 +251,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val owner=repo.client.auth.currentUserOrNull()?.id ?: return
         if (offlineHistoryOwner==owner || offlineHistoryJob?.isActive==true) return
         offlineHistoryJob=viewModelScope.launch(Dispatchers.IO) {
+            mutable.update { it.copy(offlineHistoryLoading=true) }
             try {
                 val zone=ZoneId.systemDefault()
                 val current=LocalDate.now(zone)
@@ -259,6 +275,11 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error:Exception) {
                 repo.diagnostics?.failure(ConnectionOperation.Diary,error,ConnectionStage.Cache)
+            } finally {
+                if(repo.client.auth.currentUserOrNull()?.id==owner) {
+                    val days=runCatching { diary.coveredDays() }.getOrDefault(0)
+                    mutable.update { it.copy(offlineHistoryLoading=false,offlineCoveredDays=days) }
+                }
             }
         }
     }
@@ -377,6 +398,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 // successful Supabase download as a remote outage.
                 try {
                     offline?.remember(snap)
+                    val days=offline?.coveredDays() ?: 0
+                    mutable.update { it.copy(offlineCoveredDays=days) }
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
                     // No local cache was saved, but live data can still be shown.
