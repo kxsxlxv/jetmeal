@@ -48,6 +48,13 @@ if (providers.gradleProperty("requireReleaseSigning").orNull == "true") {
 
 android {
     namespace = "com.kxsxlxv.jetmeal"
+    ndkVersion = "29.0.14206865"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
     compileSdk {
         version = release(37) { minorApiLevel = 1 }
     }
@@ -56,6 +63,9 @@ android {
         applicationId = "com.kxsxlxv.jetmeal"
         minSdk = 35
         targetSdk = 37
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
         versionCode = appVersionCode
         versionName = appVersionName
 
