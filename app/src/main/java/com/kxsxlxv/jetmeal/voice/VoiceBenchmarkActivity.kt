@@ -79,6 +79,7 @@ class VoiceBenchmarkActivity : ComponentActivity() {
                     onRecord={ requestRecording() },onStop={ stopRecording() },
                     onRun={ requestBenchmark() },
                     onLiveCheck={ runLiveMicrophoneTest() },
+                    onOpenMlKit={ startActivity(Intent(this, MlKitSpeechActivity::class.java)) },
                     onConfirmDownload={ downloadDialog.value=false; runComparison() },
                     onCancelDownload={ downloadDialog.value=false },
                     onClose={ finish() })
@@ -488,6 +489,7 @@ private fun VoiceBenchmarkScreen(
     results:List<BenchmarkResult>,
     downloadProgress:Pair<Long,Long>?,downloadDialog:Boolean,
     onRecord:()->Unit,onStop:()->Unit,onRun:()->Unit,onLiveCheck:()->Unit,
+    onOpenMlKit:()->Unit,
     onConfirmDownload:()->Unit,onCancelDownload:()->Unit,onClose:()->Unit,
 ) {
     if(downloadDialog) AlertDialog(
@@ -530,6 +532,11 @@ private fun VoiceBenchmarkScreen(
             OutlinedButton(onClick=onLiveCheck,modifier=Modifier.fillMaxWidth()) {
                 Text("Проверить системный микрофон отдельно")
             }
+        }
+        OutlinedButton(
+            onClick=onOpenMlKit,enabled=!recording && !busy,
+            modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
+            Text("Google ML Kit · потоковый микрофон")
         }
         Text("Транскрипции и задержки",style=MaterialTheme.typography.titleLarge)
         val cards=if(results.isNotEmpty()) results else listOf(
