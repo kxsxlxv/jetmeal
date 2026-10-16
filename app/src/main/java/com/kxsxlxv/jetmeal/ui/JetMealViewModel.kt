@@ -252,7 +252,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                     if (repo.client.auth.currentUserOrNull()?.id != owner) return@launch
                     // Persist the exact server coverage; leave previously visited
                     // date intervals and all unsent mutations untouched.
-                    diary.remember(OfflineSnapshot(start,end,entries,
+                    diary.rememberHistorical(OfflineSnapshot(start,end,entries,
                         seed.targets,seed.history,zero))
                 }
                 offlineHistoryOwner=owner
