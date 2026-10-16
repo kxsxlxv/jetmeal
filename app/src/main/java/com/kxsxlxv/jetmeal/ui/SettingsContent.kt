@@ -142,9 +142,9 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
             HorizontalDivider()
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text("Эксперименты",style=MaterialTheme.typography.titleLargeEmphasized)
-                Text("Голосовая лаборатория: одна запись, два распознавателя — " +
-                    "системный (Google/OEM) и локальный Whisper Tiny. " +
-                    "Подробные задержки; модель Whisper загружается внутри Jetmeal.",
+                Text("Голосовая лаборатория: одна запись для системного Android " +
+                    "и двух локальных моделей Whisper Tiny / Base через whisper.cpp. " +
+                    "Транскрипции, время запуска и обработки, автоматическая загрузка моделей.",
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(
