@@ -44,6 +44,24 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+data class CachedDateRange(val start: LocalDate, val end: LocalDate) {
+    init { require(start < end) }
+    fun contains(first: LocalDate, last: LocalDate): Boolean = start <= first && end >= last
+}
+
+/** Exact intervals that were downloaded. Gaps must never be silently presented
+ * as zero-calorie days when the user opens an unvisited period offline. */
+fun mergedCoverage(ranges: List<CachedDateRange>): List<CachedDateRange> {
+    val merged = mutableListOf<CachedDateRange>()
+    for (range in ranges.sortedWith(compareBy<CachedDateRange> { it.start }.thenBy { it.end })) {
+        val last = merged.lastOrNull()
+        if (last != null && range.start <= last.end) {
+            merged[merged.lastIndex] = CachedDateRange(last.start, maxOf(last.end,range.end))
+        } else merged.add(range)
+    }
+    return merged
+}
+
 data class OfflineSnapshot(
     val start: LocalDate,
     val end: LocalDate,
@@ -51,7 +69,36 @@ data class OfflineSnapshot(
     val targets: Targets?,
     val history: List<TargetVersion>,
     val zeroDays: Set<LocalDate>,
-)
+    val coverage: List<CachedDateRange> = listOf(CachedDateRange(start,end)),
+) {
+    fun covers(start: LocalDate, end: LocalDate): Boolean =
+        coverage.any { it.contains(start,end) }
+}
+
+/** Merge only confirmed ranges; an empty incoming day removes stale deleted
+ * entries for that day, while untouched ranges and their coverage survive. */
+fun mergeOfflineSnapshots(previous: OfflineSnapshot?, incoming: OfflineSnapshot): OfflineSnapshot {
+    if (previous == null) return incoming
+    val zone = ZoneId.systemDefault()
+    val inNewRange: (DiaryEntry) -> Boolean = {
+        val day = it.consumedAt.atZone(zone).toLocalDate()
+        day >= incoming.start && day < incoming.end
+    }
+    val kept = previous.entries.filterNot(inNewRange)
+    val entries = (kept + incoming.entries).distinctBy { it.id }
+        .sortedWith(compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id })
+    return OfflineSnapshot(
+        start=minOf(previous.start,incoming.start),
+        end=maxOf(previous.end,incoming.end),
+        entries=entries,
+        targets=incoming.targets ?: previous.targets,
+        history=if(incoming.history.isNotEmpty()) incoming.history else previous.history,
+        zeroDays=previous.zeroDays.filterNotTo(mutableSetOf()) {
+            it >= incoming.start && it < incoming.end
+        } + incoming.zeroDays,
+        coverage=mergedCoverage(previous.coverage + incoming.coverage),
+    )
+}
 
 data class PendingDiaryMutation(
     val id: String,
@@ -144,13 +191,15 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
         return OfflineSyncStatus(queue.size,queue.count { it.blocked })
     }
     suspend fun cachedSnapshot(): OfflineSnapshot?=vault.readState(owner()).first
+    suspend fun cachedSnapshotFor(start: LocalDate, end: LocalDate): OfflineSnapshot? =
+        cachedSnapshot()?.takeIf { it.covers(start,end) }
 
     suspend fun catalogueCount(): Int = vault.readState(owner()).second.map { it.foodId }.distinct().size
     suspend fun cachedMeasures(): Map<String,List<FoodMeasure>> =
         vault.readState(owner()).second.associate { it.id to it.measures }
 
-    suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { _,foods,queue ->
-        Triple(snapshot,foods,queue)
+    suspend fun remember(snapshot: OfflineSnapshot) = vault.change(owner()) { previous,foods,queue ->
+        Triple(mergeOfflineSnapshots(previous,snapshot),foods,queue)
     }
     suspend fun rememberFoods(foods: List<FoodCandidate>) = vault.change(owner()) { snapshot,_,queue ->
         Triple(snapshot,foods,queue)
@@ -515,6 +564,9 @@ private fun encodeSnapshot(v:OfflineSnapshot)=buildJsonObject {
         buildJsonObject {put("date",it.date.toString());put("targets",encodeTargets(it.targets))}
     }))
     put("zero",JsonArray(v.zeroDays.map {JsonPrimitive(it.toString())}))
+    put("coverage",JsonArray(v.coverage.map { range -> buildJsonObject {
+        put("start",range.start.toString());put("end",range.end.toString())
+    } }))
 }
 private fun decodeSnapshot(v:JsonObject)=OfflineSnapshot(
     LocalDate.parse(v.string("start")),LocalDate.parse(v.string("end")),
@@ -525,4 +577,8 @@ private fun decodeSnapshot(v:JsonObject)=OfflineSnapshot(
             decodeTargets(it.jsonObject.getValue("targets").jsonObject))
     },
     v.getValue("zero").jsonArray.map {LocalDate.parse(it.jsonPrimitive.content)}.toSet(),
+    v["coverage"]?.jsonArray?.map { range -> CachedDateRange(
+        LocalDate.parse(range.jsonObject.string("start")),
+        LocalDate.parse(range.jsonObject.string("end"))
+    ) } ?: listOf(CachedDateRange(LocalDate.parse(v.string("start")),LocalDate.parse(v.string("end")))),
 )
