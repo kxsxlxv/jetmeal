@@ -111,6 +111,29 @@ data class PendingDiaryMutation(
     val chosenMeasure: ChosenMeasure? = null,
 )
 
+/** Editing a not-yet-sent add changes that add in place, preserving its
+ * idempotency UUID. Once a request was attempted, only server replay is safe. */
+fun amendUnsentLog(log:PendingDiaryMutation, amount:Double, chosen:ChosenMeasure?):PendingDiaryMutation {
+    require(log.kind=="log_food" && log.preview != null && !log.attempted && !log.blocked)
+    require(amount.isFinite() && amount>0.0)
+    val input=buildJsonObject {
+        log.input.forEach { (key,value) ->
+            if(key !in setOf("quantity","measure_id","measure_quantity")) put(key,value)
+        }
+        put("quantity",amount)
+        chosen?.let { put("measure_id",it.measure.id);put("measure_quantity",it.quantity) }
+    }
+    val entry=log.preview
+    val preview=entry.copy(quantity=amount,
+        nutrition=entry.basisNutrition*(amount/entry.basisAmount),
+        enteredMeasureLabel=chosen?.measure?.label,
+        enteredMeasureKey=chosen?.measure?.key,
+        enteredMeasureQuantity=chosen?.quantity,
+        enteredMeasureBaseAmount=chosen?.measure?.baseAmount,
+        enteredMeasureApproximate=chosen?.measure?.approximate ?: false)
+    return log.copy(input=input,preview=preview)
+}
+
 data class OfflineSyncStatus(val remaining: Int, val blocked: Int, val synced: Int = 0)
 
 private data class OfflineState(
@@ -267,23 +290,10 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
             require(!log.attempted) {
                 "Запись уже отправлялась. Дождитесь синхронизации перед редактированием."
             }
-            val updatedInput=buildJsonObject {
-                log.input.forEach { (key,value) ->
-                    if(key !in setOf("quantity","measure_id","measure_quantity")) put(key,value)
-                }
-                put("quantity",amount)
-                chosen?.let { put("measure_id",it.measure.id);put("measure_quantity",it.quantity) }
-            }
-            val preview=entry.copy(quantity=amount,
-                nutrition=entry.basisNutrition*(amount/entry.basisAmount),
-                enteredMeasureLabel=chosen?.measure?.label,
-                enteredMeasureKey=chosen?.measure?.key,
-                enteredMeasureQuantity=chosen?.quantity,
-                enteredMeasureBaseAmount=chosen?.measure?.baseAmount,
-                enteredMeasureApproximate=chosen?.measure?.approximate ?: false)
+            val amended=amendUnsentLog(log,amount,chosen)
             vault.change(user) { snap,foods,queue ->
                 Triple(snap,foods,queue.map {
-                    if(it.id==log.id) it.copy(input=updatedInput,preview=preview) else it
+                    if(it.id==log.id) amended else it
                 })
             }
             vault.readState(user).third.size
