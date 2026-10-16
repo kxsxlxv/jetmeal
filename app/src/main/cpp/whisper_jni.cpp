@@ -31,7 +31,7 @@ Java_com_kxsxlxv_jetmeal_voice_WhisperNative_openModel(
     params.use_gpu = false; // Validated CPU path first; no assumed MediaTek NPU backend.
     whisper_context *context = whisper_init_from_file_with_params(path.value, params);
     if (!context) {
-        fail(env, "whisper.cpp could not initialize the multilingual Tiny model");
+        fail(env, "whisper.cpp could not initialize the selected multilingual model");
         return 0;
     }
     return reinterpret_cast<jlong>(context);
