@@ -266,7 +266,9 @@ class MlKitSpeechActivity : ComponentActivity() {
                             val accepted=consent.await()
                             if(!accepted) {
                                 MlKitComparisonResult(mode,"Загрузка отменена пользователем.",
-                                    modelCheckMs=checkMs,totalBytes=audio.bytes)
+                                    modelCheckMs=checkMs,totalBytes=speechWindow.transmittedBytes,sourceBytes=audio.bytes,
+                                    firstVoiceMs=speechWindow.firstVoiceMs,
+                                    removedSilenceMs=speechWindow.removedMs)
                             } else {
                                 val started=SystemClock.elapsedRealtime()
                                 var failed:String?=null
@@ -283,19 +285,25 @@ class MlKitSpeechActivity : ComponentActivity() {
                                 if(failed!=null || feature!=FeatureStatus.AVAILABLE) {
                                     MlKitComparisonResult(mode,"Ошибка загрузки модели: "+(failed ?:
                                         "состояние $feature"),modelCheckMs=checkMs,
-                                        downloadMs=downloadMs,totalBytes=audio.bytes)
+                                        downloadMs=downloadMs,totalBytes=speechWindow.transmittedBytes,sourceBytes=audio.bytes,
+                                    firstVoiceMs=speechWindow.firstVoiceMs,
+                                    removedSilenceMs=speechWindow.removedMs)
                                 } else {
                                     transcribeComparedMode(recognizer,mode,audio,speechWindow,checkMs,downloadMs)
                                 }
                             }
                         } else if(feature!=FeatureStatus.AVAILABLE) {
                             MlKitComparisonResult(mode,"Недоступно: checkStatus = $feature",
-                                modelCheckMs=checkMs,totalBytes=audio.bytes)
+                                modelCheckMs=checkMs,totalBytes=speechWindow.transmittedBytes,sourceBytes=audio.bytes,
+                                    firstVoiceMs=speechWindow.firstVoiceMs,
+                                    removedSilenceMs=speechWindow.removedMs)
                         } else transcribeComparedMode(recognizer,mode,audio,speechWindow,checkMs,downloadMs)
                     } catch(e:CancellationException) { throw e }
                     catch(e:Exception) {
                         MlKitComparisonResult(mode,"Ошибка: "+e.javaClass.simpleName+": "+e.message,
-                            totalBytes=audio.bytes)
+                            totalBytes=speechWindow.transmittedBytes,sourceBytes=audio.bytes,
+                                    firstVoiceMs=speechWindow.firstVoiceMs,
+                                    removedSilenceMs=speechWindow.removedMs)
                     } finally {
                         runCatching{recognition?.close()}
                         compareClient=null
@@ -304,7 +312,10 @@ class MlKitSpeechActivity : ComponentActivity() {
                 }
                 compareStatus="Сравнение завершено. Использовался один PCM для обоих режимов."
             } catch(e:CancellationException) { throw e }
-            finally {
+            catch(e:Exception) {
+                compareStatus="Ошибка подготовки записи: "+e.javaClass.simpleName+": "+e.message
+                compareResults=compareResults.map { it.copy(status=compareStatus) }
+            } finally {
                 compareRunning=false
                 comparePrompt=null
                 compareDownloadConsent?.cancel()
