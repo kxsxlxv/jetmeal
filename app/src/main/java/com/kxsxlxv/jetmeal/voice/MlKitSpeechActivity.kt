@@ -3,6 +3,10 @@ package com.kxsxlxv.jetmeal.voice
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.StatFs
 import android.os.Build
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
@@ -29,6 +33,13 @@ import com.google.mlkit.genai.speechrecognition.speechRecognizerOptions
 import com.google.mlkit.genai.speechrecognition.speechRecognizerRequest
 import com.kxsxlxv.jetmeal.ui.theme.JetmealTheme
 import java.util.Locale
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -57,9 +68,30 @@ class MlKitSpeechActivity : ComponentActivity() {
     private var downloadTotal by mutableLongStateOf(0)
     private var askDownload by mutableStateOf(false)
 
+    // Comparison is isolated from the existing live microphone session.
+    private val compareStopFlag = AtomicBoolean(false)
+    private var compareRecord: AudioRecord? = null
+    private var compareCaptureJob: Job? = null
+    private var compareRunJob: Job? = null
+    private var compareClient: SpeechRecognizer? = null
+    private var compareRecording by mutableStateOf(false)
+    private var compareRunning by mutableStateOf(false)
+    private var compareAudio by mutableStateOf<RecordedPcm?>(null)
+    private var compareStatus by mutableStateOf("Запишите одну фразу для двух режимов.")
+    private var compareResults by mutableStateOf(emptyList<MlKitComparisonResult>())
+    private var comparePrompt by mutableStateOf<MlKitMode?>(null)
+    private var compareDownloadConsent: CompletableDeferred<Boolean>? = null
+    private var permissionForComparison = false
+
     private val microphonePermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) start() else status = "Нужен доступ к микрофону."
+            if (granted) {
+                if (permissionForComparison) beginCompareRecording() else start()
+            } else {
+                if (permissionForComparison) compareStatus="Нужен доступ к микрофону."
+                else status="Нужен доступ к микрофону."
+            }
+            permissionForComparison=false
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +104,12 @@ class MlKitSpeechActivity : ComponentActivity() {
                         transcript, status, diagnostic,
                         setupMs, downloadMs, firstPartialMs, firstFinalMs, listeningMs,
                         downloadedBytes, downloadTotal, askDownload,
+                        compareRecording,compareRunning,compareAudio,compareResults,
+                        compareStatus,comparePrompt,
+                        onCompareRecord=::requestCompareRecording,
+                        onCompareStop=::stopCompareRecording,
+                        onCompareRun=::runComparison,
+                        onCompareConsent=::onCompareDownloadConsent,
                         deviceName="${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
                         onModeChange=::switchMode, onCheckAvailability=::probeSelectedMode,
                         onStart=::requestStart, onStop=::stop,
@@ -79,6 +117,190 @@ class MlKitSpeechActivity : ComponentActivity() {
                         onClose=::finish)
                 }
             }
+        }
+    }
+
+    private fun requestCompareRecording() {
+        if (compareRecording || compareRunning || !canInteract()) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) beginCompareRecording()
+        else {
+            permissionForComparison=true
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun beginCompareRecording() {
+        if(compareRecording || compareRunning || !canInteract()) return
+        compareAudio?.file?.delete()
+        compareAudio=null
+        compareResults=emptyList()
+        val minBuffer=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT)
+        if(minBuffer<=0) {
+            compareStatus="Невозможно открыть микрофон (код $minBuffer)."
+            return
+        }
+        val file=File(cacheDir,"mlkit-mode-compare.pcm")
+        val capacity=16000 * 2L * 30
+        try {
+            @Suppress("MissingPermission")
+            val rec=AudioRecord(MediaRecorder.AudioSource.MIC,16000,AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,maxOf(minBuffer*2,4096))
+            if(rec.state!=AudioRecord.STATE_INITIALIZED) {
+                rec.release()
+                compareStatus="Микрофон не инициализировался."
+                return
+            }
+            rec.startRecording()
+            compareRecord=rec
+            compareStopFlag.set(false)
+            compareRecording=true
+            compareStatus="Идёт запись. Продиктуйте фразу и нажмите «Стоп» (максимум 30 с)."
+            compareCaptureJob=lifecycleScope.launch(Dispatchers.IO) {
+                var count=0L
+                var error:String?=null
+                try {
+                    FileOutputStream(file).use { output ->
+                        val block=ByteArray(4096)
+                        while(!compareStopFlag.get() && count < capacity) {
+                            val remaining=remainingPcmBytes(count,capacity,block.size)
+                            if(remaining==0) break
+                            val length=rec.read(block,0,remaining,AudioRecord.READ_BLOCKING)
+                            if(length>0) {
+                                output.write(block,0,length)
+                                count+=length
+                            } else if(length<0 && !compareStopFlag.get()) {
+                                error="Ошибка чтения микрофона: $length"
+                                break
+                            } else if(length<=0) break
+                        }
+                    }
+                } catch(e:Exception) {
+                    error=e.javaClass.simpleName+": "+e.message
+                } finally {
+                    runCatching { rec.stop() }
+                    rec.release()
+                    if(compareRecord===rec) compareRecord=null
+                    withContext(Dispatchers.Main) {
+                        compareRecording=false
+                        if(count>0 && error==null) {
+                            val duration=count*1000/MLKIT_AUDIO_BYTES_PER_SECOND
+                            compareAudio=RecordedPcm(file,count,duration)
+                            compareStatus="Готово: ${duration} мс, $count байт. Оба режима получат этот PCM."
+                        } else {
+                            file.delete()
+                            compareAudio=null
+                            compareStatus=error ?: "Запись пуста; попробуйте ещё раз."
+                        }
+                    }
+                }
+            }
+        } catch(e:Exception) {
+            compareRecording=false
+            compareRecord=null
+            compareStatus="Ошибка микрофона: "+e.message
+        }
+    }
+
+    private fun stopCompareRecording() {
+        if(!compareRecording) return
+        compareStopFlag.set(true)
+        runCatching {compareRecord?.stop()}
+    }
+
+    private fun onCompareDownloadConsent(accept:Boolean) {
+        comparePrompt=null
+        compareDownloadConsent?.complete(accept)
+        compareDownloadConsent=null
+    }
+
+    /** Basic first, Advanced second. Each receives *the exact same file* via
+     * a separately paced pipe. Preparation/download are excluded from
+     * recognition latency; neither mode reopens the microphone.
+     */
+    private fun runComparison() {
+        val audio=compareAudio ?: return
+        if (compareRunning || compareRecording || !canInteract()) return
+        compareRunning=true
+        compareResults=MlKitMode.entries.map {
+            MlKitComparisonResult(it,"В очереди",totalBytes=audio.bytes)
+        }
+        compareStatus="Готовлю Basic и Advanced. Передача PCM идёт в реальном времени."
+        compareRunJob=lifecycleScope.launch {
+            try {
+                for(mode in MlKitMode.entries) {
+                    compareStatus="ML Kit ${mode.label}: проверяю модель…"
+                    var recognition:SpeechRecognizer?=null
+                    val result=try {
+                        val checkStart=SystemClock.elapsedRealtime()
+                        recognition=SpeechRecognition.getClient(optionsFor(mode))
+                        compareClient=recognition
+                        var feature=recognition.checkStatus()
+                        val checkMs=SystemClock.elapsedRealtime()-checkStart
+                        var downloadMs:Long?=null
+                        if(feature==FeatureStatus.DOWNLOADABLE) {
+                            comparePrompt=mode
+                            compareStatus="Google предлагает скачать модель ${mode.label}. Ожидаю решения."
+                            val consent=CompletableDeferred<Boolean>()
+                            compareDownloadConsent=consent
+                            val accepted=consent.await()
+                            if(!accepted) {
+                                MlKitComparisonResult(mode,"Загрузка отменена пользователем.",
+                                    modelCheckMs=checkMs,totalBytes=audio.bytes)
+                            } else {
+                                val started=SystemClock.elapsedRealtime()
+                                var failed:String?=null
+                                recognition.download().collect { event ->
+                                    when(event) {
+                                        is DownloadStatus.DownloadProgress ->
+                                            compareStatus="${mode.label}: загрузка ${event.totalBytesDownloaded/1_000_000} МБ"
+                                        is DownloadStatus.DownloadFailed -> failed=event.e.message
+                                        else -> Unit
+                                    }
+                                }
+                                downloadMs=SystemClock.elapsedRealtime()-started
+                                feature=recognition.checkStatus()
+                                if(failed!=null || feature!=FeatureStatus.AVAILABLE) {
+                                    MlKitComparisonResult(mode,"Ошибка загрузки модели: "+(failed ?:
+                                        "состояние $feature"),checkMs,downloadMs,totalBytes=audio.bytes)
+                                } else {
+                                    transcribeComparedMode(recognition,mode,audio,checkMs,downloadMs)
+                                }
+                            }
+                        } else if(feature!=FeatureStatus.AVAILABLE) {
+                            MlKitComparisonResult(mode,"Недоступно: checkStatus = $feature",
+                                modelCheckMs=checkMs,totalBytes=audio.bytes)
+                        } else transcribeComparedMode(recognition,mode,audio,checkMs,downloadMs)
+                    } catch(e:CancellationException) { throw e }
+                    catch(e:Exception) {
+                        MlKitComparisonResult(mode,"Ошибка: "+e.javaClass.simpleName+": "+e.message,
+                            totalBytes=audio.bytes)
+                    } finally {
+                        runCatching{recognition?.close()}
+                        compareClient=null
+                    }
+                    compareResults=compareResults.map { if(it.mode==mode) result else it }
+                }
+                compareStatus="Сравнение завершено. Использовался один PCM для обоих режимов."
+            } catch(e:CancellationException) { throw e }
+            finally {
+                compareRunning=false
+                comparePrompt=null
+                compareDownloadConsent?.cancel()
+                compareDownloadConsent=null
+                compareClient=null
+            }
+        }
+    }
+
+    private suspend fun transcribeComparedMode(
+        recognizer: SpeechRecognizer,mode:MlKitMode,audio:RecordedPcm,
+        checkMs:Long,downloadMs:Long?,
+    ):MlKitComparisonResult {
+        compareStatus="${mode.label}: обрабатываю записанный PCM…"
+        return recognizeMlKitRecordedAudio(recognizer,mode,audio,checkMs,downloadMs) { result ->
+            compareResults=compareResults.map { if(it.mode==mode) result else it }
         }
     }
 
@@ -369,6 +591,13 @@ class MlKitSpeechActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        compareStopFlag.set(true)
+        runCatching{compareRecord?.stop()}
+        compareCaptureJob?.cancel()
+        compareRunJob?.cancel()
+        compareDownloadConsent?.cancel()
+        runCatching{compareClient?.close()}
+        compareAudio?.file?.delete()
         forcedStop?.cancel()
         work?.cancel()
         closeClient()
@@ -386,11 +615,24 @@ private fun MlKitSpeechScreen(
     transcript:StreamingTranscript, status:String, diagnostic:String,
     setupMs:Long?, downloadMs:Long?, firstPartialMs:Long?, firstFinalMs:Long?,
     listeningMs:Long?, downloadedBytes:Long, downloadTotal:Long, askDownload:Boolean,
+    compareRecording:Boolean,compareRunning:Boolean,
+    compareAudio:RecordedPcm?,compareResults:List<MlKitComparisonResult>,
+    compareStatus:String,comparePrompt:MlKitMode?,
+    onCompareRecord:()->Unit,onCompareStop:()->Unit,onCompareRun:()->Unit,
+    onCompareConsent:(Boolean)->Unit,
     deviceName:String,
     onModeChange:(MlKitMode)->Unit, onCheckAvailability:()->Unit,
     onStart:()->Unit, onStop:()->Unit, onDownload:()->Unit,
     onCancelDownload:()->Unit, onClose:()->Unit,
 ) {
+    if(comparePrompt!=null) AlertDialog(
+        onDismissRequest={ onCompareConsent(false) },
+        title={ Text("Загрузить модель ${comparePrompt.label}?") },
+        text={ Text("Google ML Kit запросил модель ${comparePrompt.label} для сравнения "+
+            "двух режимов. Загрузка может расходовать мобильный трафик.") },
+        confirmButton={ TextButton(onClick={onCompareConsent(true)}){Text("Загрузить")} },
+        dismissButton={ TextButton(onClick={onCompareConsent(false)}){Text("Пропустить")} }
+    )
     if (askDownload) AlertDialog(
         onDismissRequest=onCancelDownload,
         title={Text("Загрузить модель Google?")},
@@ -458,6 +700,13 @@ private fun MlKitSpeechScreen(
                     style=MaterialTheme.typography.labelSmall)
             }
         }
+        HorizontalDivider()
+        MlKitComparisonPanel(
+            compareRecording,compareRunning,compareAudio,compareResults,compareStatus,
+            canStart=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
+            onRecord=onCompareRecord,onStop=onCompareStop,onRun=onCompareRun,
+        )
+        HorizontalDivider()
         Text("Диагностика",style=MaterialTheme.typography.titleLarge)
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
