@@ -13,6 +13,9 @@ internal fun MlKitComparisonPanel(
     audio: RecordedPcm?,
     results: List<MlKitComparisonResult>,
     status: String,
+    trimSilence: Boolean,
+    window: PcmSpeechWindow?,
+    onTrimChange: (Boolean) -> Unit,
     canStart: Boolean,
     onRecord: () -> Unit,
     onStop: () -> Unit,
@@ -28,6 +31,20 @@ internal fun MlKitComparisonPanel(
             color=MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(status, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),
+            verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            Checkbox(checked=trimSilence,onCheckedChange=onTrimChange,
+                enabled=canStart && !recording && !running)
+            Text("Убирать только длительную тишину в начале",
+                style=MaterialTheme.typography.bodySmall)
+        }
+        window?.let {
+            val onset=it.firstVoiceMs?.let { ms -> "$ms мс" } ?: "не найдено"
+            Text("Начало речи: $onset · удалено: ${it.removedMs} мс · "+
+                "подаётся: ${it.durationMs} мс (${it.transmittedBytes} байт). "+
+                "Одинаково для Basic и Advanced.",
+                style=MaterialTheme.typography.labelMedium)
+        }
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             Button(
                 enabled=canStart && !running,
@@ -55,6 +72,11 @@ internal fun MlKitComparisonPanel(
                     run.transcript?.let {
                         Text(it,style=MaterialTheme.typography.bodyLarge)
                     }
+                    if(run.sourceBytes>0) {
+                        Text("Начало речи: "+(run.firstVoiceMs?.toString() ?: "не обнаружено")+
+                            " мс · срезано: "+run.removedSilenceMs+" мс",
+                            style=MaterialTheme.typography.labelSmall)
+                    }
                     run.modelCheckMs?.let { Text("Проверка модели: "+it+" мс") }
                     run.downloadMs?.let { Text("Загрузка модели: "+it+" мс") }
                     run.firstPartialMs?.let { Text("Первый промежуточный текст: "+it+" мс") }
@@ -76,7 +98,9 @@ internal fun MlKitComparisonPanel(
         Text(
             "Сравниваются запрошенные MODE_BASIC и MODE_ADVANCED. "+
                 "API не сообщает название реально выбранной модели Google. "+
-                "При отсутствии финального текста выводится ошибка, а не выдуманная транскрипция.",
+                "При отсутствии финального текста выводится ошибка. "+
+                "Если Advanced опять не распознает PCM, снимите галочку и повторите "+
+                "сравнение той же записи. Алгоритм не изменяет сам аудиофайл.",
             style=MaterialTheme.typography.bodySmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant,
         )
