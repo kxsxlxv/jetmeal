@@ -1,3 +1,34 @@
+## ML Kit Advanced availability experiment (2026-10-17)
+
+The existing Settings → Google ML Kit streaming screen now offers explicit
+**Basic / Advanced** chips. **Basic remains the default and is unchanged.**
+The optional Advanced path requests the official
+`SpeechRecognizerOptions.Mode.MODE_ADVANCED` for `ru-RU` via the existing
+`genai-speech-recognition:1.0.0-alpha1` package. No Gboard implementation,
+food parsing, widget microphone, or speech-to-diary write was added.
+
+Selecting Advanced does **not** download a model, start a microphone, or
+silently fall back to Basic. Press **«Проверить доступность Advanced»** to
+invoke `checkStatus()` without requiring microphone permission. JetMeal
+displays AVAILABLE / DOWNLOADABLE / DOWNLOADING / UNAVAILABLE, elapsed check
+time, selected requested mode, build manufacturer/model and API errors.
+
+- **AVAILABLE:** the user can press Start to experiment with streaming
+  microphone capture, incremental text and manual Stop.
+- **DOWNLOADABLE:** only a separate explicit confirmation when trying Start
+  invokes Google's `download()` with progress.
+- **DOWNLOADING / UNAVAILABLE:** show the true provider result, not a fake
+  transcript and not an automatic Basic fallback.
+- Advanced is a **preferredMode** request; unless the Google service
+  verifies the effective backend, the UI must not claim that a Gemini
+  Advanced model was definitely used.
+- API availability is Google/AICore-controlled. Official public support
+  currently lists select Pixel 10 devices; vivo X300 may return UNAVAILABLE
+  even though its hardware is powerful and ML Kit Basic works.
+
+Google official source (last updated Aug 7 2026):
+https://developers.google.com/ml-kit/genai/speech-recognition/android
+
 ## Google ML Kit Speech — isolated streaming experiment (2026-10-17)
 
 The lab now offers **Google ML Kit GenAI Speech Recognition 1.0.0-alpha1**
