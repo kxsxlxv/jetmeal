@@ -19,14 +19,18 @@ time, selected requested mode, build manufacturer/model and API errors.
   invokes Google's `download()` with progress.
 - **DOWNLOADING / UNAVAILABLE:** show the true provider result, not a fake
   transcript and not an automatic Basic fallback.
+- Some AICore builds throw `606-FEATURE_NOT_FOUND` rather than return
+  UNAVAILABLE if Google has not provisioned the requested model. JetMeal
+  recognises this result and shows the AICore error without crashing or
+  silently switching to Basic.
 - Advanced is a **preferredMode** request; unless the Google service
   verifies the effective backend, the UI must not claim that a Gemini
   Advanced model was definitely used.
 - API availability is Google/AICore-controlled. Official public support
-  currently lists select Pixel 10 devices; vivo X300 may return UNAVAILABLE
+  currently lists select Pixel 10 / Pixel 11 devices; vivo X300 may return UNAVAILABLE
   even though its hardware is powerful and ML Kit Basic works.
 
-Google official source (last updated Aug 7 2026):
+Google official support list (may change; verified October 2026):
 https://developers.google.com/ml-kit/genai/speech-recognition/android
 
 ## Google ML Kit Speech — isolated streaming experiment (2026-10-17)
