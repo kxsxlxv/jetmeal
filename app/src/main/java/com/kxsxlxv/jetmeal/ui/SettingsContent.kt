@@ -153,8 +153,8 @@ fun SettingsContent(targets: Targets?, email: String, busy: Boolean,
                     modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)) {
                     Text("Тест распознавания речи (эксперимент)")
                 }
-                Text("Google ML Kit: отдельная потоковая диктовка на русском. "+
-                    "Текст появляется по мере речи, с ручной остановкой.",
+                Text("Google ML Kit: потоковая диктовка с выбором Basic / Advanced. "+
+                    "Проверка Advanced работает без микрофона и показывает доступность модели.",
                     style=MaterialTheme.typography.bodySmall,
                     color=MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(

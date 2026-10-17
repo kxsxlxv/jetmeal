@@ -3,6 +3,7 @@ package com.kxsxlxv.jetmeal.voice
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -42,6 +43,8 @@ class MlKitSpeechActivity : ComponentActivity() {
     private var streamStartedAt = 0L
 
     private var phase by mutableStateOf(MlKitPhase.Idle)
+    private var selectedMode by mutableStateOf(MlKitMode.Basic)
+    private var featureStatus by mutableStateOf("Не проверено")
     private var transcript by mutableStateOf(StreamingTranscript())
     private var status by mutableStateOf("Google ML Kit · Basic · русский (ru-RU).")
     private var diagnostic by mutableStateOf("")
@@ -65,15 +68,107 @@ class MlKitSpeechActivity : ComponentActivity() {
         setContent {
             JetmealTheme {
                 Surface(Modifier.fillMaxSize()) {
-                    MlKitSpeechScreen(phase, transcript, status, diagnostic,
+                    MlKitSpeechScreen(phase, selectedMode, featureStatus,
+                        transcript, status, diagnostic,
                         setupMs, downloadMs, firstPartialMs, firstFinalMs, listeningMs,
                         downloadedBytes, downloadTotal, askDownload,
+                        deviceName="${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})",
+                        onModeChange=::switchMode, onCheckAvailability=::probeSelectedMode,
                         onStart=::requestStart, onStop=::stop,
                         onDownload=::confirmDownload, onCancelDownload=::declineDownload,
                         onClose=::finish)
                 }
             }
         }
+    }
+
+    private fun optionsFor(mode: MlKitMode): SpeechRecognizerOptions =
+        speechRecognizerOptions {
+            locale = Locale.forLanguageTag("ru-RU")
+            preferredMode = when(mode) {
+                MlKitMode.Basic -> SpeechRecognizerOptions.Mode.MODE_BASIC
+                MlKitMode.Advanced -> SpeechRecognizerOptions.Mode.MODE_ADVANCED
+            }
+        }
+
+    private fun canInteract(): Boolean =
+        phase in listOf(MlKitPhase.Idle, MlKitPhase.Finished, MlKitPhase.Failed) &&
+            work?.isActive != true && client == null
+
+    private fun switchMode(mode: MlKitMode) {
+        if (!canInteract() || mode == selectedMode) return
+        selectedMode = mode
+        featureStatus = "Не проверено"
+        transcript = StreamingTranscript()
+        status = "Выбран ${mode.label}. Нажмите «Проверить доступность»."
+        diagnostic = ""
+        setupMs = null; downloadMs = null; firstPartialMs = null
+        firstFinalMs = null; listeningMs = null
+        downloadedBytes = 0; downloadTotal = 0
+        phase = MlKitPhase.Idle
+    }
+
+    /** Probe without touching the microphone or requesting permission.
+     * AICore/Google may restrict Advanced even on a powerful non-Pixel SoC.
+     * The SDK's preferredMode is a request; do not silently claim confirmed
+     * Advanced inference simply because the check succeeds.
+     */
+    private fun probeSelectedMode() {
+        if (!canInteract()) return
+        val mode = selectedMode
+        phase = MlKitPhase.Preparing
+        status = "Проверяю поддержку ML Kit ${mode.label} ru-RU…"
+        featureStatus = "Проверка…"
+        diagnostic = ""
+        val started = SystemClock.elapsedRealtime()
+        work = lifecycleScope.launch {
+            var recognizer: SpeechRecognizer? = null
+            try {
+                recognizer = SpeechRecognition.getClient(optionsFor(mode))
+                val availability = recognizer.checkStatus()
+                setupMs = SystemClock.elapsedRealtime() - started
+                featureStatus = availabilityLabel(availability)
+                phase = MlKitPhase.Finished
+                status = when(availability) {
+                    FeatureStatus.AVAILABLE ->
+                        "${mode.label}: API сообщил AVAILABLE. Можно попробовать диктовку."
+                    FeatureStatus.DOWNLOADABLE ->
+                        "${mode.label}: модель доступна для загрузки. Запустите диктовку, чтобы запросить загрузку."
+                    FeatureStatus.DOWNLOADING ->
+                        "${mode.label}: Google ещё загружает модель. Повторите позже."
+                    FeatureStatus.UNAVAILABLE -> mode.unavailableMessage()
+                    else -> "${mode.label}: неизвестное состояние ($availability)."
+                }
+                diagnostic = if(availability == FeatureStatus.UNAVAILABLE && mode == MlKitMode.Advanced)
+                    "Ограничение Google/AICore, не недостаток производительности смартфона. "+
+                        "Никакие модели не загружались, Basic не изменён."
+                else "Проверка выполнена без микрофона. Advanced — запрошенный preferredMode."
+            } catch (c: CancellationException) { throw c }
+            catch (e: Exception) {
+                if(mlKitFeatureNotProvisioned(e.message)) {
+                    phase = MlKitPhase.Finished
+                    featureStatus = "FEATURE_NOT_FOUND (606)"
+                    status = "Google AICore пока не предоставил модель ${mode.label}. "+
+                        "Проверьте обновления Google/AICore или повторите проверку позже."
+                    diagnostic = "AICore 606: ${e.message}; "+
+                        "устройство: ${Build.MANUFACTURER} ${Build.MODEL}"
+                } else {
+                    fail("Ошибка проверки ${mode.label}: ${e.message}",
+                        "${e.javaClass.simpleName}; устройство: ${Build.MANUFACTURER} ${Build.MODEL}")
+                    featureStatus = "Ошибка API"
+                }
+            } finally {
+                runCatching { recognizer?.close() }
+            }
+        }
+    }
+
+    private fun availabilityLabel(value:Int):String = when(value) {
+        FeatureStatus.AVAILABLE -> "AVAILABLE"
+        FeatureStatus.DOWNLOADABLE -> "DOWNLOADABLE"
+        FeatureStatus.DOWNLOADING -> "DOWNLOADING"
+        FeatureStatus.UNAVAILABLE -> "UNAVAILABLE"
+        else -> "UNKNOWN ($value)"
     }
 
     private fun requestStart() {
@@ -90,35 +185,43 @@ class MlKitSpeechActivity : ComponentActivity() {
         setupMs = null; downloadMs = null; firstPartialMs = null
         firstFinalMs = null; listeningMs = null
         downloadedBytes = 0; downloadTotal = 0
+        featureStatus = "Проверка…"
         askDownload = false; stopping = false
         phase = MlKitPhase.Preparing
-        status = "Проверка доступности ML Kit Basic ru-RU…"
+        status = "Проверка доступности ML Kit ${selectedMode.label} ru-RU…"
         val setupStart = SystemClock.elapsedRealtime()
         work = lifecycleScope.launch {
             try {
-                val recognition = SpeechRecognition.getClient(speechRecognizerOptions {
-                    locale = Locale.forLanguageTag("ru-RU")
-                    preferredMode = SpeechRecognizerOptions.Mode.MODE_BASIC
-                })
+                val mode = selectedMode
+                val recognition = SpeechRecognition.getClient(optionsFor(mode))
                 client = recognition
                 val availability = recognition.checkStatus()
                 setupMs = SystemClock.elapsedRealtime() - setupStart
+                featureStatus = availabilityLabel(availability)
                 when (availability) {
                     FeatureStatus.AVAILABLE -> recognize(recognition)
                     FeatureStatus.DOWNLOADABLE -> {
                         phase = MlKitPhase.WaitingForDownload
                         askDownload = true
-                        status = "Для русского ML Kit требуется загрузить системную модель Google."
+                        status = selectedMode.downloadableMessage()
                     }
                     FeatureStatus.DOWNLOADING -> fail("Модель ещё загружается Google. Повторите позже.",
-                        "checkStatus=DOWNLOADING")
-                    FeatureStatus.UNAVAILABLE -> fail("ML Kit Basic ru-RU недоступен на телефоне.",
-                        "checkStatus=UNAVAILABLE")
+                        "checkStatus=DOWNLOADING; requestedMode=${mode.label}")
+                    FeatureStatus.UNAVAILABLE -> fail(mode.unavailableMessage(),
+                        "checkStatus=UNAVAILABLE; requestedMode=${mode.label}; "+
+                            "device=${Build.MANUFACTURER} ${Build.MODEL}")
                     else -> fail("Неизвестное состояние речевой модели.",
                         "checkStatus=" + availability)
                 }
             } catch (c: CancellationException) { throw c }
-            catch (e: Exception) { fail("ML Kit: " + e.message,e.javaClass.simpleName) }
+            catch (e: Exception) {
+                if(mlKitFeatureNotProvisioned(e.message)) {
+                    fail("AICore не предоставил модель ${selectedMode.label} (606). "+
+                            "Вернитесь к Basic или повторите проверку после обновления Google.",
+                        "FEATURE_NOT_FOUND (606): ${e.message}")
+                    featureStatus="FEATURE_NOT_FOUND (606)"
+                } else fail("ML Kit: " + e.message,e.javaClass.simpleName)
+            }
             finally {
                 if (phase !in listOf(MlKitPhase.WaitingForDownload,MlKitPhase.Downloading,
                         MlKitPhase.Listening,MlKitPhase.Stopping)) closeClient()
@@ -179,7 +282,7 @@ class MlKitSpeechActivity : ComponentActivity() {
     /** Partial updates replace each other, final segments append. No fixed 30s limit. */
     private suspend fun recognize(recognition: SpeechRecognizer) {
         phase = MlKitPhase.Listening
-        status = "Слушаю… Говорите, затем нажмите «Остановить»."
+        status = "ML Kit ${selectedMode.label}: слушаю… Нажмите «Остановить» после диктовки."
         streamStartedAt = SystemClock.elapsedRealtime()
         var completed = false
         try {
@@ -279,27 +382,47 @@ internal enum class MlKitPhase {
 
 @Composable
 private fun MlKitSpeechScreen(
-    phase:MlKitPhase, transcript:StreamingTranscript, status:String, diagnostic:String,
+    phase:MlKitPhase, selectedMode:MlKitMode, featureStatus:String,
+    transcript:StreamingTranscript, status:String, diagnostic:String,
     setupMs:Long?, downloadMs:Long?, firstPartialMs:Long?, firstFinalMs:Long?,
     listeningMs:Long?, downloadedBytes:Long, downloadTotal:Long, askDownload:Boolean,
+    deviceName:String,
+    onModeChange:(MlKitMode)->Unit, onCheckAvailability:()->Unit,
     onStart:()->Unit, onStop:()->Unit, onDownload:()->Unit,
     onCancelDownload:()->Unit, onClose:()->Unit,
 ) {
     if (askDownload) AlertDialog(
         onDismissRequest=onCancelDownload,
         title={Text("Загрузить модель Google?")},
-        text={Text("ML Kit Basic потребовал системную модель для русского языка. "+
-            "Google скачает её автоматически; вручную ничего искать не нужно. "+
-            "Размер зависит от системы, возможен расход мобильного трафика.")},
+        text={Text("ML Kit ${selectedMode.label} запросил системную модель для русского языка. "+
+            "Google скачает её автоматически после подтверждения; "+
+            "размер зависит от системы, возможен расход мобильного трафика.")},
         confirmButton={TextButton(onClick=onDownload){Text("Загрузить")}},
         dismissButton={TextButton(onClick=onCancelDownload){Text("Отмена")}}
     )
     Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
         .padding(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
         Text("Google ML Kit · потоковая речь",style=MaterialTheme.typography.headlineMedium)
-        Text("Basic · ru-RU (beta) · локальный микрофон. "+
-            "Это отдельный тест, не запись Whisper.",
+        Text("Выбери режим и проверь его доступность на устройстве.",
             color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            MlKitMode.entries.forEach { mode ->
+                FilterChip(
+                    selected=selectedMode==mode,
+                    enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
+                    onClick={onModeChange(mode)},label={Text(mode.label)}
+                )
+            }
+        }
+        Text(selectedMode.selectionHint,style=MaterialTheme.typography.bodySmall,
+            color=MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick=onCheckAvailability,
+            enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
+            modifier=Modifier.fillMaxWidth()) {
+            Text("Проверить доступность ${selectedMode.label}")
+        }
+        Text("Результат checkStatus(): $featureStatus",
+            style=MaterialTheme.typography.labelMedium)
         Text(status)
         if (diagnostic.isNotBlank()) Text(diagnostic,color=MaterialTheme.colorScheme.error,
             style=MaterialTheme.typography.labelMedium)
@@ -339,7 +462,8 @@ private fun MlKitSpeechScreen(
         OutlinedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                 Text("Google ML Kit genai-speech-recognition:1.0.0-alpha1")
-                Text("MODE_BASIC · ru-RU · AudioSource.fromMic()")
+                Text("Запрошено: MODE_${selectedMode.name.uppercase(Locale.ROOT)} · ru-RU · fromMic()")
+                Text("Устройство: $deviceName")
                 setupMs?.let{Text("Инициализация и проверка модели: " + it + " мс")}
                 downloadMs?.let{Text("Загрузка модели: " + it + " мс")}
                 firstPartialMs?.let{Text("Первый промежуточный текст: " + it + " мс")}
@@ -348,9 +472,10 @@ private fun MlKitSpeechScreen(
                 Text("Состояние: " + phase.name,style=MaterialTheme.typography.labelSmall)
             }
         }
-        Text("Модель Basic отличается от движка Gboard; качество и длительность "+
-            "непрерывной диктовки проверяем на vivo X300. "+
-            "Продукты не добавляются в дневник.",
+        Text("Advanced пока официально ограничен отдельными моделями Pixel. "+
+            "На vivo X300 поддержка может отсутствовать. Проверка не обходит AICore: "+
+            "если Advanced недоступен, переключись обратно на Basic. "+
+            "Это не Gboard; продукты не добавляются в дневник.",
             color=MaterialTheme.colorScheme.onSurfaceVariant,
             style=MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick=onClose,modifier=Modifier.fillMaxWidth()) { Text("Закрыть") }
