@@ -7,6 +7,8 @@ import com.google.mlkit.genai.speechrecognition.SpeechRecognizer
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
 import com.google.mlkit.genai.speechrecognition.speechRecognizerRequest
 import java.io.FileInputStream
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +39,9 @@ internal data class MlKitComparisonResult(
     val partialUpdates: Int = 0,
     val finalSegments: Int = 0,
     val streamFinished: Boolean = false,
+    val sourceBytes: Long = 0,
+    val firstVoiceMs: Long? = null,
+    val removedSilenceMs: Long = 0,
 )
 
 internal const val MLKIT_AUDIO_BYTES_PER_SECOND = 16000 * 2
@@ -49,6 +54,7 @@ internal suspend fun recognizeMlKitRecordedAudio(
     recognizer: SpeechRecognizer,
     mode: MlKitMode,
     audio: RecordedPcm,
+    window: PcmSpeechWindow,
     modelCheckMs: Long,
     downloadMs: Long?,
     onChange: (MlKitComparisonResult) -> Unit,
@@ -56,9 +62,9 @@ internal suspend fun recognizeMlKitRecordedAudio(
     val descriptors = ParcelFileDescriptor.createPipe()
     var transcript = StreamingTranscript()
     val start = SystemClock.elapsedRealtime()
-    var bytesWritten = 0L
+    val bytesWritten = AtomicLong(0L)
     var finalResponseSeen = false
-    var streamFinished = false
+    val streamFinished = AtomicBoolean(false)
     var firstPartialMs: Long? = null
     var firstFinalMs: Long? = null
     var feedError: String? = null
@@ -74,11 +80,14 @@ internal suspend fun recognizeMlKitRecordedAudio(
         recognitionMs = SystemClock.elapsedRealtime() - start,
         firstPartialMs = firstPartialMs,
         firstFinalMs = firstFinalMs,
-        bytesWritten = bytesWritten,
-        totalBytes = audio.bytes,
+        bytesWritten = bytesWritten.get(),
+        totalBytes = window.transmittedBytes,
+        sourceBytes = window.sourceBytes,
+        firstVoiceMs = window.firstVoiceMs,
+        removedSilenceMs = window.removedMs,
         partialUpdates = transcript.partialUpdates,
         finalSegments = transcript.finalSegments,
-        streamFinished = streamFinished,
+        streamFinished = streamFinished.get(),
     )
 
     // No audio-source API provides a 'ready' callback. A short startup
@@ -87,21 +96,30 @@ internal suspend fun recognizeMlKitRecordedAudio(
         delay(200)
         try {
             FileInputStream(audio.file).use { input ->
+                var skip = window.offsetBytes
+                while (skip > 0) {
+                    val advanced = input.skip(skip)
+                    if (advanced <= 0) throw IllegalStateException("PCM trim offset is past EOF")
+                    skip -= advanced
+                }
                 ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1]).use { output ->
                     val chunk = ByteArray(MLKIT_AUDIO_CHUNK_BYTES)
                     val pacedAt = SystemClock.elapsedRealtime()
-                    while (isActive) {
-                        val size = input.read(chunk)
+                    var remaining = window.transmittedBytes
+                    while (isActive && remaining > 0) {
+                        val max = pcmFrameLength(remaining)
+                        val size = input.read(chunk, 0, max)
                         if (size == -1) break
                         if (size == 0) continue
                         output.write(chunk, 0, size)
-                        bytesWritten += size
-                        val target = pacedAt + bytesWritten * 1000 / MLKIT_AUDIO_BYTES_PER_SECOND
+                        remaining -= size
+                        val written = bytesWritten.addAndGet(size.toLong())
+                        val target = pacedAt + written * 1000 / MLKIT_AUDIO_BYTES_PER_SECOND
                         val wait = target - SystemClock.elapsedRealtime()
                         if (wait > 0) delay(wait)
                     }
                     output.flush()
-                    streamFinished = bytesWritten == audio.bytes
+                    streamFinished.set(remaining == 0L)
                 }
             }
         } catch (e: CancellationException) { throw e }
@@ -125,7 +143,7 @@ internal suspend fun recognizeMlKitRecordedAudio(
         val request = speechRecognizerRequest {
             audioSource = AudioSource.fromPfd(descriptors[0])
         }
-        withTimeout(audio.durationMs + 13_000L) {
+        withTimeout(window.durationMs + 13_000L) {
             recognizer.startRecognition(request).collect { response ->
                 when (response) {
                     is SpeechRecognizerResponse.PartialTextResponse -> {
@@ -165,7 +183,7 @@ internal suspend fun recognizeMlKitRecordedAudio(
         when {
             failure != null -> "Ошибка: " + failure
             feedError != null -> "Ошибка передачи PCM: " + feedError
-            !streamFinished -> "Не все байты PCM переданы; результат не подтверждён."
+            !streamFinished.get() -> "Не все байты PCM переданы; результат не подтверждён."
             !finalResponseSeen || transcript.confirmed.isBlank() ->
                 "Google не вернул финальную транскрипцию."
             else -> "Готово: запись обработана через " + mode.label +
