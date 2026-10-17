@@ -1,3 +1,33 @@
+## vivo X300: Advanced fromPfd NO_SPEECH_DETECTED diagnostic (2026-10-17)
+
+One 29.5-second PCM file produced a multi-segment Basic transcription while
+Advanced returned ERROR_TYPE_NO_SPEECH_DETECTED (zero partial/final events).
+Both clients were fed 944000 bytes through independently paced PFD streams.
+This is **not evidence that Advanced is worse at recognising Russian**:
+Advanced worked in the separate live-microphone experiment.
+
+The SDK's `fromPfd()` handling may be sensitive to leading silence:
+upstream https://github.com/googlesamples/mlkit/issues/1027
+shows a related Advanced bug for ~800ms of silence, though that report
+returns INVALID_REQUEST, *not* NO_SPEECH_DETECTED. It is a hypothesis,
+not a confirmed fix for vivo X300.
+
+The experiment now scans the beginning of the **original, app-private** mono
+16kHz signed-16-bit PCM for sustained energy (20ms frames, ≥400 RMS in
+three consecutive frames). If speech starts ≥350ms into the recording, the
+common replay interval begins 240ms ahead of estimated speech onset.
+No detected onset, very early voice, or disabled trimming → retain the
+original file. This is deliberately a conservative **energy heuristic,
+not a trained voice activity detector**, and may fail for quiet speakers
+or noise. It changes neither the original file nor any Whisper input.
+
+Both ML Kit clients receive the exact same calculated byte window.
+A user-visible toggle enables running **trimmed vs original on the same
+recording**, and the UI reports estimated onset, trimmed milliseconds,
+bytes and wall-clock elapsed time. Retain a full diagnostic failure
+if Advanced still does not return final segments. Live ML Kit streaming
+remains untouched. Verify on the physical vivo X300 before claiming a fix.
+
 ## Basic vs Advanced: same-recording experiment (2026-10-17)
 
 The streaming ML Kit screen now also contains a **«Basic vs Advanced · одна запись»**
