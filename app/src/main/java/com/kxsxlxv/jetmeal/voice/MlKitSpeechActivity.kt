@@ -75,6 +75,8 @@ class MlKitSpeechActivity : ComponentActivity() {
     private var compareRecording by mutableStateOf(false)
     private var compareRunning by mutableStateOf(false)
     private var compareAudio by mutableStateOf<RecordedPcm?>(null)
+    private var compareTrimSilence by mutableStateOf(true)
+    private var compareWindow by mutableStateOf<PcmSpeechWindow?>(null)
     private var compareStatus by mutableStateOf("Запишите одну фразу для двух режимов.")
     private var compareResults by mutableStateOf(emptyList<MlKitComparisonResult>())
     private var comparePrompt by mutableStateOf<MlKitMode?>(null)
@@ -103,7 +105,14 @@ class MlKitSpeechActivity : ComponentActivity() {
                         setupMs, downloadMs, firstPartialMs, firstFinalMs, listeningMs,
                         downloadedBytes, downloadTotal, askDownload,
                         compareRecording,compareRunning,compareAudio,compareResults,
-                        compareStatus,comparePrompt,
+                        compareStatus,comparePrompt,compareTrimSilence,compareWindow,
+                        onCompareTrimChange={ enabled ->
+                            if(!compareRunning && !compareRecording) {
+                                compareTrimSilence=enabled
+                                compareWindow=null
+                                compareResults=emptyList()
+                            }
+                        },
                         onCompareRecord=::requestCompareRecording,
                         onCompareStop=::stopCompareRecording,
                         onCompareRun=::runComparison,
@@ -132,6 +141,7 @@ class MlKitSpeechActivity : ComponentActivity() {
         if(compareRecording || compareRunning || !canInteract()) return
         compareAudio?.file?.delete()
         compareAudio=null
+        compareWindow=null
         compareResults=emptyList()
         val minBuffer=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT)
@@ -221,12 +231,22 @@ class MlKitSpeechActivity : ComponentActivity() {
         val audio=compareAudio ?: return
         if (compareRunning || compareRecording || !canInteract()) return
         compareRunning=true
+        compareWindow=null
         compareResults=MlKitMode.entries.map {
-            MlKitComparisonResult(it,"В очереди",totalBytes=audio.bytes)
+            MlKitComparisonResult(it,"В очереди",totalBytes=audio.bytes,sourceBytes=audio.bytes)
         }
-        compareStatus="Готовлю Basic и Advanced. Передача PCM идёт в реальном времени."
+        compareStatus="Анализирую начало записи перед одинаковой подачей обоим режимам…"
         compareRunJob=lifecycleScope.launch {
             try {
+                val speechWindow=withContext(Dispatchers.IO) {
+                    detectSpeechWindow(audio.file,audio.bytes,compareTrimSilence)
+                }
+                compareWindow=speechWindow
+                compareStatus=if(speechWindow.removedMs>0)
+                    "Убрано ${speechWindow.removedMs} мс начальной тишины; "+
+                        "оба режима получат один и тот же фрагмент."
+                else "Длительной начальной тишины не обнаружено; "+
+                    "оба режима получат исходный PCM."
                 for(mode in MlKitMode.entries) {
                     compareStatus="ML Kit ${mode.label}: проверяю модель…"
                     var recognition:SpeechRecognizer?=null
@@ -265,13 +285,13 @@ class MlKitSpeechActivity : ComponentActivity() {
                                         "состояние $feature"),modelCheckMs=checkMs,
                                         downloadMs=downloadMs,totalBytes=audio.bytes)
                                 } else {
-                                    transcribeComparedMode(recognizer,mode,audio,checkMs,downloadMs)
+                                    transcribeComparedMode(recognizer,mode,audio,speechWindow,checkMs,downloadMs)
                                 }
                             }
                         } else if(feature!=FeatureStatus.AVAILABLE) {
                             MlKitComparisonResult(mode,"Недоступно: checkStatus = $feature",
                                 modelCheckMs=checkMs,totalBytes=audio.bytes)
-                        } else transcribeComparedMode(recognizer,mode,audio,checkMs,downloadMs)
+                        } else transcribeComparedMode(recognizer,mode,audio,speechWindow,checkMs,downloadMs)
                     } catch(e:CancellationException) { throw e }
                     catch(e:Exception) {
                         MlKitComparisonResult(mode,"Ошибка: "+e.javaClass.simpleName+": "+e.message,
@@ -296,10 +316,10 @@ class MlKitSpeechActivity : ComponentActivity() {
 
     private suspend fun transcribeComparedMode(
         recognizer: SpeechRecognizer,mode:MlKitMode,audio:RecordedPcm,
-        checkMs:Long,downloadMs:Long?,
+        speechWindow:PcmSpeechWindow,checkMs:Long,downloadMs:Long?,
     ):MlKitComparisonResult {
         compareStatus="${mode.label}: обрабатываю записанный PCM…"
-        return recognizeMlKitRecordedAudio(recognizer,mode,audio,checkMs,downloadMs) { result ->
+        return recognizeMlKitRecordedAudio(recognizer,mode,audio,speechWindow,checkMs,downloadMs) { result ->
             compareResults=compareResults.map { if(it.mode==mode) result else it }
         }
     }
@@ -622,6 +642,8 @@ private fun MlKitSpeechScreen(
     compareRecording:Boolean,compareRunning:Boolean,
     compareAudio:RecordedPcm?,compareResults:List<MlKitComparisonResult>,
     compareStatus:String,comparePrompt:MlKitMode?,
+    compareTrimSilence:Boolean,compareWindow:PcmSpeechWindow?,
+    onCompareTrimChange:(Boolean)->Unit,
     onCompareRecord:()->Unit,onCompareStop:()->Unit,onCompareRun:()->Unit,
     onCompareConsent:(Boolean)->Unit,
     deviceName:String,
@@ -710,6 +732,8 @@ private fun MlKitSpeechScreen(
         HorizontalDivider()
         MlKitComparisonPanel(
             compareRecording,compareRunning,compareAudio,compareResults,compareStatus,
+            trimSilence=compareTrimSilence,window=compareWindow,
+            onTrimChange=onCompareTrimChange,
             canStart=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
             onRecord=onCompareRecord,onStop=onCompareStop,onRun=onCompareRun,
         )
