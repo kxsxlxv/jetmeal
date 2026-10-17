@@ -1,3 +1,45 @@
+## Basic vs Advanced: same-recording experiment (2026-10-17)
+
+The streaming ML Kit screen now also contains a **«Basic vs Advanced · одна запись»**
+panel. It does NOT require switching away from the existing live dictation
+experiment. It records a 16 kHz, 16-bit little-endian mono PCM clip, limited
+to 30 seconds, **once**, and replays that exact file sequentially to two
+separately instantiated Google ML Kit Speech Recognition clients:
+`MODE_BASIC` followed by `MODE_ADVANCED`, locale `ru-RU`.
+
+**Important input constraint:** Official Google ML Kit docs say
+`AudioSource.fromPfd(ParcelFileDescriptor)` accepts *raw headerless* PCM
+but **only when samples are streamed at real-time speed**. Plain file-backed
+descriptors, which read the file instantly, are explicitly unsupported.
+The JetMeal experiment creates a fresh pipe per mode, sends 3200 bytes
+per 100 ms (16000 mono samples per second, 16-bit), waits for EOF and
+allows Google a brief extra interval to emit final transcript segments.
+It never re-records audio for the second mode.
+
+Both modes report the final transcript, model availability check (and
+optional consent-based model download), first partial, first final,
+complete elapsed recognition time and exact number of PCM bytes written.
+A single model's failure does not copy the other model's text.
+The total elapsed *includes real-time input replay*, so it is not a
+pure inference-speed benchmark and cannot be compared to Whisper's
+faster-than-real-time offline decoding as if they measured identical work.
+Model preparation/download are timed separately.
+
+**Known caveat:** `preferredMode` requests MODE_ADVANCED or MODE_BASIC,
+but the SDK does not expose a separate cryptographic/diagnostic attestation
+of which underlying Google model was actually used. Our UI names the
+requested mode without inventing confirmation. The vivo X300 sample
+already demonstrated `checkStatus=AVAILABLE` for requested Advanced,
+with live streaming text, but this does not prove the effective backend.
+
+This is an experiment: SDK alpha and OEM/AICore behavior for
+`AudioSource.fromPfd` requires physical vivo X300 confirmation. If
+Google's service does not process supplied PCM, that mode must report
+a failure (not a fabricated transcript). Both existing direct microphone
+modes remain available.
+
+Docs: https://developers.google.com/ml-kit/genai/speech-recognition/android
+
 ## ML Kit Advanced availability experiment (2026-10-17)
 
 The existing Settings → Google ML Kit streaming screen now offers explicit
