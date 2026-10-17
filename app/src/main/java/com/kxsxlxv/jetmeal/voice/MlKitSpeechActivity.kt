@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.StatFs
 import android.os.Build
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
@@ -39,7 +38,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -234,9 +232,10 @@ class MlKitSpeechActivity : ComponentActivity() {
                     var recognition:SpeechRecognizer?=null
                     val result=try {
                         val checkStart=SystemClock.elapsedRealtime()
-                        recognition=SpeechRecognition.getClient(optionsFor(mode))
-                        compareClient=recognition
-                        var feature=recognition.checkStatus()
+                        val recognizer=SpeechRecognition.getClient(optionsFor(mode))
+                        recognition=recognizer
+                        compareClient=recognizer
+                        var feature=recognizer.checkStatus()
                         val checkMs=SystemClock.elapsedRealtime()-checkStart
                         var downloadMs:Long?=null
                         if(feature==FeatureStatus.DOWNLOADABLE) {
@@ -251,7 +250,7 @@ class MlKitSpeechActivity : ComponentActivity() {
                             } else {
                                 val started=SystemClock.elapsedRealtime()
                                 var failed:String?=null
-                                recognition.download().collect { event ->
+                                recognizer.download().collect { event ->
                                     when(event) {
                                         is DownloadStatus.DownloadProgress ->
                                             compareStatus="${mode.label}: загрузка ${event.totalBytesDownloaded/1_000_000} МБ"
@@ -260,18 +259,19 @@ class MlKitSpeechActivity : ComponentActivity() {
                                     }
                                 }
                                 downloadMs=SystemClock.elapsedRealtime()-started
-                                feature=recognition.checkStatus()
+                                feature=recognizer.checkStatus()
                                 if(failed!=null || feature!=FeatureStatus.AVAILABLE) {
                                     MlKitComparisonResult(mode,"Ошибка загрузки модели: "+(failed ?:
-                                        "состояние $feature"),checkMs,downloadMs,totalBytes=audio.bytes)
+                                        "состояние $feature"),modelCheckMs=checkMs,
+                                        downloadMs=downloadMs,totalBytes=audio.bytes)
                                 } else {
-                                    transcribeComparedMode(recognition,mode,audio,checkMs,downloadMs)
+                                    transcribeComparedMode(recognizer,mode,audio,checkMs,downloadMs)
                                 }
                             }
                         } else if(feature!=FeatureStatus.AVAILABLE) {
                             MlKitComparisonResult(mode,"Недоступно: checkStatus = $feature",
                                 modelCheckMs=checkMs,totalBytes=audio.bytes)
-                        } else transcribeComparedMode(recognition,mode,audio,checkMs,downloadMs)
+                        } else transcribeComparedMode(recognizer,mode,audio,checkMs,downloadMs)
                     } catch(e:CancellationException) { throw e }
                     catch(e:Exception) {
                         MlKitComparisonResult(mode,"Ошибка: "+e.javaClass.simpleName+": "+e.message,
@@ -318,7 +318,7 @@ class MlKitSpeechActivity : ComponentActivity() {
             work?.isActive != true && client == null
 
     private fun switchMode(mode: MlKitMode) {
-        if (!canInteract() || mode == selectedMode) return
+        if (!canInteract() || compareRunning || compareRecording || mode == selectedMode) return
         selectedMode = mode
         featureStatus = "Не проверено"
         transcript = StreamingTranscript()
@@ -336,7 +336,7 @@ class MlKitSpeechActivity : ComponentActivity() {
      * Advanced inference simply because the check succeeds.
      */
     private fun probeSelectedMode() {
-        if (!canInteract()) return
+        if (!canInteract() || compareRunning || compareRecording) return
         val mode = selectedMode
         phase = MlKitPhase.Preparing
         status = "Проверяю поддержку ML Kit ${mode.label} ru-RU…"
@@ -394,14 +394,17 @@ class MlKitSpeechActivity : ComponentActivity() {
     }
 
     private fun requestStart() {
-        if (phase !in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed)) return
+        if (phase !in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed) ||
+            compareRunning || compareRecording) return
+        permissionForComparison=false
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             == PackageManager.PERMISSION_GRANTED) start()
         else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
     private fun start() {
-        if (work?.isActive == true || client != null) return
+        if (work?.isActive == true || client != null ||
+            compareRunning || compareRecording) return
         transcript = StreamingTranscript()
         diagnostic = ""
         setupMs = null; downloadMs = null; firstPartialMs = null
@@ -598,6 +601,7 @@ class MlKitSpeechActivity : ComponentActivity() {
         compareDownloadConsent?.cancel()
         runCatching{compareClient?.close()}
         compareAudio?.file?.delete()
+        File(cacheDir,"mlkit-mode-compare.pcm").delete()
         forcedStop?.cancel()
         work?.cancel()
         closeClient()
@@ -651,7 +655,8 @@ private fun MlKitSpeechScreen(
             MlKitMode.entries.forEach { mode ->
                 FilterChip(
                     selected=selectedMode==mode,
-                    enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
+                    enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed)
+                        && !compareRecording && !compareRunning,
                     onClick={onModeChange(mode)},label={Text(mode.label)}
                 )
             }
@@ -659,7 +664,8 @@ private fun MlKitSpeechScreen(
         Text(selectedMode.selectionHint,style=MaterialTheme.typography.bodySmall,
             color=MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick=onCheckAvailability,
-            enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed),
+            enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed)
+                && !compareRecording && !compareRunning,
             modifier=Modifier.fillMaxWidth()) {
             Text("Проверить доступность ${selectedMode.label}")
         }
@@ -676,7 +682,8 @@ private fun MlKitSpeechScreen(
         }
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
             Button(onClick=onStart,
-                enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed)) {
+                enabled=phase in listOf(MlKitPhase.Idle,MlKitPhase.Finished,MlKitPhase.Failed)
+                    && !compareRecording && !compareRunning) {
                 Text("Начать диктовку")
             }
             Button(onClick=onStop,enabled=phase==MlKitPhase.Listening) {
