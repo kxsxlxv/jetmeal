@@ -145,9 +145,18 @@ class MlKitSpeechActivity : ComponentActivity() {
                 else "Проверка выполнена без микрофона. Advanced — запрошенный preferredMode."
             } catch (c: CancellationException) { throw c }
             catch (e: Exception) {
-                fail("Ошибка проверки ${mode.label}: ${e.message}",
-                    "${e.javaClass.simpleName}; устройство: ${Build.MANUFACTURER} ${Build.MODEL}")
-                featureStatus = "Ошибка API"
+                if(mlKitFeatureNotProvisioned(e.message)) {
+                    phase = MlKitPhase.Finished
+                    featureStatus = "FEATURE_NOT_FOUND (606)"
+                    status = "Google AICore пока не предоставил модель ${mode.label}. "+
+                        "Проверьте обновления Google/AICore или повторите проверку позже."
+                    diagnostic = "AICore 606: ${e.message}; "+
+                        "устройство: ${Build.MANUFACTURER} ${Build.MODEL}"
+                } else {
+                    fail("Ошибка проверки ${mode.label}: ${e.message}",
+                        "${e.javaClass.simpleName}; устройство: ${Build.MANUFACTURER} ${Build.MODEL}")
+                    featureStatus = "Ошибка API"
+                }
             } finally {
                 runCatching { recognizer?.close() }
             }
@@ -205,7 +214,14 @@ class MlKitSpeechActivity : ComponentActivity() {
                         "checkStatus=" + availability)
                 }
             } catch (c: CancellationException) { throw c }
-            catch (e: Exception) { fail("ML Kit: " + e.message,e.javaClass.simpleName) }
+            catch (e: Exception) {
+                if(mlKitFeatureNotProvisioned(e.message)) {
+                    fail("AICore не предоставил модель ${selectedMode.label} (606). "+
+                            "Вернитесь к Basic или повторите проверку после обновления Google.",
+                        "FEATURE_NOT_FOUND (606): ${e.message}")
+                    featureStatus="FEATURE_NOT_FOUND (606)"
+                } else fail("ML Kit: " + e.message,e.javaClass.simpleName)
+            }
             finally {
                 if (phase !in listOf(MlKitPhase.WaitingForDownload,MlKitPhase.Downloading,
                         MlKitPhase.Listening,MlKitPhase.Stopping)) closeClient()
