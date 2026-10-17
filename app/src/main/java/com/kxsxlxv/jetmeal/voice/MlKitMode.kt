@@ -21,3 +21,10 @@ internal enum class MlKitMode(val label: String) {
         Advanced -> "Сервис разрешил подготовку Advanced ru-RU. Для теста требуется скачать модель через Google."
     }
 }
+
+/** AICore sometimes throws feature 606 instead of returning UNAVAILABLE when
+ * this device has not been provisioned for the requested model. */
+internal fun mlKitFeatureNotProvisioned(message: String?): Boolean {
+    val text=message.orEmpty().uppercase(java.util.Locale.ROOT)
+    return "FEATURE_NOT_FOUND" in text || Regex("""(?:^|\D)606(?:\D|$)""").containsMatchIn(text)
+}
