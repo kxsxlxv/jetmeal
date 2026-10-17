@@ -22,4 +22,13 @@ class MlKitModeTest {
         assertTrue(MlKitMode.Advanced.downloadableMessage().contains("Google"))
         assertTrue(MlKitMode.Basic.downloadableMessage().contains("Basic"))
     }
+    @Test fun googleAicoreFeatureNotFoundIsDistinguishedFromAnUnrelatedError() {
+        assertTrue(mlKitFeatureNotProvisioned("AICore error code 606-FEATURE_NOT_FOUND"))
+        assertTrue(mlKitFeatureNotProvisioned("PREPARATION_ERROR: 606"))
+        assertTrue(mlKitFeatureNotProvisioned("Feature not found"))
+        assertFalse(mlKitFeatureNotProvisioned("Some HTTP error 500"))
+        assertFalse(mlKitFeatureNotProvisioned(null))
+        assertFalse(mlKitFeatureNotProvisioned("code 6060"))
+    }
+
 }
