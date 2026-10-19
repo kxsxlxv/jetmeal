@@ -171,6 +171,12 @@ internal class SafeNetworkEventListener(
     }
     @Synchronized override fun connectionAcquired(call: Call, connection: okhttp3.Connection) {
         reused = !connected
+        // Even when HTTP headers never arrive, record the negotiated protocol.
+        protocol = when (connection.protocol()) {
+            Protocol.HTTP_1_0, Protocol.HTTP_1_1 -> NetworkProtocol.H1
+            Protocol.HTTP_2, Protocol.H2_PRIOR_KNOWLEDGE -> NetworkProtocol.H2
+            else -> NetworkProtocol.Other
+        }
     }
     @Synchronized override fun requestHeadersStart(call: Call) {
         phase = NetworkPhase.Request
