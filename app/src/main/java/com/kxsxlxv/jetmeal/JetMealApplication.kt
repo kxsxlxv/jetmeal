@@ -19,6 +19,7 @@ import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
@@ -46,6 +47,12 @@ class JetMealApplication : Application() {
                         // OkHttp's 10s default read timeout caused partial HTTP 200 responses
                         // to fail after headers had already reached the device.
                         // Keep the transport limit above Supabase/Ktor's request deadline.
+                        // Diagnostic fallback (2026-10-19): Android cellular requests received
+                        // H2 HTTP 200 headers within <1s, but even ~1.7KB Auth refresh
+                        // response bodies stalled until Ktor cancelled at 25s.
+                        // Force H1 for this Supabase client to test H2/middlebox involvement.
+                        // Revisit after comparing on-device H1 vs H2 traces.
+                        protocols(listOf(Protocol.HTTP_1_1))
                         connectTimeout(10, TimeUnit.SECONDS)
                         readTimeout(25, TimeUnit.SECONDS)
                         writeTimeout(25, TimeUnit.SECONDS)
