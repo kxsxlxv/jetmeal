@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.kxsxlxv.jetmeal.JetMealApplication
 import com.kxsxlxv.jetmeal.data.lastConnectionEvents
+import com.kxsxlxv.jetmeal.data.SupabaseEngineChoice
 import java.io.File
 import java.time.Instant
 import java.time.ZoneOffset
@@ -61,6 +62,8 @@ internal fun ConnectionDiagnosticsContent() {
     var exportStatus by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    val originalEngine = remember { SupabaseEngineChoice.isCio(context) }
+    var preferredEngine by remember { mutableStateOf(originalEngine) }
     val saveDocument = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
@@ -81,6 +84,23 @@ internal fun ConnectionDiagnosticsContent() {
             Text(if (expanded) "Скрыть диагностику подключения" else "Диагностика подключения")
         }
         if (expanded) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Новый сетевой движок (CIO)", modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium)
+                Switch(checked = preferredEngine, onCheckedChange = { chosen ->
+                    preferredEngine = chosen
+                    SupabaseEngineChoice.setCio(context, chosen)
+                })
+            }
+            Text(
+                if (preferredEngine == originalEngine) {
+                    "Используется при запуске: ${if (originalEngine) "CIO" else "OkHttp"}."
+                } else {
+                    "Выбран ${if (preferredEngine) "CIO" else "OkHttp"}. " +
+                        "Изменение применится после полной остановки приложения и нового запуска."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Ошибки DNS, TCP, TLS, HTTP и время выполнения запросов к Supabase.",
                 style = MaterialTheme.typography.bodySmall)
             Text("Записи UTC. layer=OkHttp — сетевая причина до обработки библиотекой; " +
