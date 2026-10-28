@@ -10,6 +10,8 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
 import java.net.InetAddress
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.NoRouteToHostException
 import java.net.ProtocolException
@@ -29,6 +31,14 @@ import javax.net.ssl.SSLPeerUnverifiedException
 internal enum class NetworkRoute { Auth, Profile, Diary, Catalogue, Mutation, Other }
 internal enum class NetworkPhase { Queued, Dns, Tcp, Tls, Request, Waiting, Response, Body }
 internal enum class NetworkProtocol { H1, H2, Other }
+internal enum class SocketFamily { V4, V6, Unknown }
+
+/** Only the address family is recorded; never log resolved addresses or IPs. */
+internal fun socketFamily(address: InetAddress?): SocketFamily = when (address) {
+    is Inet4Address -> SocketFamily.V4
+    is Inet6Address -> SocketFamily.V6
+    else -> SocketFamily.Unknown
+}
 internal enum class NetworkCause {
     UnknownHost, ConnectionRefused, NoRoute, TlsHandshake, TlsCertificate,
     Tls, Timeout, PrematureClose, Protocol, Io, Unknown
@@ -75,6 +85,7 @@ internal data class NetworkTrace(
     val requestId: String? = null,
     val connectionReused: Boolean = false,
     val protocol: NetworkProtocol? = null,
+    val family: SocketFamily? = null,
     val headersMs: Long? = null,
     val bodyMs: Long? = null,
     val bodyBytes: Long? = null,
@@ -99,6 +110,7 @@ internal data class NetworkTrace(
         tlsMs?.let { append(" tlsMs=").append(it.coerceAtLeast(0)) }
         if (connectionReused) append(" reused=true")
         protocol?.let { append(" protocol=").append(it) }
+        family?.let { append(" family=").append(it) }
         headersMs?.let { append(" headersMs=").append(it.coerceAtLeast(0)) }
         bodyMs?.let { append(" bodyMs=").append(it.coerceAtLeast(0)) }
         bodyBytes?.let { append(" bodyBytes=").append(it.coerceAtLeast(0)) }
@@ -131,6 +143,7 @@ internal class SafeNetworkEventListener(
     private var reused = false
     private var connected = false
     private var protocol: NetworkProtocol? = null
+    private var family: SocketFamily? = null
     private var requestHeadersAt: Long? = null
     private var headersMs: Long? = null
     private var bodyStartedAt: Long? = null
@@ -150,6 +163,7 @@ internal class SafeNetworkEventListener(
     }
     @Synchronized override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
         phase = NetworkPhase.Tcp
+        family = socketFamily(inetSocketAddress.address)
         tcpStart = nanoTime()
     }
     @Synchronized override fun secureConnectStart(call: Call) {
@@ -171,6 +185,7 @@ internal class SafeNetworkEventListener(
     }
     @Synchronized override fun connectionAcquired(call: Call, connection: okhttp3.Connection) {
         reused = !connected
+        family = socketFamily(connection.route().socketAddress.address)
         // Even when HTTP headers never arrive, record the negotiated protocol.
         protocol = when (connection.protocol()) {
             Protocol.HTTP_1_0, Protocol.HTTP_1_1 -> NetworkProtocol.H1
@@ -231,6 +246,7 @@ internal class SafeNetworkEventListener(
         requestId = requestId,
         connectionReused = reused,
         protocol = protocol,
+        family = family,
         headersMs = headersMs,
         bodyMs = bodyMs ?: if (bodyStarted) duration(bodyStartedAt) else null,
         bodyBytes = bodyBytes,
