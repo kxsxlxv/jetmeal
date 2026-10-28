@@ -18,17 +18,20 @@ import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
 import com.kxsxlxv.jetmeal.widget.HeroWidgetScheduler
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.SettingsSessionManager
+import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.engine.cio.endpoint
+import io.ktor.client.plugins.HttpResponseValidator
 import com.kxsxlxv.jetmeal.data.SupabaseEngineChoice
 import okhttp3.ConnectionPool
 import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
+@OptIn(SupabaseInternal::class)
 class JetMealApplication : Application() {
     internal val connectionDiagnostics by lazy { ConnectionDiagnostics(this) }
     override fun onCreate() {
@@ -75,6 +78,19 @@ class JetMealApplication : Application() {
                         writeTimeout(25, TimeUnit.SECONDS)
                         callTimeout(30, TimeUnit.SECONDS)
                         eventListenerFactory(SafeNetworkListenerFactory(connectionDiagnostics))
+                    }
+                }
+                // SDK 3.8 wraps CIO/OkHttp failures in HttpRequestException
+                // WITHOUT their causes. Observe errors before the SDK boundary.
+                // Never record the full request, exception message or response.
+                httpConfig {
+                    HttpResponseValidator {
+                        handleResponseExceptionWithRequest { cause, request ->
+                            runCatching {
+                                connectionDiagnostics.ktorFailure(
+                                    request.url.encodedPath, cause)
+                            }
+                        }
                     }
                 }
                 defaultLoggingFactory = { SafeSupabaseLogger(connectionDiagnostics) }
