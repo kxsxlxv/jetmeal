@@ -166,6 +166,15 @@ internal class ConnectionDiagnostics(context: Context) {
             " code=${failure.code ?: "none"} request=${failure.requestId ?: "none"}")
     }
 
+    /** Classification from Ktor before supabase-kt discards the transport cause. */
+    fun ktorFailure(path: String, error: Throwable) {
+        if (error is CancellationException && error !is HttpRequestTimeoutException) return
+        record(safeKtorFailureLine(path, error))
+        if (routeForPath(path) == NetworkRoute.Auth) {
+            authFailures.capture(ConnectionFailure.from(error))
+        }
+    }
+
     /** Record engine selection; CIO does not emit OkHttp EventListener callbacks. */
     fun transportSelected(engine: String) {
         require(engine == "CIO" || engine == "OkHttp")
