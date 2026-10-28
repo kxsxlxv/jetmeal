@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Only JetMeal's temporary sanitized diagnostic exports may be shared. -->
+    <cache-path name="connection_reports" path="connection_reports/" />
+</paths>
