@@ -10,7 +10,7 @@ import kotlinx.coroutines.delay
  */
 internal suspend fun <T> retryTransientRead(
     stage: ConnectionStage,
-    backoffMillis: Long = 350L,
+    backoffMillis: Long = 1_500L,
     onRetry: (stage: ConnectionStage, attempt: Int, kind: ConnectionFailureKind) -> Unit = { _, _, _ -> },
     block: suspend () -> T,
 ): T {
