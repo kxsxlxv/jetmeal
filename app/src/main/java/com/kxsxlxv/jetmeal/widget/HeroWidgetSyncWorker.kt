@@ -82,7 +82,9 @@ object HeroWidgetScheduler {
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             IMMEDIATE_WORK,
-            ExistingWorkPolicy.REPLACE,
+            // REPLACE cancelled a running network sync and immediately started
+            // another request during a cellular outage. Coalesce duplicates.
+            ExistingWorkPolicy.KEEP,
             request,
         )
     }
