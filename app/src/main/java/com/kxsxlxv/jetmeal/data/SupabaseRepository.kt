@@ -20,6 +20,10 @@ class SupabaseRepository(val client: SupabaseClient) {
     internal var diagnostics: ConnectionDiagnostics? = null
     internal var authFailures = AuthFailureCapture()
     private val searchMutex = Mutex()
+    // Foreground, widget and background jobs share the same Supabase client.
+    // Only one profile timezone check is needed per user/timezone per process.
+    private val timezoneMutex = Mutex()
+    private var syncedTimezone: Pair<String, String>? = null
     private val searchCacheLock = Any()
     private var searchCache: Pair<String, List<FoodCandidate>>? = null
     private var searchEpoch = 0
@@ -87,14 +91,21 @@ class SupabaseRepository(val client: SupabaseClient) {
 
     suspend fun syncTimezone(zone: ZoneId) {
         val userId = requireNotNull(client.auth.currentUserOrNull()).id
-        val profile = read(ConnectionStage.Profile) {
-            client.from("profiles").select { filter { eq("id", userId) } }
-                .decodeList<JsonObject>().single()
-        }
-        if (profile.string("timezone") != zone.id) {
-            client.from("profiles").update(buildJsonObject { put("timezone", zone.id) }) {
-                filter { eq("id", userId) }
+        timezoneMutex.withLock {
+            val requested = userId to zone.id
+            if (syncedTimezone == requested) return@withLock
+            val profile = read(ConnectionStage.Profile) {
+                client.from("profiles").select { filter { eq("id", userId) } }
+                    .decodeList<JsonObject>().single()
             }
+            if (profile.string("timezone") != zone.id) {
+                // Never retry a write when its response is lost.
+                client.from("profiles").update(buildJsonObject { put("timezone", zone.id) }) {
+                    filter { eq("id", userId) }
+                }
+            }
+            // Record only after a complete successful read (and update if needed).
+            syncedTimezone = requested
         }
     }
 
