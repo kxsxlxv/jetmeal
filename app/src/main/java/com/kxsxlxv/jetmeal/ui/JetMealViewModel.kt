@@ -104,7 +104,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         // A rotated JWT is not a changed diary snapshot. Reloading here used
                         // to cancel foreground refreshes and restart all progress animations.
                         if (reload) {
-                            widgetCoordinator?.requestSync()
+                            // The successful foreground refresh updates widgets from
+                            // the same snapshot. A parallel WorkManager network sync
+                            // competed for sockets and duplicated failed requests.
                             restoreCatalogueCount()
                             // Catalogue download must not depend on a successful
                             // diary or profile request. Those routes can fail
@@ -293,7 +295,9 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         val diary = offline ?: return
         if (!diary.onlineNow()) return
         if (retryJob?.isActive == true) return
-        val seconds = minOf(60L, 3L * (1L shl retryAttempt.coerceAtMost(5)))
+        // A validated Android network can still have a broken Supabase route.
+        // Avoid retry storms: users can always force an immediate pull-to-refresh.
+        val seconds = minOf(300L, 15L * (1L shl retryAttempt.coerceAtMost(5)))
         retryAttempt++
         retryJob = viewModelScope.launch {
             delay(seconds * 1_000L)
