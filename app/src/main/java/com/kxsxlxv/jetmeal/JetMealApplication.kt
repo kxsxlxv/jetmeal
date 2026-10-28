@@ -11,6 +11,8 @@ import com.kxsxlxv.jetmeal.data.OfflineDiary
 import com.kxsxlxv.jetmeal.data.ConnectionDiagnostics
 import com.kxsxlxv.jetmeal.data.SafeSupabaseLogger
 import com.kxsxlxv.jetmeal.data.SafeNetworkListenerFactory
+import com.kxsxlxv.jetmeal.data.closeAfterResponse
+import com.kxsxlxv.jetmeal.data.supabaseDns
 import com.kxsxlxv.jetmeal.data.protectSessionRefresh
 import com.kxsxlxv.jetmeal.widget.HeroWidgetCoordinator
 import com.kxsxlxv.jetmeal.widget.HeroWidgetScheduler
@@ -19,6 +21,7 @@ import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
+import okhttp3.ConnectionPool
 import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
@@ -47,14 +50,17 @@ class JetMealApplication : Application() {
                         // OkHttp's 10s default read timeout caused partial HTTP 200 responses
                         // to fail after headers had already reached the device.
                         // Keep the transport limit above Supabase/Ktor's request deadline.
-                        // Diagnostic fallback (2026-10-19): Android cellular requests received
-                        // H2 HTTP 200 headers within <1s, but even ~1.7KB Auth refresh
-                        // response bodies stalled until Ktor cancelled at 25s.
-                        // Force H1 for this Supabase client to test H2/middlebox involvement.
-                        // Revisit after comparing on-device H1 vs H2 traces.
+                        // On cellular networks both H2 and H1 responses could stall
+                        // after HTTP 200, and pooled H1 requests frequently timed out.
+                        // Do not reuse idle sockets; explicitly close each H1 response.
+                        // Fresh TCP/TLS costs extra latency but avoids stale intermediaries.
                         protocols(listOf(Protocol.HTTP_1_1))
+                        connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+                        addNetworkInterceptor(closeAfterResponse)
+                        // Preserve IPv6-only/NAT64; only prefer IPv4 if both exist.
+                        dns(supabaseDns)
                         connectTimeout(10, TimeUnit.SECONDS)
-                        readTimeout(25, TimeUnit.SECONDS)
+                        readTimeout(15, TimeUnit.SECONDS)
                         writeTimeout(25, TimeUnit.SECONDS)
                         callTimeout(30, TimeUnit.SECONDS)
                         eventListenerFactory(SafeNetworkListenerFactory(connectionDiagnostics))
