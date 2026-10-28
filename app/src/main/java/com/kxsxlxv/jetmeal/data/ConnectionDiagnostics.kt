@@ -166,6 +166,12 @@ internal class ConnectionDiagnostics(context: Context) {
             " code=${failure.code ?: "none"} request=${failure.requestId ?: "none"}")
     }
 
+    /** Record engine selection; CIO does not emit OkHttp EventListener callbacks. */
+    fun transportSelected(engine: String) {
+        require(engine == "CIO" || engine == "OkHttp")
+        record("transport=$engine")
+    }
+
     fun authState(state: ConnectionAuthState) {
         // Never log SessionStatus.toString() (contains JWT).
         if (state == ConnectionAuthState.Authenticated || state == ConnectionAuthState.SignOutRequested) authFailures.clear()

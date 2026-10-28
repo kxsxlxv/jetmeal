@@ -21,6 +21,9 @@ import io.github.jan.supabase.auth.SettingsSessionManager
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.cio.endpoint
+import com.kxsxlxv.jetmeal.data.SupabaseEngineChoice
 import okhttp3.ConnectionPool
 import okhttp3.Protocol
 import java.util.concurrent.TimeUnit
@@ -45,19 +48,27 @@ class JetMealApplication : Application() {
         else {
             require(!BuildConfig.SUPABASE_KEY.startsWith("sb_secret_")) { "Only a publishable client key is allowed." }
             SupabaseRepository(createSupabaseClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_KEY) {
-                httpEngine = OkHttp.create {
+                // 2026-10-28: real device proved fresh IPv4/H1 OkHttp requests
+                // still stall for 15 seconds AFTER HTTP 200 headers. Change the
+                // HTTP engine, not just timeouts or connection pooling. CIO uses
+                // coroutine-driven sockets and a different HTTP response parser.
+                // The previous OkHttp setup remains selectable in Diagnostics.
+                httpEngine = if (SupabaseEngineChoice.isCio(this@JetMealApplication)) CIO.create {
+                    maxConnectionsCount = 4
+                    pipelining = false
+                    endpoint {
+                        maxConnectionsPerRoute = 4
+                        pipelineMaxSize = 1
+                        keepAliveTime = 1_000
+                        connectTimeout = 10_000
+                        socketTimeout = 15_000
+                        connectAttempts = 1
+                    }
+                } else OkHttp.create {
                     config {
-                        // OkHttp's 10s default read timeout caused partial HTTP 200 responses
-                        // to fail after headers had already reached the device.
-                        // Keep the transport limit above Supabase/Ktor's request deadline.
-                        // On cellular networks both H2 and H1 responses could stall
-                        // after HTTP 200, and pooled H1 requests frequently timed out.
-                        // Do not reuse idle sockets; explicitly close each H1 response.
-                        // Fresh TCP/TLS costs extra latency but avoids stale intermediaries.
                         protocols(listOf(Protocol.HTTP_1_1))
                         connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
                         addNetworkInterceptor(closeAfterResponse)
-                        // Preserve IPv6-only/NAT64; only prefer IPv4 if both exist.
                         dns(supabaseDns)
                         connectTimeout(10, TimeUnit.SECONDS)
                         readTimeout(15, TimeUnit.SECONDS)
@@ -68,7 +79,7 @@ class JetMealApplication : Application() {
                 }
                 defaultLoggingFactory = { SafeSupabaseLogger(connectionDiagnostics) }
                 protectSessionRefresh(connectionDiagnostics::captureAuthFailure)
-                // Total request deadline is shorter than OkHttp's read/call deadlines.
+                // Total application request deadline; transport socket idle timeout is 15s.
                 requestTimeout = 25.seconds
                 install(Auth) {
                     // This same client serves headless WorkManager widgets. SDK Android hooks
@@ -88,6 +99,8 @@ class JetMealApplication : Application() {
                     maxRetries = 0
                 }
             }).also {
+                connectionDiagnostics.transportSelected(
+                    if (SupabaseEngineChoice.isCio(this)) "CIO" else "OkHttp")
                 it.diagnostics = connectionDiagnostics
                 it.authFailures = connectionDiagnostics.authFailures
             }
