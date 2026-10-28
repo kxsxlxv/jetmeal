@@ -118,6 +118,7 @@ dependencies {
     implementation(libs.supabase.auth)
     implementation(libs.supabase.postgrest)
     implementation(libs.ktor.okhttp)
+    implementation(libs.ktor.cio)
     implementation(libs.kotlinx.coroutines)
     implementation(libs.kotlinx.serialization)
     implementation(libs.androidx.glance.appwidget)
