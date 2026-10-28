@@ -22,6 +22,7 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.cio.endpoint
 import com.kxsxlxv.jetmeal.data.SupabaseEngineChoice
 import okhttp3.ConnectionPool
 import okhttp3.Protocol
