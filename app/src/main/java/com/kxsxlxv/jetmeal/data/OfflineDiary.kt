@@ -487,22 +487,26 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
 }
 
 /** Reconcile an acknowledged mutation without fetching the diary again.
- * Only periods already cached receive the server-confirmed row. */
+ * Partial out-of-coverage records do not declare their day fully cached. */
 internal fun reconcileSyncedSnapshot(snapshot:OfflineSnapshot?, mutation:PendingDiaryMutation,
                                      confirmed:DiaryEntry?):OfflineSnapshot? {
-    if(snapshot==null || confirmed==null) return snapshot
+    if(confirmed==null) return snapshot
     val day=confirmed.consumedAt.atZone(ZoneId.systemDefault()).toLocalDate()
-    if(snapshot.coverage.none { day>=it.start && day<it.end }) return snapshot
+    // An acknowledged add may belong to a day that has never been downloaded.
+    // Preserve the known row without claiming that the entire day is cached.
+    val base=snapshot ?: if(mutation.kind=="log_food") OfflineSnapshot(
+        day,day.plusDays(1),emptyList(),null,emptyList(),emptySet(),coverage=emptyList()
+    ) else return null
     val entries=when(mutation.kind) {
-        "log_food" -> snapshot.entries.filterNot {
+        "log_food" -> base.entries.filterNot {
             it.id==confirmed.id || it.mealGroupId==mutation.id
         } + confirmed
-        "update_log" -> snapshot.entries.map { if(it.id==confirmed.id) confirmed else it }
-        "delete_log" -> snapshot.entries.filterNot { it.id==confirmed.id }
-        else -> snapshot.entries
+        "update_log" -> base.entries.map { if(it.id==confirmed.id) confirmed else it }
+        "delete_log" -> base.entries.filterNot { it.id==confirmed.id }
+        else -> base.entries
     }
-    return snapshot.copy(entries=entries.sortedWith(
-        compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id }))
+    return base.copy(start=minOf(base.start,day),end=maxOf(base.end,day.plusDays(1)),
+        entries=entries.sortedWith(compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id }))
 }
 
 fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): List<DiaryEntry> {
