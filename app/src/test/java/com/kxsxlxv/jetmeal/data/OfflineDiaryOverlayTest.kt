@@ -79,4 +79,39 @@ class OfflineDiaryOverlayTest {
         assertEquals(175.0,grams.preview!!.quantity,.001)
     }
 
+
+    @Test fun acknowledgedAddSurvivesOutboxRemovalAndUsesServerId() {
+        val day=at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val snapshot=OfflineSnapshot(day,day.plusDays(1),emptyList(),null,emptyList(),emptySet())
+        val preview=base.copy(id="local-preview",updatedAt=null)
+        val logged=item("request-id","log_food",buildJsonObject {
+            put("quantity",100)
+        },preview)
+        val server=base.copy(id="confirmed-id",mealGroupId="request-id")
+        val confirmed=requireNotNull(reconcileSyncedSnapshot(snapshot,logged,server))
+        assertEquals(listOf("confirmed-id"),confirmed.entries.map { it.id })
+        assertEquals(listOf("confirmed-id"),applyPending(confirmed.entries,emptyList()).map { it.id })
+        assertEquals(listOf("confirmed-id"),applyPending(confirmed.entries,listOf(logged)).map { it.id })
+    }
+
+    @Test fun acknowledgedEditAndDeleteReconcileCachedSnapshot() {
+        val day=at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val snapshot=OfflineSnapshot(day,day.plusDays(1),listOf(base),null,emptyList(),emptySet())
+        val edit=item("update-id","update_log",buildJsonObject {
+            put("entry_id",base.id); put("quantity",200)
+        })
+        val updated=base.copy(quantity=200.0,nutrition=base.basisNutrition*2.0)
+        val afterEdit=requireNotNull(reconcileSyncedSnapshot(snapshot,edit,updated))
+        assertEquals(200.0,afterEdit.entries.single().quantity,.00001)
+        val delete=item("delete-id","delete_log",buildJsonObject { put("entry_id",base.id) })
+        assertTrue(requireNotNull(reconcileSyncedSnapshot(afterEdit,delete,updated)).entries.isEmpty())
+    }
+
+    @Test fun acknowledgedEntryOutsideCachedCoverageDoesNotInventCoverage() {
+        val day=at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val snapshot=OfflineSnapshot(day.minusDays(2),day.minusDays(1),emptyList(),null,
+            emptyList(),emptySet())
+        val logged=item("request-id","log_food",buildJsonObject { put("quantity",100) },base)
+        assertSame(snapshot,reconcileSyncedSnapshot(snapshot,logged,base))
+    }
 }
