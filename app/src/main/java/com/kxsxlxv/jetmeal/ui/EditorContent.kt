@@ -341,7 +341,8 @@ internal fun AmountContent(name: String, unit: String, amount: Double, basisAmou
     LaunchedEffect(busy, pending, error, successNotice) {
         if (pending && !busy && error != null) pending = false
         else if (pending && !busy && (successNotice?.contains("Можно отменить") == true ||
-            successNotice?.startsWith("Сохранено на телефоне:") == true) && error == null) {
+            successNotice?.startsWith("Сохранено на телефоне:") == true ||
+            successNotice == "Изменено." || successNotice == "Удалено.") && error == null) {
             pending = false
             onSuccess()
         }
