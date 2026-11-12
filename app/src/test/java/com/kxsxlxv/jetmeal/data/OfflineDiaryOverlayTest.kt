@@ -112,6 +112,14 @@ class OfflineDiaryOverlayTest {
         val snapshot=OfflineSnapshot(day.minusDays(2),day.minusDays(1),emptyList(),null,
             emptyList(),emptySet())
         val logged=item("request-id","log_food",buildJsonObject { put("quantity",100) },base)
-        assertSame(snapshot,reconcileSyncedSnapshot(snapshot,logged,base))
+        val partial=requireNotNull(reconcileSyncedSnapshot(snapshot,logged,base))
+        assertEquals(listOf(base.id),partial.entries.map { it.id })
+        assertEquals(snapshot.coverage,partial.coverage)
+        assertFalse(partial.covers(day,day.plusDays(1)))
+
+        val firstEver=requireNotNull(reconcileSyncedSnapshot(null,logged,base))
+        assertEquals(listOf(base.id),firstEver.entries.map { it.id })
+        assertTrue(firstEver.coverage.isEmpty())
+        assertFalse(firstEver.covers(day,day.plusDays(1)))
     }
 }
