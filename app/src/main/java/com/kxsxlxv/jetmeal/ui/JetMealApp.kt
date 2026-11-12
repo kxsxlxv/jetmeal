@@ -83,7 +83,7 @@ private sealed interface Editor {
                                     Text(
                                         when {
                                             state.blockedWrites>0 -> "Нужна проверка: ${state.blockedWrites} офлайн-изменений"
-                                            state.connectionWarning!=null -> state.connectionWarning
+                                            state.connectionWarning!=null -> state.connectionWarning ?: "Ошибка подключения"
                                             state.pendingWrites>0 -> "Изменения сохранены на телефоне"
                                             else -> "Показана сохранённая копия"
                                         },
