@@ -557,11 +557,12 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         )}
     }
 
-    /** Show queued changes even if the target day has never been opened
-     * online. Do not invent zeroes for days without downloaded history. */
+    /** Show all locally known rows even if the target day was not fully
+     * downloaded. Do not invent zeroes for dates without complete coverage. */
     private suspend fun displayUncachedPending(nav:AppState) {
         val additions=runCatching {
-            applyPending(emptyList(),offline?.pending().orEmpty())
+            applyPending(offline?.cachedSnapshot()?.entries.orEmpty(),
+                offline?.pending().orEmpty())
         }.getOrDefault(emptyList())
         val zone=ZoneId.systemDefault()
         val status=runCatching { offline?.status() }.getOrNull()
@@ -571,7 +572,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             pendingWrites=status?.remaining ?: 0,blockedWrites=status?.blocked ?: 0,
             cachedOffline=true,week=null,weekNutrition=Nutrition.Zero,
             monthCalories=emptyMap(),monthTargets=emptyMap(),
-            connectionWarning="Этот период ещё не загружен целиком. Показаны только неотправленные записи.",
+            connectionWarning="Этот период ещё не загружен целиком. Показаны доступные записи.",
         ) }
     }
 
@@ -840,6 +841,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 val (start,end)=requiredRange(nav)
                 val cached=offline?.cachedSnapshotFor(start,end)
                 if(cached!=null) displaySnapshot(cached,nav,nav.cachedOffline)
+                else displayUncachedPending(nav)
             }
             mutable.update { it.copy(pendingWrites=result.remaining,
                 blockedWrites=result.blocked) }
