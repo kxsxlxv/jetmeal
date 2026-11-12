@@ -801,7 +801,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
 
     /** Never couple the save button to a remote request. The encrypted outbox
      * is durable before we acknowledge the tap; replay happens independently. */
-    private suspend fun persistQueued(label:String) {
+    private suspend fun persistQueued(label:String, undoable:Boolean = true) {
         val diary=offline ?: return
         val nav=mutable.value
         val connected=diary.onlineNow()
@@ -813,7 +813,8 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             if(connected) mutable.update { it.copy(cachedOffline=false) }
         }
         val status=diary.status()
-        mutable.update { it.copy(notice="$label. Можно отменить.",
+        mutable.update { it.copy(
+            notice=if(undoable) "$label. Можно отменить." else "$label.",
             pendingWrites=status.remaining,blockedWrites=status.blocked) }
         // Neither the widget update nor the Supabase request holds the editor open.
         viewModelScope.launch { updateWidgetFromLocalCache() }
@@ -863,11 +864,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         }
     fun edit(entry: DiaryEntry,quantity: Double,chosen: ChosenMeasure? = null)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueEdit(entry,quantity,chosen)
-        persistQueued("Изменено")
+        // A correction to an unsent add amends that add, not a separately
+        // undoable server operation. Undo would otherwise remove the whole food.
+        persistQueued("Изменено",undoable=entry.updatedAt!=null)
     }
     fun delete(entry: DiaryEntry)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueDelete(entry)
-        persistQueued("Удалено")
+        // Deleting an unsent add only removes its outbox record. There is no
+        // server action to undo, and Undo must not target an unrelated action.
+        persistQueued("Удалено",undoable=entry.updatedAt!=null)
     }
     fun undo()=action(allowDuringRecovery=true) {
         val outstanding=offline?.status()?.remaining ?: 0
