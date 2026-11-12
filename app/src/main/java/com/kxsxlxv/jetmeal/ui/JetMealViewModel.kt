@@ -19,7 +19,7 @@ import java.time.*
 enum class Destination { Today, Week, Calendar, Settings }
 data class AppState(
     val authLoading: Boolean = true, val email: String? = null, val authRecovering: Boolean = false,
-    val busy: Boolean = false, val refreshing: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
+    val busy: Boolean = false, val saving: Boolean = false, val refreshing: Boolean = false, val error: String? = null, val day: LocalDate = LocalDate.now(),
     val destination: Destination = Destination.Today, val month: YearMonth = YearMonth.now(),
     val scale: TimeScale = TimeScale.Day,
     val entries: List<DiaryEntry> = emptyList(), val targets: Targets? = null, val week: WeekState? = null,
@@ -62,6 +62,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private var snapshotOwner: String? = null
     private var searchJob: Job? = null
     private var retryJob: Job? = null
+    private var idleSyncTimer: Job? = null
     private var catalogueJob: Job? = null
     private var offlineHistoryJob: Job? = null
     private var offlineHistoryOwner: String? = null
@@ -116,6 +117,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                         }
                     }
                     is SessionStatus.NotAuthenticated -> {
+                        idleSyncTimer?.cancel()
                         authenticatedOwnerId = null
                         snapshotOwner = null
                         recentSnapshots.clear()
@@ -328,6 +330,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 "В дневнике есть несинхронизированные изменения. Сначала отправьте их в Supabase или отмените.") }
             return@action
         }
+        idleSyncTimer?.cancel()
         picooc?.disconnect()
         requireNotNull(repository).client.auth.signOut()
         widgetCoordinator?.showSignedOut()
@@ -795,29 +798,47 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         }
     }
 
-    private suspend fun persistQueued() {
+    /** Never couple the save button to a remote request. The encrypted outbox
+     * is durable before we acknowledge the tap; replay happens independently. */
+    private suspend fun persistQueued(label:String) {
         val diary=offline ?: return
         val nav=mutable.value
-        val (start,end)=requiredRange(nav)
-        // Publish local writes instantly, before waiting for a broken network.
-        // A failed Supabase request must not hide a successfully persisted edit.
-        val cached=runCatching {diary.cachedSnapshotFor(start,end)}.getOrNull()
-        if(cached!=null) displaySnapshot(cached,nav,true)
-        else displayUncachedPending(nav)
         val connected=diary.onlineNow()
-        val result=if(connected) diary.sync() else diary.status()
-        val pending=result.remaining
-        if (pending == 0) recentSnapshots.clear()
-        if (result.synced > 0) catalogueOwner = null
-        mutable.update {
-            it.copy(
-                notice=if(pending==0 && !connected) "Сохранено на телефоне: неотправленная запись удалена."
-                    else if(pending==0) "Изменение сохранено в Supabase. Можно отменить."
-                    else "Сохранено на телефоне: $pending действий ожидают синхронизации.",
-                pendingWrites=pending,blockedWrites=result.blocked)
+        val (start,end)=requiredRange(nav)
+        val cached=runCatching {diary.cachedSnapshotFor(start,end)}.getOrNull()
+        if(cached!=null) displaySnapshot(cached,nav,!connected || nav.connectionWarning!=null)
+        else {
+            displayUncachedPending(nav)
+            if(connected) mutable.update { it.copy(cachedOffline=false) }
         }
-        if(pending==0) widgetCoordinator?.requestSync()
-        if(connected) refresh()
+        val status=diary.status()
+        mutable.update { it.copy(notice="$label. Можно отменить.",
+            pendingWrites=status.remaining,blockedWrites=status.blocked) }
+        // Neither the widget update nor the Supabase request holds the editor open.
+        viewModelScope.launch { updateWidgetFromLocalCache() }
+        scheduleIdleSync()
+    }
+
+    /** Debounce the current meal's writes. Cancelling this timer cannot cancel
+     * an in-flight, idempotent RPC: its coroutine runs in an independent job. */
+    private fun scheduleIdleSync() {
+        idleSyncTimer?.cancel()
+        idleSyncTimer=viewModelScope.launch {
+            delay(15_000)
+            viewModelScope.launch { syncInBackground() }
+        }
+    }
+
+    private suspend fun syncInBackground() {
+        try {
+            val result=offline?.sync() ?: return
+            if(result.synced>0) catalogueOwner=null
+            mutable.update { it.copy(pendingWrites=result.remaining,
+                blockedWrites=result.blocked) }
+        } catch (cancelled:CancellationException) { throw cancelled }
+        catch (error:Exception) {
+            repository?.diagnostics?.failure(ConnectionOperation.Mutation,error)
+        }
     }
 
     fun log(candidate: FoodCandidate,quantity: Double,meal: MealPeriod,date: LocalDate,
@@ -828,18 +849,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
                 when(meal) {MealPeriod.Morning->8;MealPeriod.Day->13;
                     MealPeriod.Evening->19;MealPeriod.Snack->15},0).atZone(zone).toInstant()
             requireNotNull(offline).enqueueLog(candidate,quantity,at,meal,chosen)
-            updateWidgetFromLocalCache()
-            persistQueued()
+            persistQueued("Добавлено")
         }
     fun edit(entry: DiaryEntry,quantity: Double,chosen: ChosenMeasure? = null)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueEdit(entry,quantity,chosen)
-        updateWidgetFromLocalCache()
-        persistQueued()
+        persistQueued("Изменено")
     }
     fun delete(entry: DiaryEntry)=action(allowDuringRecovery=true) {
         requireNotNull(offline).enqueueDelete(entry)
-        updateWidgetFromLocalCache()
-        persistQueued()
+        persistQueued("Удалено")
     }
     fun undo()=action(allowDuringRecovery=true) {
         val outstanding=offline?.status()?.remaining ?: 0
@@ -877,7 +895,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
         }
         if (!writes.tryLock()) return@launch
         writeInFlight = true
-        mutable.update { it.copy(busy = true, error = null, notice = null) }
+        mutable.update { it.copy(busy = true, saving = true, error = null, notice = null) }
         try { block() }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
@@ -886,7 +904,7 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
             mutable.update { it.copy(error = if (it.authRecovering) sessionRefreshError ?: UserErrors.SESSION_RECOVERING
                 else UserErrors.message(error, operation)) }
         }
-        finally { writes.unlock(); writeInFlight = false; mutable.update { it.copy(busy = refreshInFlight) } }
+        finally { writes.unlock(); writeInFlight = false; mutable.update { it.copy(busy = refreshInFlight, saving = false) } }
     }
     private fun userMessage(error: Exception): String = if (mutable.value.authRecovering)
         sessionRefreshError ?: UserErrors.SESSION_RECOVERING else UserErrors.message(error)
