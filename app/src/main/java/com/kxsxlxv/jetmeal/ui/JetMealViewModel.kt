@@ -832,7 +832,15 @@ class JetMealViewModel(private val repository: SupabaseRepository?, private val 
     private suspend fun syncInBackground() {
         try {
             val result=offline?.sync() ?: return
-            if(result.synced>0) catalogueOwner=null
+            if(result.synced>0) {
+                catalogueOwner=null
+                // Replace provisional IDs with acknowledged rows without a
+                // second Supabase round trip or interruption of the editor.
+                val nav=mutable.value
+                val (start,end)=requiredRange(nav)
+                val cached=offline?.cachedSnapshotFor(start,end)
+                if(cached!=null) displaySnapshot(cached,nav,nav.cachedOffline)
+            }
             mutable.update { it.copy(pendingWrites=result.remaining,
                 blockedWrites=result.blocked) }
         } catch (cancelled:CancellationException) { throw cancelled }
