@@ -370,11 +370,15 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
     suspend fun overlay(base: List<DiaryEntry>): List<DiaryEntry> =
         applyPending(base,pending())
 
+    /** Crash-safe fallback. Foreground writes sync after an idle window; WorkManager
+     * eventually replays them even if the process dies before that window expires. */
     fun schedule() {
         val manager=WorkManager.getInstance(context)
         val constraints=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         manager.enqueueUniqueWork("jetmeal-diary-outbox",ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<OfflineSyncWorker>().setConstraints(constraints).build())
+            OneTimeWorkRequestBuilder<OfflineSyncWorker>()
+                .setInitialDelay(90,TimeUnit.SECONDS)
+                .setConstraints(constraints).build())
         manager.enqueueUniquePeriodicWork("jetmeal-diary-outbox-periodic",
             ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<OfflineSyncWorker>(2,TimeUnit.HOURS)
@@ -419,10 +423,16 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
                 })
             }
             try {
-                requireNotNull(repository).syncMutation(next)
-                // Never erase the local write until the server returns a receipt.
+                val receipt=requireNotNull(repository).syncMutation(next)
+                // Persist the confirmed server row and remove the pending preview
+                // atomically. Navigating offline must never make an acknowledged
+                // food disappear until the next remote diary refresh.
+                val confirmed=runCatching {
+                    SupabaseRepository.diaryEntry(receipt.data.jsonObject)
+                }.getOrNull()
                 vault.change(user) { snapshot,foods,queue ->
-                    Triple(snapshot,foods,queue.filterNot { it.id==next.id })
+                    Triple(reconcileSyncedSnapshot(snapshot,next,confirmed),
+                        foods,queue.filterNot { it.id==next.id })
                 }
                 count++
             } catch (error: Exception) {
@@ -474,6 +484,29 @@ class OfflineDiary(private val context: Context,private val repository: Supabase
             error is HttpRequestException ||
             error is RestException && (error.statusCode>=500 ||
                 error.statusCode==401 || error.statusCode==408 || error.statusCode==429)
+}
+
+/** Reconcile an acknowledged mutation without fetching the diary again.
+ * Partial out-of-coverage records do not declare their day fully cached. */
+internal fun reconcileSyncedSnapshot(snapshot:OfflineSnapshot?, mutation:PendingDiaryMutation,
+                                     confirmed:DiaryEntry?):OfflineSnapshot? {
+    if(confirmed==null) return snapshot
+    val day=confirmed.consumedAt.atZone(ZoneId.systemDefault()).toLocalDate()
+    // An acknowledged add may belong to a day that has never been downloaded.
+    // Preserve the known row without claiming that the entire day is cached.
+    val base=snapshot ?: if(mutation.kind=="log_food") OfflineSnapshot(
+        day,day.plusDays(1),emptyList(),null,emptyList(),emptySet(),coverage=emptyList()
+    ) else return null
+    val entries=when(mutation.kind) {
+        "log_food" -> base.entries.filterNot {
+            it.id==confirmed.id || it.mealGroupId==mutation.id
+        } + confirmed
+        "update_log" -> base.entries.map { if(it.id==confirmed.id) confirmed else it }
+        "delete_log" -> base.entries.filterNot { it.id==confirmed.id }
+        else -> base.entries
+    }
+    return base.copy(start=minOf(base.start,day),end=maxOf(base.end,day.plusDays(1)),
+        entries=entries.sortedWith(compareBy<DiaryEntry> { it.consumedAt }.thenBy { it.id }))
 }
 
 fun applyPending(base: List<DiaryEntry>, pending: List<PendingDiaryMutation>): List<DiaryEntry> {

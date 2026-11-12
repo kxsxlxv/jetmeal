@@ -74,7 +74,7 @@ private sealed interface Editor {
             ) { insets ->
                 Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
                     if(settings && state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if(state.cachedOffline || state.pendingWrites>0 || state.connectionWarning!=null) {
+                    if(state.cachedOffline || state.blockedWrites>0 || state.connectionWarning!=null) {
                         Surface(color=MaterialTheme.colorScheme.secondaryContainer) {
                             Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=8.dp),
                                 verticalAlignment=Alignment.CenterVertically,
@@ -83,18 +83,20 @@ private sealed interface Editor {
                                     Text(
                                         when {
                                             state.blockedWrites>0 -> "Нужна проверка: ${state.blockedWrites} офлайн-изменений"
-                                            state.pendingWrites>0 -> "Ожидают отправки: ${state.pendingWrites}"
-                                            else -> state.connectionWarning ?: "Показана сохранённая копия"
+                                            state.connectionWarning!=null -> state.connectionWarning ?: "Ошибка подключения"
+                                            state.pendingWrites>0 -> "Изменения сохранены на телефоне"
+                                            else -> "Показана сохранённая копия"
                                         },
                                         style=MaterialTheme.typography.labelMedium)
                                     if(state.blockedWrites>0) Text(
                                         "Запись могла измениться через ChatGPT. Не перезаписываем её автоматически.",
                                         style=MaterialTheme.typography.labelSmall)
                                 }
-                                TextButton(onClick={
-                                    if(state.pendingWrites>0) viewModel.syncPending()
-                                    else viewModel.refresh()
-                                }) { Text("Повторить") }
+                                if(state.blockedWrites>0 || state.connectionWarning!=null)
+                                    TextButton(onClick={
+                                        if(state.pendingWrites>0) viewModel.syncPending()
+                                        else viewModel.refresh()
+                                    }) { Text("Повторить") }
                                 if(state.blockedWrites>0) TextButton(onClick={confirmDiscard=true}) {
                                     Text("Разобрать")
                                 }
@@ -136,11 +138,11 @@ private sealed interface Editor {
             dismissButton={TextButton(onClick={confirmDiscard=false}){Text("Отмена")}},
         )
         if(state.email!=null && editor!=null) {
-            val writeBusy by rememberUpdatedState(state.busy)
-            ModalBottomSheet(onDismissRequest={ if(!state.busy) { editor=null; chosenFood=null; foodVariants=null; viewModel.endFoodSearch() } },
+            val writeBusy by rememberUpdatedState(state.saving)
+            ModalBottomSheet(onDismissRequest={ if(!state.saving) { editor=null; chosenFood=null; foodVariants=null; viewModel.endFoodSearch() } },
                 sheetState=rememberBottomSheetState(initialValue=SheetValue.Hidden,
                     enabledValues=setOf(SheetValue.Hidden,SheetValue.Expanded),confirmValueChange={it!=SheetValue.Hidden || !writeBusy}),
-                sheetGesturesEnabled=!state.busy) {
+                sheetGesturesEnabled=!state.saving) {
                 Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding(),horizontalAlignment=Alignment.CenterHorizontally) {
                     val current=editor
                     if(current is Editor.Add) Text("Добавить · ${current.meal.label()}",style=MaterialTheme.typography.labelLarge,modifier=Modifier.padding(bottom=8.dp))
@@ -163,9 +165,18 @@ private sealed interface Editor {
                             name=food?.name ?: entry!!.name,unit=food?.unit ?: entry!!.unit,
                             amount=food?.amount ?: entry!!.quantity,basisAmount=food?.amount ?: entry!!.basisAmount,
                             nutrition=food?.nutrition ?: entry!!.basisNutrition,estimated=food?.estimated ?: entry?.estimated ?: false,
-                            busy=state.busy,error=state.error,successNotice=state.notice,
+                            busy=state.saving,error=state.error,successNotice=state.notice,
                             onSave={ quantity -> if(entry!=null) viewModel.edit(entry,quantity) else if(food!=null && current is Editor.Add) viewModel.log(food,quantity,current.meal,state.day) },
-                            onDelete=entry?.let { { viewModel.delete(it) } },onSuccess={editor=null;chosenFood=null;foodVariants=null;viewModel.endFoodSearch()},
+                            onDelete=entry?.let { { viewModel.delete(it) } },onSuccess={
+                                if(current is Editor.Add) {
+                                    // Keep the meal open to log another food immediately.
+                                    chosenFood=null;foodVariants=null
+                                    viewModel.beginFoodSearch(current.meal)
+                                } else {
+                                    editor=null;chosenFood=null;foodVariants=null
+                                    viewModel.endFoodSearch()
+                                }
+                            },
                             onBack=if(food!=null) ({ chosenFood=null }) else null,
                             measures=food?.measures ?: entry?.variantId?.let {state.catalogueMeasures[it]}.orEmpty(),
                             measurePreferenceKey=food?.id ?: entry?.variantId,
@@ -306,7 +317,7 @@ internal fun weekMatchesPeriod(week: com.kxsxlxv.jetmeal.domain.WeekState?,
                         state.targetVersions.lastOrNull { it.date <= state.day }?.targets ?: state.targets,
                         state.week,onAdd,onEdit,model::openSettings,
                         confirmedZero=state.day in state.confirmedZeroDays,
-                        onZeroDay={model.setZeroDay(state.day,it)},busy=state.busy)
+                        onZeroDay={model.setZeroDay(state.day,it)},busy=state.saving)
                     TimeScale.Week -> WeekContent(state.week,model::openSettings,onDay=model::openDate,
                         dailyTargets=state.budgetTargets,weeklyNutrition=state.weekNutrition)
                     TimeScale.Month -> CalendarContent(java.time.YearMonth.from(state.day),
